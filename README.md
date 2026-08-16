@@ -1,8 +1,8 @@
 # luaProtecter
 
-Redesigned project layout: removed the standalone lexer from the default pipeline and simplified the transformer to accept raw source text. The repository now focuses on a clearer pipeline: source -> transformer -> obfuscator -> emitter.
+This repository includes optional integration with the Luau compiler/runtime.
 
-Current layout
+Redesigned project layout
 
 luaProtecter
 ├── src
@@ -28,17 +28,25 @@ luaProtecter
     └── luau
         ← official Luau source goes here
 
-Build
+Building with Luau
 
-- mkdir build && cd build
-- cmake ..
-- cmake --build .
+By default the CMake option USE_LUAU is ON. CMake will look for a Luau CMakeLists.txt in third_party/luau and attempt to add it as a subdirectory.
 
-Run
+To add Luau as a submodule and enable integration:
 
-- ./luaProtecter
+1. Add Luau as a git submodule:
+
+   git submodule add https://github.com/Roblox/luau.git third_party/luau
+
+2. Configure and build with the Luau option (default is ON):
+
+   mkdir build && cd build
+   cmake -DUSE_LUAU=ON ..
+   cmake --build .
+
+If Luau is not present, CMake will skip integration and the project will build without it.
 
 Notes
 
-- If you want to reintroduce a lexer stage, add it back and update CMakeLists.txt to include its sources.
-- Add Luau as a submodule into third_party/luau if you need to integrate the Luau compiler/runtime.
+- The CMake code attempts to link a target named `luau` if Luau's CMake adds such a target. If Luau's CMake uses a different target name, you may need to update CMakeLists.txt to match.
+- You can disable attempting to use Luau by setting -DUSE_LUAU=OFF when configuring CMake.

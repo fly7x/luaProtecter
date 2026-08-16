@@ -2,12 +2,10 @@
 
 Official Luau source goes here.
 
-To include Luau in this repository, either:
-
-- Add Luau as a git submodule:
+Add Luau as a submodule to this path to enable optional integration with the project build system:
 
   git submodule add https://github.com/Roblox/luau.git third_party/luau
 
-- Or copy the Luau sources into this directory.
+After adding the submodule, run CMake from the project's build directory; the top-level CMakeLists.txt will attempt to add Luau as a subdirectory and link against it.
 
-See Luau's official repository for build and usage instructions: https://github.com/Roblox/luau
+If Luau changes its CMake target names or layout, you may need to adjust the top-level CMakeLists.txt to link the correct target(s) and include directories.
