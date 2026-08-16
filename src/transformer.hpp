@@ -1,10 +1,10 @@
 #pragma once
 
 #include <string>
-#include <vector>
 
 class Transformer {
 public:
-    // Transform token stream back into source or intermediate representation
-    std::string transform(const std::vector<std::string>& tokens);
+    // Transform raw source text into an intermediate representation or transformed source
+    // For the skeleton this takes the full source as input.
+    std::string transform(const std::string& src);
 };

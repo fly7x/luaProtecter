@@ -7,7 +7,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include_directories(${PROJECT_SOURCE_DIR}/include)
 add_executable(luaProtecter
     src/main.cpp
-    src/lexer.cpp
     src/transformer.cpp
     src/emitter.cpp
     src/obfuscation.cpp

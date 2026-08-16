@@ -3,15 +3,14 @@
 #include <string>
 
 #include "protector/config.hpp"
-#include "lexer.hpp"
 #include "transformer.hpp"
 #include "emitter.hpp"
 #include "obfuscation.hpp"
 
 int main(int argc, char** argv) {
     // Simple hardcoded input/output paths for the skeleton
-    std::string inputPath = "input/script.lua";
-    std::string outputPath = "output/protected.lua";
+    std::string inputPath = protector::DEFAULT_INPUT;
+    std::string outputPath = protector::DEFAULT_OUTPUT;
 
     std::ifstream in(inputPath);
     if (!in) {
@@ -22,12 +21,9 @@ int main(int argc, char** argv) {
     std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     in.close();
 
-    // Lexer -> Transformer -> Obfuscator -> Emitter (stubs)
-    Lexer lexer;
-    auto tokens = lexer.tokenize(source);
-
+    // Transformer -> Obfuscator -> Emitter (stubs)
     Transformer transformer;
-    std::string transformed = transformer.transform(tokens);
+    std::string transformed = transformer.transform(source);
 
     Obfuscator obf;
     std::string obfuscated = obf.obfuscate(transformed);
