@@ -1,9 +1,17 @@
--- sample input Lua script for luaProtecter
+cat > input/script.lua <<'EOF'
+local message = "hi boi"
 
 local function greet(name)
-    print("Hello, " .. name)
+    print(message, name)
+end
+
+local players = game:GetService("Players")
+
+if players then
+    greet("Roblox")
 end
 
 for i = 1, 3 do
-    greet("world")
+    print(i)
 end
+EOF
