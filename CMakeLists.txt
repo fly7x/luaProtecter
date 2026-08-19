@@ -1,4 +1,3 @@
-cat > CMakeLists.txt <<'EOF'
 cmake_minimum_required(VERSION 3.20)
 
 project(luaProtecter LANGUAGES CXX)
@@ -16,17 +15,19 @@ add_executable(luaProtecter
 )
 
 target_include_directories(luaProtecter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 if(USE_LUAU)
+
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/CMakeLists.txt")
         message(FATAL_ERROR
-            "Luau submodule is missing. Run: git submodule update --init --recursive"
+            "Luau submodule is missing. Initialize third_party/luau first."
         )
     endif()
 
-    message(STATUS "Adding Luau")
+    message(STATUS "Adding Luau from third_party/luau")
 
     add_subdirectory(
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau"
@@ -39,7 +40,7 @@ if(USE_LUAU)
         target_link_libraries(luaProtecter PRIVATE Luau.Compiler)
     else()
         message(FATAL_ERROR
-            "Luau.Compiler target was not created by this Luau checkout"
+            "Luau.Compiler target was not created."
         )
     endif()
 
@@ -61,5 +62,5 @@ if(USE_LUAU)
     target_compile_definitions(luaProtecter PRIVATE
         HAVE_LUAU=1
     )
+
 endif()
-EOF
