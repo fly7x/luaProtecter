@@ -1,4 +1,3 @@
-cat > src/emitter.hpp <<'EOF'
 #pragma once
 
 #include <string>
@@ -6,6 +5,7 @@ cat > src/emitter.hpp <<'EOF'
 class Emitter
 {
 public:
-    std::string emit(const std::string& source);
+    std::string emit(
+        const std::string& source
+    );
 };
-EOF
