@@ -1,44 +1,80 @@
-#include <iostream>
+cat > src/main.cpp <<'EOF'
+#include "transformer.hpp"
+#include "obfuscation.hpp"
+#include "emitter.hpp"
+
 #include <fstream>
+#include <iostream>
+#include <iterator>
 #include <string>
 
-#include "protector/config.hpp"
-#include "transformer.hpp"
-#include "emitter.hpp"
-#include "obfuscation.hpp"
+static constexpr const char* INPUT_FILE =
+    "input/script.lua";
 
-int main(int argc, char** argv) {
-    // Simple hardcoded input/output paths for the skeleton
-    std::string inputPath = protector::DEFAULT_INPUT;
-    std::string outputPath = protector::DEFAULT_OUTPUT;
+static constexpr const char* OUTPUT_FILE =
+    "output/protected.lua";
 
-    std::ifstream in(inputPath);
-    if (!in) {
-        std::cerr << "Failed to open input file: " << inputPath << "\n";
+int main()
+{
+    std::ifstream input(INPUT_FILE);
+
+    if (!input)
+    {
+        std::cerr
+            << "Failed to open "
+            << INPUT_FILE
+            << '\n';
+
         return 1;
     }
 
-    std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    in.close();
+    std::string source(
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()
+    );
 
-    // Transformer -> Obfuscator -> Emitter (stubs)
     Transformer transformer;
-    std::string transformed = transformer.transform(source);
 
-    Obfuscator obf;
-    std::string obfuscated = obf.obfuscate(transformed);
+    std::string transformed =
+        transformer.transform(source);
+
+    if (transformed.empty() && !source.empty())
+    {
+        std::cerr
+            << "Transformation failed.\n";
+
+        return 2;
+    }
+
+    Obfuscator obfuscator;
+
+    std::string protectedSource =
+        obfuscator.obfuscate(transformed);
 
     Emitter emitter;
-    std::string output = emitter.emit(obfuscated);
 
-    std::ofstream out(outputPath);
-    if (!out) {
-        std::cerr << "Failed to open output file: " << outputPath << "\n";
-        return 1;
+    std::string output =
+        emitter.emit(protectedSource);
+
+    std::ofstream file(OUTPUT_FILE);
+
+    if (!file)
+    {
+        std::cerr
+            << "Failed to create "
+            << OUTPUT_FILE
+            << '\n';
+
+        return 3;
     }
-    out << output;
-    out.close();
 
-    std::cout << "Protected output written to: " << outputPath << "\n";
+    file << output;
+
+    std::cout
+        << "Protected output written to "
+        << OUTPUT_FILE
+        << '\n';
+
     return 0;
 }
+EOF
