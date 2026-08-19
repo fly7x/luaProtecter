@@ -1,9 +1,11 @@
+cat > src/emitter.hpp <<'EOF'
 #pragma once
 
 #include <string>
 
-class Emitter {
+class Emitter
+{
 public:
-    // Produce final Lua output from obfuscated/intermediate representation
-    std::string emit(const std::string& obfuscated);
+    std::string emit(const std::string& source);
 };
+EOF
