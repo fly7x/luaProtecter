@@ -1,9 +1,11 @@
+cat > src/obfuscation.hpp <<'EOF'
 #pragma once
 
 #include <string>
 
-class Obfuscator {
+class Obfuscator
+{
 public:
-    // Obfuscate transformed source (placeholder)
-    std::string obfuscate(const std::string& input);
+    std::string obfuscate(const std::string& source);
 };
+EOF
