@@ -1,10 +1,12 @@
-cmake_minimum_required(VERSION 3.15)
-project(luaProtecter VERSION 0.1 LANGUAGES CXX)
+cat > CMakeLists.txt <<'EOF'
+cmake_minimum_required(VERSION 3.20)
+
+project(luaProtecter LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include_directories(${PROJECT_SOURCE_DIR}/include)
+option(USE_LUAU "Build with Luau" ON)
 
 add_executable(luaProtecter
     src/main.cpp
@@ -13,26 +15,51 @@ add_executable(luaProtecter
     src/obfuscation.cpp
 )
 
-option(USE_LUAU "Use embedded Luau (requires third_party/luau to be present)" ON)
+target_include_directories(luaProtecter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
-if (USE_LUAU)
-    if (EXISTS "${PROJECT_SOURCE_DIR}/third_party/luau/CMakeLists.txt")
-        message(STATUS "Luau sources found in third_party/luau — adding subdirectory")
-        # Add Luau as a subdirectory (assumes Luau provides a CMakeLists.txt)
-        add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/luau ${CMAKE_BINARY_DIR}/third_party/luau_build EXCLUDE_FROM_ALL)
-
-        # If the Luau target exists, link it. The exact target name may vary depending on Luau's CMake.
-        if (TARGET luau)
-            target_link_libraries(luaProtecter PRIVATE luau)
-            target_compile_definitions(luaProtecter PRIVATE HAVE_LUAU=1)
-            target_include_directories(luaProtecter PRIVATE ${PROJECT_SOURCE_DIR}/third_party/luau/include)
-        else()
-            message(WARNING "Luau subdirectory added but target 'luau' not found. You may need to inspect Luau's CMake targets and adjust CMakeLists.txt accordingly.")
-        endif()
-    else()
-        message(STATUS "third_party/luau not found; skipping Luau integration. Add Luau as submodule or place sources in third_party/luau to enable integration.")
+if(USE_LUAU)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/CMakeLists.txt")
+        message(FATAL_ERROR
+            "Luau submodule is missing. Run: git submodule update --init --recursive"
+        )
     endif()
-endif()
 
-# Optionally link to other libraries
-# target_link_libraries(luaProtecter PRIVATE <libraries>)
+    message(STATUS "Adding Luau")
+
+    add_subdirectory(
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau"
+        "${CMAKE_BINARY_DIR}/luau"
+        EXCLUDE_FROM_ALL
+    )
+
+    if(TARGET Luau.Compiler)
+        message(STATUS "Found Luau.Compiler")
+        target_link_libraries(luaProtecter PRIVATE Luau.Compiler)
+    else()
+        message(FATAL_ERROR
+            "Luau.Compiler target was not created by this Luau checkout"
+        )
+    endif()
+
+    if(TARGET Luau.Ast)
+        target_link_libraries(luaProtecter PRIVATE Luau.Ast)
+    endif()
+
+    if(TARGET Luau.Bytecode)
+        target_link_libraries(luaProtecter PRIVATE Luau.Bytecode)
+    endif()
+
+    target_include_directories(luaProtecter PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Ast/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Compiler/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Bytecode/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Common/include"
+    )
+
+    target_compile_definitions(luaProtecter PRIVATE
+        HAVE_LUAU=1
+    )
+endif()
+EOF
