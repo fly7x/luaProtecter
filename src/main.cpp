@@ -1,21 +1,14 @@
-#include "bytecode.hpp"
-#include "compiler.hpp"
 #include "transformer.hpp"
-#include "vm.hpp"
 
-#include <algorithm>
+#include <arpa/inet.h>
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 #include <iostream>
-#include <memory>
+#include <netinet/in.h>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <thread>
-#include <vector>
-
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -23,7 +16,6 @@ namespace
 {
     constexpr int PORT = 10000;
     constexpr int BACKLOG = 32;
-    constexpr std::size_t MAX_REQUEST_SIZE = 8 * 1024 * 1024;
 
     std::string jsonEscape(
         const std::string& value
@@ -44,14 +36,6 @@ namespace
                     result += "\\\\";
                     break;
 
-                case '\b':
-                    result += "\\b";
-                    break;
-
-                case '\f':
-                    result += "\\f";
-                    break;
-
                 case '\n':
                     result += "\\n";
                     break;
@@ -65,21 +49,15 @@ namespace
                     break;
 
                 default:
-                    if (c < 0x20)
+                    if (c < 32)
                     {
-                        const char hex[] = "0123456789abcdef";
-
-                        result += "\\u00";
-                        result += hex[(c >> 4) & 0x0F];
-                        result += hex[c & 0x0F];
+                        result += ' ';
                     }
                     else
                     {
-                        result.push_back(
-                            static_cast<char>(c)
-                        );
+                        result +=
+                            static_cast<char>(c);
                     }
-
                     break;
             }
         }
@@ -87,53 +65,417 @@ namespace
         return result;
     }
 
-    std::string makeResponse(
-        int status,
-        const std::string& body,
-        const std::string& contentType =
-            "application/json"
-    )
+    std::string html()
     {
-        std::string statusText;
+        return R"HTML(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport"
+      content="width=device-width,initial-scale=1">
+<title>LuaProtecter</title>
 
-        switch (status)
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    background: #0b0d10;
+    color: #f5f7fa;
+    font-family: Arial, sans-serif;
+}
+
+.container {
+    width: min(1100px, 94%);
+    margin: 50px auto;
+}
+
+h1 {
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    color: #9ca3af;
+    margin-bottom: 30px;
+}
+
+.editor {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+}
+
+.panel {
+    background: #12161b;
+    border: 1px solid #272d35;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.panel-title {
+    padding: 13px 16px;
+    border-bottom: 1px solid #272d35;
+    color: #cbd5e1;
+}
+
+textarea {
+    width: 100%;
+    min-height: 500px;
+    resize: vertical;
+    border: 0;
+    outline: 0;
+    padding: 18px;
+    background: #0f1317;
+    color: #e5e7eb;
+    font-family: monospace;
+    font-size: 14px;
+}
+
+pre {
+    margin: 0;
+    min-height: 500px;
+    padding: 18px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #dbeafe;
+    font-family: monospace;
+    font-size: 14px;
+}
+
+.controls {
+    margin-top: 18px;
+}
+
+button {
+    border: 0;
+    border-radius: 8px;
+    padding: 12px 20px;
+    cursor: pointer;
+    background: #6366f1;
+    color: white;
+    font-weight: 700;
+}
+
+button:disabled {
+    opacity: .5;
+    cursor: wait;
+}
+
+.status {
+    margin-top: 12px;
+    color: #9ca3af;
+}
+
+@media (max-width: 800px) {
+    .editor {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>LuaProtecter</h1>
+
+    <div class="subtitle">
+        Luau source transformer
+    </div>
+
+    <div class="editor">
+
+        <div class="panel">
+            <div class="panel-title">
+                Input
+            </div>
+
+            <textarea id="source"
+                placeholder="Paste Luau here..."></textarea>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">
+                Output
+            </div>
+
+            <pre id="output"></pre>
+        </div>
+
+    </div>
+
+    <div class="controls">
+
+        <button id="protect"
+                onclick="protectSource()">
+            Obfuscate
+        </button>
+
+        <div class="status"
+             id="status">
+        </div>
+
+    </div>
+
+</div>
+
+<script>
+async function protectSource()
+{
+    const source =
+        document.getElementById("source").value;
+
+    const output =
+        document.getElementById("output");
+
+    const status =
+        document.getElementById("status");
+
+    const button =
+        document.getElementById("protect");
+
+    if (!source.trim())
+    {
+        status.textContent =
+            "Enter Luau source first.";
+
+        return;
+    }
+
+    button.disabled = true;
+    status.textContent = "Processing...";
+    output.textContent = "";
+
+    try
+    {
+        const response =
+            await fetch("/protect", {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+                body: JSON.stringify({
+                    source: source
+                })
+            });
+
+        const data =
+            await response.json();
+
+        if (!response.ok || !data.success)
         {
-            case 200:
-                statusText = "OK";
-                break;
-
-            case 400:
-                statusText = "Bad Request";
-                break;
-
-            case 404:
-                statusText = "Not Found";
-                break;
-
-            case 405:
-                statusText = "Method Not Allowed";
-                break;
-
-            case 413:
-                statusText = "Payload Too Large";
-                break;
-
-            case 500:
-                statusText = "Internal Server Error";
-                break;
-
-            default:
-                statusText = "Unknown";
-                break;
+            throw new Error(
+                data.error ||
+                "Protection failed"
+            );
         }
 
+        output.textContent =
+            data.output;
+
+        status.textContent =
+            "Successfully transformed.";
+    }
+    catch (error)
+    {
+        status.textContent =
+            error.message;
+
+        output.textContent = "";
+    }
+    finally
+    {
+        button.disabled = false;
+    }
+}
+</script>
+
+</body>
+</html>
+)HTML";
+    }
+
+    std::string findHeader(
+        const std::string& request,
+        const std::string& name
+    )
+    {
+        const std::string needle =
+            name + ":";
+
+        const std::size_t position =
+            request.find(needle);
+
+        if (position == std::string::npos)
+            return {};
+
+        const std::size_t start =
+            position + needle.size();
+
+        std::size_t end =
+            request.find(
+                "\r\n",
+                start
+            );
+
+        if (end == std::string::npos)
+            end = request.size();
+
+        std::string value =
+            request.substr(
+                start,
+                end - start
+            );
+
+        while (!value.empty() &&
+               value.front() == ' ')
+        {
+            value.erase(value.begin());
+        }
+
+        return value;
+    }
+
+    std::string extractJsonSource(
+        const std::string& body
+    )
+    {
+        const std::string key =
+            "\"source\"";
+
+        const std::size_t keyPos =
+            body.find(key);
+
+        if (keyPos == std::string::npos)
+            throw std::runtime_error(
+                "Missing source field"
+            );
+
+        const std::size_t colon =
+            body.find(
+                ':',
+                keyPos + key.size()
+            );
+
+        if (colon == std::string::npos)
+            throw std::runtime_error(
+                "Invalid JSON"
+            );
+
+        std::size_t position =
+            colon + 1;
+
+        while (
+            position < body.size() &&
+            (
+                body[position] == ' ' ||
+                body[position] == '\t' ||
+                body[position] == '\r' ||
+                body[position] == '\n'
+            )
+        )
+        {
+            ++position;
+        }
+
+        if (
+            position >= body.size() ||
+            body[position] != '"'
+        )
+        {
+            throw std::runtime_error(
+                "source must be a JSON string"
+            );
+        }
+
+        ++position;
+
+        std::string result;
+        bool escaped = false;
+
+        while (position < body.size())
+        {
+            const char c =
+                body[position++];
+
+            if (escaped)
+            {
+                switch (c)
+                {
+                    case '"':
+                        result += '"';
+                        break;
+
+                    case '\\':
+                        result += '\\';
+                        break;
+
+                    case 'n':
+                        result += '\n';
+                        break;
+
+                    case 'r':
+                        result += '\r';
+                        break;
+
+                    case 't':
+                        result += '\t';
+                        break;
+
+                    case 'b':
+                        result += '\b';
+                        break;
+
+                    case 'f':
+                        result += '\f';
+                        break;
+
+                    default:
+                        result += c;
+                        break;
+                }
+
+                escaped = false;
+                continue;
+            }
+
+            if (c == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+
+            if (c == '"')
+                return result;
+
+            result += c;
+        }
+
+        throw std::runtime_error(
+            "Unterminated JSON string"
+        );
+    }
+
+    void sendResponse(
+        int client,
+        int status,
+        const std::string& contentType,
+        const std::string& body
+    )
+    {
         std::ostringstream response;
 
         response
             << "HTTP/1.1 "
             << status
-            << ' '
-            << statusText
+            << (status == 200 ? " OK" : " Bad Request")
             << "\r\n";
 
         response
@@ -147,246 +489,99 @@ namespace
             << "\r\n";
 
         response
-            << "Connection: close\r\n";
-
-        response
             << "Access-Control-Allow-Origin: *\r\n";
 
         response
-            << "Access-Control-Allow-Headers: "
-               "Content-Type\r\n";
-
-        response
-            << "Access-Control-Allow-Methods: "
-               "POST, GET, OPTIONS\r\n";
+            << "Connection: close\r\n";
 
         response
             << "\r\n";
 
         response << body;
 
-        return response.str();
-    }
+        const std::string data =
+            response.str();
 
-    bool sendAll(
-        int socket,
-        const std::string& data
-    )
-    {
         std::size_t sent = 0;
 
         while (sent < data.size())
         {
-            const ssize_t result =
-                ::send(
-                    socket,
+            const ssize_t count =
+                send(
+                    client,
                     data.data() + sent,
                     data.size() - sent,
                     0
                 );
 
-            if (result <= 0)
-            {
-                if (
-                    errno == EINTR
-                )
-                {
-                    continue;
-                }
-
-                return false;
-            }
+            if (count <= 0)
+                break;
 
             sent +=
                 static_cast<std::size_t>(
-                    result
+                    count
                 );
         }
-
-        return true;
     }
 
-    std::string receiveRequest(
-        int socket
+    void handleClient(
+        int client,
+        const Transformer& transformer
     )
     {
         std::string request;
 
-        request.reserve(8192);
-
         char buffer[8192];
 
-        while (
-            request.size() <
-            MAX_REQUEST_SIZE
-        )
+        while (true)
         {
-            const ssize_t received =
-                ::recv(
-                    socket,
+            const ssize_t count =
+                recv(
+                    client,
                     buffer,
                     sizeof(buffer),
                     0
                 );
 
-            if (received == 0)
+            if (count <= 0)
                 break;
-
-            if (received < 0)
-            {
-                if (
-                    errno == EINTR
-                )
-                {
-                    continue;
-                }
-
-                throw std::runtime_error(
-                    "recv() failed"
-                );
-            }
 
             request.append(
                 buffer,
                 static_cast<std::size_t>(
-                    received
+                    count
                 )
             );
 
-            /*
-             * Once the headers have arrived, determine whether
-             * we already have the complete body.
-             */
-            const std::size_t headerEnd =
-                request.find(
+            if (request.find(
                     "\r\n\r\n"
-                );
-
-            if (
-                headerEnd !=
-                std::string::npos
-            )
+                ) != std::string::npos)
             {
-                const std::size_t bodyStart =
-                    headerEnd + 4;
+                break;
+            }
 
-                std::size_t contentLength = 0;
-
-                std::istringstream headers(
-                    request.substr(
-                        0,
-                        headerEnd
-                    )
-                );
-
-                std::string line;
-
-                while (
-                    std::getline(
-                        headers,
-                        line
-                    )
-                )
-                {
-                    if (
-                        line.size() >= 15 &&
-                        std::equal(
-                            line.begin(),
-                            line.begin() + 15,
-                            "Content-Length:",
-                            [](char a, char b)
-                            {
-                                return
-                                    std::tolower(
-                                        static_cast<unsigned char>(a)
-                                    ) ==
-                                    std::tolower(
-                                        static_cast<unsigned char>(b)
-                                    );
-                            }
-                        )
-                    )
-                    {
-                        const std::string value =
-                            line.substr(15);
-
-                        try
-                        {
-                            contentLength =
-                                static_cast<std::size_t>(
-                                    std::stoull(
-                                        value
-                                    )
-                                );
-                        }
-                        catch (...)
-                        {
-                            throw std::runtime_error(
-                                "Invalid Content-Length"
-                            );
-                        }
-
-                        break;
-                    }
-                }
-
-                if (
-                    contentLength >
-                    MAX_REQUEST_SIZE
-                )
-                {
-                    throw std::runtime_error(
-                        "Request body too large"
-                    );
-                }
-
-                if (
-                    request.size() >=
-                    bodyStart + contentLength
-                )
-                {
-                    break;
-                }
+            if (request.size() >
+                1024 * 1024)
+            {
+                break;
             }
         }
 
-        if (
-            request.size() >=
-            MAX_REQUEST_SIZE
-        )
-        {
-            throw std::runtime_error(
-                "Request too large"
-            );
-        }
-
-        return request;
-    }
-
-    struct HttpRequest
-    {
-        std::string method;
-        std::string path;
-        std::string body;
-    };
-
-    HttpRequest parseRequest(
-        const std::string& request
-    )
-    {
         const std::size_t headerEnd =
             request.find(
                 "\r\n\r\n"
             );
 
-        if (
-            headerEnd ==
-            std::string::npos
-        )
+        if (headerEnd == std::string::npos)
         {
-            throw std::runtime_error(
-                "Malformed HTTP request"
+            sendResponse(
+                client,
+                400,
+                "application/json",
+                R"({"success":false,"error":"Invalid HTTP request"})"
             );
+
+            return;
         }
 
         const std::string headers =
@@ -395,765 +590,295 @@ namespace
                 headerEnd
             );
 
-        const std::size_t bodyStart =
-            headerEnd + 4;
+        std::string body =
+            request.substr(
+                headerEnd + 4
+            );
 
-        std::istringstream stream(
+        std::istringstream requestLine(
             headers
         );
 
-        std::string requestLine;
-
-        if (
-            !std::getline(
-                stream,
-                requestLine
-            )
-        )
-        {
-            throw std::runtime_error(
-                "Missing HTTP request line"
-            );
-        }
-
-        if (
-            !requestLine.empty() &&
-            requestLine.back() == '\r'
-        )
-        {
-            requestLine.pop_back();
-        }
-
-        std::istringstream requestLineStream(
-            requestLine
-        );
-
-        HttpRequest result;
-
+        std::string method;
+        std::string path;
         std::string version;
 
-        if (
-            !(requestLineStream
-                >> result.method
-                >> result.path
-                >> version)
-        )
-        {
-            throw std::runtime_error(
-                "Invalid HTTP request line"
+        requestLine
+            >> method
+            >> path
+            >> version;
+
+        const std::string contentLengthHeader =
+            findHeader(
+                headers,
+                "Content-Length"
             );
-        }
 
         std::size_t contentLength = 0;
 
-        std::string line;
-
-        while (
-            std::getline(
-                stream,
-                line
-            )
-        )
+        if (!contentLengthHeader.empty())
         {
-            if (
-                !line.empty() &&
-                line.back() == '\r'
-            )
+            try
             {
-                line.pop_back();
-            }
-
-            const std::string prefix =
-                "Content-Length:";
-
-            if (
-                line.size() >= prefix.size()
-            )
-            {
-                bool matches = true;
-
-                for (
-                    std::size_t i = 0;
-                    i < prefix.size();
-                    ++i
-                )
-                {
-                    if (
-                        std::tolower(
-                            static_cast<unsigned char>(
-                                line[i]
-                            )
-                        ) !=
-                        std::tolower(
-                            static_cast<unsigned char>(
-                                prefix[i]
-                            )
+                contentLength =
+                    static_cast<std::size_t>(
+                        std::stoull(
+                            contentLengthHeader
                         )
-                    )
-                    {
-                        matches = false;
-                        break;
-                    }
-                }
-
-                if (matches)
-                {
-                    try
-                    {
-                        contentLength =
-                            static_cast<std::size_t>(
-                                std::stoull(
-                                    line.substr(
-                                        prefix.size()
-                                    )
-                                )
-                            );
-                    }
-                    catch (...)
-                    {
-                        throw std::runtime_error(
-                            "Invalid Content-Length"
-                        );
-                    }
-                }
-            }
-        }
-
-        if (
-            contentLength >
-            MAX_REQUEST_SIZE
-        )
-        {
-            throw std::runtime_error(
-                "Request body too large"
-            );
-        }
-
-        if (
-            request.size() <
-            bodyStart + contentLength
-        )
-        {
-            throw std::runtime_error(
-                "Incomplete HTTP body"
-            );
-        }
-
-        result.body =
-            request.substr(
-                bodyStart,
-                contentLength
-            );
-
-        return result;
-    }
-
-    /*
-     * Extract a simple JSON string field:
-     *
-     * {
-     *   "source": "print(\"flyx\")"
-     * }
-     *
-     * This intentionally avoids pulling another JSON library
-     * into the project. It handles normal JSON string escapes.
-     */
-    std::string extractJsonString(
-        const std::string& json,
-        const std::string& field
-    )
-    {
-        const std::string key =
-            "\"" + field + "\"";
-
-        const std::size_t keyPosition =
-            json.find(key);
-
-        if (
-            keyPosition ==
-            std::string::npos
-        )
-        {
-            throw std::runtime_error(
-                "Missing JSON field: " +
-                field
-            );
-        }
-
-        std::size_t position =
-            keyPosition + key.size();
-
-        while (
-            position < json.size() &&
-            std::isspace(
-                static_cast<unsigned char>(
-                    json[position]
-                )
-            )
-        )
-        {
-            ++position;
-        }
-
-        if (
-            position >= json.size() ||
-            json[position] != ':'
-        )
-        {
-            throw std::runtime_error(
-                "Invalid JSON field: " +
-                field
-            );
-        }
-
-        ++position;
-
-        while (
-            position < json.size() &&
-            std::isspace(
-                static_cast<unsigned char>(
-                    json[position]
-                )
-            )
-        )
-        {
-            ++position;
-        }
-
-        if (
-            position >= json.size() ||
-            json[position] != '"'
-        )
-        {
-            throw std::runtime_error(
-                "JSON field must be a string: " +
-                field
-            );
-        }
-
-        ++position;
-
-        std::string result;
-
-        while (
-            position < json.size()
-        )
-        {
-            const char c =
-                json[position++];
-
-            if (c == '"')
-                return result;
-
-            if (c != '\\')
-            {
-                result.push_back(c);
-                continue;
-            }
-
-            if (
-                position >= json.size()
-            )
-            {
-                throw std::runtime_error(
-                    "Invalid JSON escape"
-                );
-            }
-
-            const char escaped =
-                json[position++];
-
-            switch (escaped)
-            {
-                case '"':
-                    result.push_back('"');
-                    break;
-
-                case '\\':
-                    result.push_back('\\');
-                    break;
-
-                case '/':
-                    result.push_back('/');
-                    break;
-
-                case 'b':
-                    result.push_back('\b');
-                    break;
-
-                case 'f':
-                    result.push_back('\f');
-                    break;
-
-                case 'n':
-                    result.push_back('\n');
-                    break;
-
-                case 'r':
-                    result.push_back('\r');
-                    break;
-
-                case 't':
-                    result.push_back('\t');
-                    break;
-
-                default:
-                    throw std::runtime_error(
-                        "Unsupported JSON escape"
                     );
             }
-        }
-
-        throw std::runtime_error(
-            "Unterminated JSON string"
-        );
-    }
-
-    std::string handleCompile(
-        const std::string& source,
-        bool execute
-    )
-    {
-        Compiler compiler;
-        Transformer transformer;
-
-        /*
-         * REAL Luau compilation.
-         *
-         * This is no longer the old custom print()
-         * parser.
-         */
-        const Bytecode compiled =
-            compiler.compile(
-                source
-            );
-
-        /*
-         * Protect the REAL Luau bytecode.
-         */
-        const Bytecode protectedBytecode =
-            transformer.protect(
-                compiled
-            );
-
-        std::string executionOutput;
-
-        if (execute)
-        {
-            VM vm;
-
-            if (
-                !vm.execute(
-                    compiled,
-                    executionOutput
-                )
-            )
+            catch (...)
             {
-                throw std::runtime_error(
-                    executionOutput.empty()
-                        ? "Luau execution failed"
-                        : executionOutput
-                );
-            }
-        }
-
-        std::ostringstream json;
-
-        json
-            << "{"
-            << "\"success\":true,"
-            << "\"bytecodeSize\":"
-            << compiled.size()
-            << ","
-            << "\"protectedSize\":"
-            << protectedBytecode.size()
-            << ","
-            << "\"protected\":\""
-            << jsonEscape(
-                protectedBytecode.toBase64()
-            )
-            << "\"";
-
-        if (execute)
-        {
-            json
-                << ","
-                << "\"output\":\""
-                << jsonEscape(
-                    executionOutput
-                )
-                << "\"";
-        }
-
-        json << "}";
-
-        return json.str();
-    }
-
-    void handleClient(
-        int client
-    )
-    {
-        try
-        {
-            const std::string request =
-                receiveRequest(
-                    client
-                );
-
-            const HttpRequest parsed =
-                parseRequest(
-                    request
-                );
-
-            /*
-             * CORS preflight.
-             */
-            if (
-                parsed.method ==
-                "OPTIONS"
-            )
-            {
-                const std::string response =
-                    makeResponse(
-                        200,
-                        ""
-                    );
-
-                sendAll(
+                sendResponse(
                     client,
-                    response
-                );
-
-                return;
-            }
-
-            /*
-             * Health endpoint.
-             */
-            if (
-                parsed.method == "GET" &&
-                parsed.path == "/"
-            )
-            {
-                const std::string body =
-                    R"({"success":true,"service":"luaProtecter","luau":true})";
-
-                const std::string response =
-                    makeResponse(
-                        200,
-                        body
-                    );
-
-                sendAll(
-                    client,
-                    response
-                );
-
-                return;
-            }
-
-            /*
-             * Compile + protect.
-             *
-             * POST /compile
-             *
-             * Body:
-             *
-             * {
-             *   "source":"print(\"flyx\")"
-             * }
-             */
-            if (
-                parsed.method == "POST" &&
-                parsed.path == "/compile"
-            )
-            {
-                const std::string source =
-                    extractJsonString(
-                        parsed.body,
-                        "source"
-                    );
-
-                const std::string body =
-                    handleCompile(
-                        source,
-                        false
-                    );
-
-                const std::string response =
-                    makeResponse(
-                        200,
-                        body
-                    );
-
-                sendAll(
-                    client,
-                    response
-                );
-
-                return;
-            }
-
-            /*
-             * Compile + protect + execute.
-             *
-             * POST /execute
-             */
-            if (
-                parsed.method == "POST" &&
-                parsed.path == "/execute"
-            )
-            {
-                const std::string source =
-                    extractJsonString(
-                        parsed.body,
-                        "source"
-                    );
-
-                const std::string body =
-                    handleCompile(
-                        source,
-                        true
-                    );
-
-                const std::string response =
-                    makeResponse(
-                        200,
-                        body
-                    );
-
-                sendAll(
-                    client,
-                    response
-                );
-
-                return;
-            }
-
-            /*
-             * Wrong method/path.
-             */
-            const std::string body =
-                R"({"success":false,"error":"Not found"})";
-
-            const std::string response =
-                makeResponse(
-                    404,
-                    body
-                );
-
-            sendAll(
-                client,
-                response
-            );
-        }
-        catch (
-            const std::exception& error
-        )
-        {
-            const std::string body =
-                std::string(
-                    "{\"success\":false,\"error\":\""
-                )
-                +
-                jsonEscape(
-                    error.what()
-                )
-                +
-                "\"}";
-
-            const std::string response =
-                makeResponse(
                     400,
-                    body
+                    "application/json",
+                    R"({"success":false,"error":"Invalid Content-Length"})"
                 );
 
-            sendAll(
+                return;
+            }
+        }
+
+        while (body.size() < contentLength)
+        {
+            const ssize_t count =
+                recv(
+                    client,
+                    buffer,
+                    sizeof(buffer),
+                    0
+                );
+
+            if (count <= 0)
+                break;
+
+            body.append(
+                buffer,
+                static_cast<std::size_t>(
+                    count
+                )
+            );
+        }
+
+        if (method == "GET" &&
+            path == "/")
+        {
+            sendResponse(
                 client,
-                response
+                200,
+                "text/html; charset=utf-8",
+                html()
             );
+
+            return;
         }
 
-        ::close(client);
-    }
-
-    int createServer()
-    {
-        const int server =
-            ::socket(
-                AF_INET,
-                SOCK_STREAM,
-                0
-            );
-
-        if (server < 0)
+        if (method == "GET" &&
+            path == "/health")
         {
-            throw std::runtime_error(
-                std::string(
-                    "socket() failed: "
-                )
-                +
-                std::strerror(errno)
+            sendResponse(
+                client,
+                200,
+                "application/json",
+                R"({"success":true,"service":"luaProtecter","luau":true})"
             );
+
+            return;
         }
 
-        int reuse = 1;
-
-        if (
-            ::setsockopt(
-                server,
-                SOL_SOCKET,
-                SO_REUSEADDR,
-                &reuse,
-                sizeof(reuse)
-            ) < 0
-        )
+        if (method == "OPTIONS")
         {
-            ::close(server);
-
-            throw std::runtime_error(
-                std::string(
-                    "setsockopt() failed: "
-                )
-                +
-                std::strerror(errno)
+            sendResponse(
+                client,
+                200,
+                "text/plain",
+                ""
             );
+
+            return;
         }
 
-        sockaddr_in address{};
-
-        address.sin_family =
-            AF_INET;
-
-        address.sin_addr.s_addr =
-            htonl(
-                INADDR_ANY
-            );
-
-        address.sin_port =
-            htons(
-                static_cast<std::uint16_t>(
-                    PORT
-                )
-            );
-
-        if (
-            ::bind(
-                server,
-                reinterpret_cast<
-                    const sockaddr*
-                >(&address),
-                sizeof(address)
-            ) < 0
-        )
+        if (method == "POST" &&
+            path == "/protect")
         {
-            ::close(server);
+            try
+            {
+                const std::string source =
+                    extractJsonSource(body);
 
-            throw std::runtime_error(
-                std::string(
-                    "bind() failed: "
-                )
-                +
-                std::strerror(errno)
-            );
+                const std::string output =
+                    transformer.protect(source);
+
+                const std::string json =
+                    std::string(
+                        R"({"success":true,"output":")"
+                    )
+                    +
+                    jsonEscape(output)
+                    +
+                    "\"}";
+
+                sendResponse(
+                    client,
+                    200,
+                    "application/json",
+                    json
+                );
+            }
+            catch (const std::exception& error)
+            {
+                const std::string json =
+                    std::string(
+                        R"({"success":false,"error":")"
+                    )
+                    +
+                    jsonEscape(error.what())
+                    +
+                    "\"}";
+
+                sendResponse(
+                    client,
+                    400,
+                    "application/json",
+                    json
+                );
+            }
+
+            return;
         }
 
-        if (
-            ::listen(
-                server,
-                BACKLOG
-            ) < 0
-        )
-        {
-            ::close(server);
-
-            throw std::runtime_error(
-                std::string(
-                    "listen() failed: "
-                )
-                +
-                std::strerror(errno)
-            );
-        }
-
-        return server;
+        sendResponse(
+            client,
+            404,
+            "application/json",
+            R"({"success":false,"error":"Not found"})"
+        );
     }
 }
 
 int main()
 {
-    try
-    {
-        const int server =
-            createServer();
+    std::signal(
+        SIGPIPE,
+        SIG_IGN
+    );
 
-        std::cout
-            << "luaProtecter listening on port "
-            << PORT
-            << '\n';
+    const int server =
+        socket(
+            AF_INET,
+            SOCK_STREAM,
+            0
+        );
 
-        std::cout
-            << "POST /compile  -> compile + protect\n";
-
-        std::cout
-            << "POST /execute  -> compile + protect + execute\n";
-
-        std::cout
-            << "GET  /         -> health check\n";
-
-        while (true)
-        {
-            sockaddr_in clientAddress{};
-
-            socklen_t clientLength =
-                sizeof(clientAddress);
-
-            const int client =
-                ::accept(
-                    server,
-                    reinterpret_cast<
-                        sockaddr*
-                    >(&clientAddress),
-                    &clientLength
-                );
-
-            if (client < 0)
-            {
-                if (
-                    errno == EINTR
-                )
-                {
-                    continue;
-                }
-
-                std::cerr
-                    << "accept() failed: "
-                    << std::strerror(errno)
-                    << '\n';
-
-                continue;
-            }
-
-            std::thread(
-                handleClient,
-                client
-            ).detach();
-        }
-
-        ::close(server);
-    }
-    catch (
-        const std::exception& error
-    )
+    if (server < 0)
     {
         std::cerr
-            << "Fatal error: "
-            << error.what()
+            << "socket() failed: "
+            << std::strerror(errno)
             << '\n';
 
         return 1;
     }
+
+    int reuse = 1;
+
+    setsockopt(
+        server,
+        SOL_SOCKET,
+        SO_REUSEADDR,
+        &reuse,
+        sizeof(reuse)
+    );
+
+    sockaddr_in address{};
+
+    address.sin_family =
+        AF_INET;
+
+    address.sin_addr.s_addr =
+        htonl(INADDR_ANY);
+
+    address.sin_port =
+        htons(PORT);
+
+    if (bind(
+            server,
+            reinterpret_cast<
+                sockaddr*
+            >(&address),
+            sizeof(address)
+        ) < 0)
+    {
+        std::cerr
+            << "bind() failed: "
+            << std::strerror(errno)
+            << '\n';
+
+        close(server);
+
+        return 1;
+    }
+
+    if (listen(
+            server,
+            BACKLOG
+        ) < 0)
+    {
+        std::cerr
+            << "listen() failed: "
+            << std::strerror(errno)
+            << '\n';
+
+        close(server);
+
+        return 1;
+    }
+
+    std::cout
+        << "LuaProtecter listening on port "
+        << PORT
+        << '\n';
+
+    Transformer transformer;
+
+    while (true)
+    {
+        sockaddr_in clientAddress{};
+        socklen_t clientLength =
+            sizeof(clientAddress);
+
+        const int client =
+            accept(
+                server,
+                reinterpret_cast<
+                    sockaddr*
+                >(&clientAddress),
+                &clientLength
+            );
+
+        if (client < 0)
+        {
+            if (errno == EINTR)
+                continue;
+
+            std::cerr
+                << "accept() failed: "
+                << std::strerror(errno)
+                << '\n';
+
+            continue;
+        }
+
+        handleClient(
+            client,
+            transformer
+        );
+
+        close(client);
+    }
+
+    close(server);
 
     return 0;
 }
