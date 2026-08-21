@@ -16,10 +16,6 @@ private:
         const std::string& source
     ) const;
 
-    std::string renameLocals(
-        const std::string& source
-    ) const;
-
     std::string minify(
         const std::string& source
     ) const;
