@@ -3,24 +3,25 @@
 #include <chrono>
 #include <cstdint>
 #include <random>
+#include <vector>
 
 namespace
 {
     std::uint32_t generateSeed()
     {
-        std::random_device rd;
+        std::random_device device;
 
         const std::uint32_t a =
             static_cast<std::uint32_t>(
-                rd()
+                device()
             );
 
         const std::uint32_t b =
             static_cast<std::uint32_t>(
-                rd()
+                device()
             );
 
-        const auto now =
+        const std::uint64_t timestamp =
             static_cast<std::uint64_t>(
                 std::chrono::high_resolution_clock::
                     now()
@@ -32,10 +33,10 @@ namespace
             a ^
             (b * 0x9E3779B9u) ^
             static_cast<std::uint32_t>(
-                now
+                timestamp
             ) ^
             static_cast<std::uint32_t>(
-                now >> 32
+                timestamp >> 32
             );
 
         if (seed == 0)
@@ -46,9 +47,7 @@ namespace
 }
 
 Obfuscator::Obfuscator()
-    : seed_(
-        generateSeed()
-    )
+    : seed_(generateSeed())
 {
 }
 
@@ -65,40 +64,24 @@ std::uint32_t Obfuscator::mix32(
     return value;
 }
 
-std::uint8_t Obfuscator::transformByte(
-    std::uint8_t value,
-    std::size_t index,
-    std::uint32_t seed
+std::uint8_t Obfuscator::keyByte(
+    std::uint32_t seed,
+    std::size_t position
 )
 {
-    /*
-     * Generate a deterministic keystream byte from:
-     *
-     *   package seed
-     *   byte position
-     *
-     * This is reversible by applying the same operation
-     * again.
-     */
-    const std::uint32_t position =
+    const std::uint32_t index =
         static_cast<std::uint32_t>(
-            index
+            position
         );
 
     std::uint32_t state =
         seed ^
-        (position * 0x9E3779B9u);
+        (index * 0x9E3779B9u);
 
-    state =
-        mix32(state);
-
-    const std::uint8_t key =
-        static_cast<std::uint8_t>(
-            state & 0xFFu
-        );
+    state = mix32(state);
 
     return static_cast<std::uint8_t>(
-        value ^ key
+        state & 0xFFu
     );
 }
 
@@ -109,7 +92,7 @@ Bytecode Obfuscator::transform(
     if (input.empty())
         return {};
 
-    const auto& source =
+    const std::vector<std::uint8_t>& source =
         input.data();
 
     std::vector<std::uint8_t> result;
@@ -118,16 +101,6 @@ Bytecode Obfuscator::transform(
         source.size()
     );
 
-    /*
-     * XOR is deliberately applied twice:
-     *
-     * transform(transform(bytecode)) == bytecode
-     *
-     * This makes the transformation reversible.
-     *
-     * The important point is that this layer does not
-     * pretend to be a complete VM or compiler.
-     */
     for (
         std::size_t i = 0;
         i < source.size();
@@ -135,18 +108,15 @@ Bytecode Obfuscator::transform(
     )
     {
         result[i] =
-            transformByte(
-                source[i],
-                i,
-                seed_
+            static_cast<std::uint8_t>(
+                source[i] ^
+                keyByte(
+                    seed_,
+                    i
+                )
             );
     }
 
-    /*
-     * Preserve the existing Bytecode abstraction.
-     *
-     * No textual Lua is generated here.
-     */
     return Bytecode(
         std::move(result)
     );
