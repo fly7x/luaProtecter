@@ -13,26 +13,24 @@ Bytecode Compiler::compile(
     if (source.empty())
     {
         throw std::runtime_error(
-            "Source cannot be empty"
+            "Luau source cannot be empty"
         );
     }
 
-    std::size_t bytecodeSize = 0;
-
-    lua_CompileOptions options{};
+    size_t bytecodeSize = 0;
 
     char* compiled =
         luau_compile(
             source.data(),
             source.size(),
-            &options,
+            nullptr,
             &bytecodeSize
         );
 
     if (!compiled)
     {
         throw std::runtime_error(
-            "Luau compilation failed"
+            "Luau compiler returned null"
         );
     }
 
@@ -43,14 +41,14 @@ Bytecode Compiler::compile(
 
     std::free(compiled);
 
-    /*
-     * Luau encodes compilation errors into the
-     * returned bytecode payload rather than
-     * returning nullptr for every source error.
-     *
-     * The Luau VM's luau_load() is the authoritative
-     * validation/loading step.
-     */
+    if (result.empty())
+    {
+        throw std::runtime_error(
+            "Luau compiler produced empty bytecode"
+        );
+    }
 
-    return Bytecode(result);
+    return Bytecode(
+        std::move(result)
+    );
 }
