@@ -1,23 +1,24 @@
 #pragma once
 
+#include "bytecode.hpp"
+
 #include <string>
 
 class VM
 {
 public:
-    VM();
+    VM() = default;
 
-    // Compile Luau source into Luau bytecode.
-    bool compile(
-        const std::string& source,
-        std::string& bytecode,
-        std::string& error
-    );
-
-    // Execute normal Luau source using the embedded Luau runtime.
+    /*
+     * Execute custom LVM bytecode.
+     *
+     * output receives everything printed by the VM.
+     *
+     * Returns true on success.
+     * Returns false on invalid bytecode/runtime failure.
+     */
     bool execute(
-        const std::string& source,
-        std::string& output,
-        std::string& error
-    );
+        const Bytecode& bytecode,
+        std::string& output
+    ) const;
 };
