@@ -1,62 +1,54 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(luaProtecter LANGUAGES CXX C)
+project(luaProtecter LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(USE_LUAU "Use embedded Luau" ON)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY
+    ${CMAKE_BINARY_DIR}/bin
+)
 
 add_executable(luaProtecter
     src/main.cpp
     src/transformer.cpp
-    src/emitter.cpp
-    src/lexer.cpp
-    src/obfuscation.cpp
+    src/bytecode.cpp
+    src/vm.cpp
 )
 
 target_include_directories(luaProtecter
     PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-if(USE_LUAU AND EXISTS
-   "${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/CMakeLists.txt")
+# Luau is included as a subdirectory.
+set(LUAU_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LUAU_BUILD_CLI OFF CACHE BOOL "" FORCE)
 
-    message(STATUS "Luau sources found.")
+add_subdirectory(luau)
 
-    set(LUAU_BUILD_CLI OFF CACHE BOOL "" FORCE)
-    set(LUAU_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    set(LUAU_BUILD_WEB OFF CACHE BOOL "" FORCE)
+target_link_libraries(luaProtecter
+    PRIVATE
+        Luau.Compiler
+        Luau.VM
+)
 
-    add_subdirectory(
-        third_party/luau
-        ${CMAKE_BINARY_DIR}/luau
-    )
-
+if (UNIX)
     target_link_libraries(luaProtecter
         PRIVATE
-            Luau.Compiler
-            Luau.VM
-            Luau.Ast
-            Luau.Common
+            pthread
     )
-
-    target_compile_definitions(
-        luaProtecter PRIVATE HAVE_LUAU=1
-    )
-
-else()
-
-    message(WARNING "Luau submodule not found.")
-
 endif()
 
-if(UNIX)
-
-    target_link_libraries(
-        luaProtecter PRIVATE pthread
+if (MSVC)
+    target_compile_options(luaProtecter PRIVATE
+        /W4
     )
-
+else()
+    target_compile_options(luaProtecter PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+    )
 endif()
