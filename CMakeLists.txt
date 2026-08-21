@@ -10,10 +10,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Luau
 # ============================================================
 
-set(LUAU_BUILD_CLI OFF CACHE BOOL "Build Luau CLI tools" FORCE)
-set(LUAU_BUILD_TESTS OFF CACHE BOOL "Build Luau tests" FORCE)
-set(LUAU_BUILD_WEB OFF CACHE BOOL "Build Luau web module" FORCE)
-set(LUAU_BUILD_SHARED OFF CACHE BOOL "Build Luau shared libraries" FORCE)
+set(LUAU_BUILD_CLI OFF CACHE BOOL "" FORCE)
+set(LUAU_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LUAU_BUILD_WEB OFF CACHE BOOL "" FORCE)
+set(LUAU_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(
     third_party/luau
@@ -30,14 +30,14 @@ add_executable(luaProtecter
     src/compiler.cpp
     src/compiler.hpp
 
-    src/bytecode.cpp
-    src/bytecode.hpp
+    src/transformer.cpp
+    src/transformer.hpp
 
     src/obfuscator.cpp
     src/obfuscator.hpp
 
-    src/transformer.cpp
-    src/transformer.hpp
+    src/bytecode.cpp
+    src/bytecode.hpp
 
     src/vm.cpp
     src/vm.hpp
@@ -51,7 +51,6 @@ target_include_directories(luaProtecter
     PRIVATE
 
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
 
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/VM/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Compiler/include
@@ -61,7 +60,7 @@ target_include_directories(luaProtecter
 )
 
 # ============================================================
-# Real Luau libraries
+# Link against Luau
 # ============================================================
 
 target_link_libraries(luaProtecter
