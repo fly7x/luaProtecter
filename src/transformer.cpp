@@ -1,6 +1,7 @@
 #include "transformer.hpp"
 
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <string>
 #include <vector>
@@ -21,13 +22,13 @@ namespace
      * 0x08  4 bytes   SEED
      * 0x0C  4 bytes   ORIGINAL BYTECODE SIZE
      * 0x10  4 bytes   BYTECODE HASH
-     * 0x14  N bytes   protected bytecode
+     * 0x14  N bytes   protected LVM1 bytecode
      *
      * All integer fields are little-endian.
      */
 
     constexpr std::uint32_t MAGIC =
-        0x4C50524Fu; // "LPRO"
+        0x4C50524Fu; // LPRO
 
     constexpr std::uint8_t VERSION =
         1;
@@ -35,9 +36,11 @@ namespace
     constexpr std::size_t HEADER_SIZE =
         20;
 
-    // ---------------------------------------------------------
-    // Random values
-    // ---------------------------------------------------------
+    /*
+     * ---------------------------------------------------------
+     * Random
+     * ---------------------------------------------------------
+     */
 
     std::uint32_t random32()
     {
@@ -66,9 +69,11 @@ namespace
         return value;
     }
 
-    // ---------------------------------------------------------
-    // Binary helpers
-    // ---------------------------------------------------------
+    /*
+     * ---------------------------------------------------------
+     * Binary helpers
+     * ---------------------------------------------------------
+     */
 
     void writeU32(
         std::vector<std::uint8_t>& output,
@@ -77,46 +82,48 @@ namespace
     {
         output.push_back(
             static_cast<std::uint8_t>(
-                value
+                value & 0xFFu
             )
         );
 
         output.push_back(
             static_cast<std::uint8_t>(
-                value >> 8
+                (value >> 8) & 0xFFu
             )
         );
 
         output.push_back(
             static_cast<std::uint8_t>(
-                value >> 16
+                (value >> 16) & 0xFFu
             )
         );
 
         output.push_back(
             static_cast<std::uint8_t>(
-                value >> 24
+                (value >> 24) & 0xFFu
             )
         );
     }
 
-    // ---------------------------------------------------------
-    // Hash
-    // ---------------------------------------------------------
+    /*
+     * ---------------------------------------------------------
+     * Integrity hash
+     * ---------------------------------------------------------
+     *
+     * FNV-1a 32-bit.
+     */
 
     std::uint32_t hashBytes(
-        const std::string& data
+        const std::vector<std::uint8_t>& bytes
     )
     {
-        /*
-         * FNV-1a 32-bit.
-         *
-         * This is used for package integrity checking.
-         */
         std::uint32_t hash =
             2166136261u;
 
-        for (unsigned char value : data)
+        for (
+            const std::uint8_t value :
+            bytes
+        )
         {
             hash ^= value;
             hash *= 16777619u;
@@ -125,19 +132,40 @@ namespace
         return hash;
     }
 
-    // ---------------------------------------------------------
-    // Protected bytecode
-    // ---------------------------------------------------------
+    /*
+     * ---------------------------------------------------------
+     * Protect custom bytecode
+     * ---------------------------------------------------------
+     */
 
-    std::string protectBytecode(
-        const std::string& bytecode
+    Bytecode protectBytecode(
+        const Bytecode& bytecode
     )
     {
-        if (bytecode.empty())
-            return {};
+        const std::vector<std::uint8_t>& input =
+            bytecode.data();
+
+        if (input.empty())
+            return Bytecode{};
 
         /*
-         * Random per-package key.
+         * The package stores the original size
+         * in a uint32.
+         */
+        if (
+            input.size() >
+            static_cast<std::size_t>(
+                std::numeric_limits<
+                    std::uint32_t
+                >::max()
+            )
+        )
+        {
+            return Bytecode{};
+        }
+
+        /*
+         * Generate a different key for every package.
          */
         const std::uint8_t key =
             static_cast<std::uint8_t>(
@@ -145,35 +173,23 @@ namespace
             );
 
         /*
-         * Random per-package seed.
+         * Generate a different mixing seed for every package.
          */
         const std::uint32_t seed =
             random32();
-
-        /*
-         * Prevent integer overflow from silently producing
-         * an invalid package size.
-         */
-        if (
-            bytecode.size() >
-            static_cast<std::size_t>(
-                UINT32_MAX
-            )
-        )
-        {
-            return {};
-        }
 
         std::vector<std::uint8_t> result;
 
         result.reserve(
             HEADER_SIZE +
-            bytecode.size()
+            input.size()
         );
 
-        // -----------------------------------------------------
-        // Header
-        // -----------------------------------------------------
+        /*
+         * -----------------------------------------------------
+         * Header
+         * -----------------------------------------------------
+         */
 
         writeU32(
             result,
@@ -189,7 +205,7 @@ namespace
         );
 
         /*
-         * Reserved bytes.
+         * Reserved.
          */
         result.push_back(0);
         result.push_back(0);
@@ -203,46 +219,45 @@ namespace
         );
 
         /*
-         * Original bytecode size.
+         * Original custom bytecode size.
          */
         writeU32(
             result,
             static_cast<std::uint32_t>(
-                bytecode.size()
+                input.size()
             )
         );
 
         /*
-         * Integrity hash of the original Luau bytecode.
+         * Hash of the original LVM1 bytecode.
          */
         writeU32(
             result,
-            hashBytes(bytecode)
+            hashBytes(input)
         );
 
-        // -----------------------------------------------------
-        // Protected payload
-        // -----------------------------------------------------
+        /*
+         * -----------------------------------------------------
+         * Protected payload
+         * -----------------------------------------------------
+         *
+         * Each byte is mixed using:
+         *
+         *     byte ^ key ^ positionMix
+         *
+         * The position-dependent component prevents the
+         * payload from being a simple repeated XOR stream.
+         */
 
         for (
             std::size_t i = 0;
-            i < bytecode.size();
+            i < input.size();
             ++i
         )
         {
             const std::uint8_t value =
-                static_cast<std::uint8_t>(
-                    static_cast<unsigned char>(
-                        bytecode[i]
-                    )
-                );
+                input[i];
 
-            /*
-             * Position-dependent mixing.
-             *
-             * The same key/seed is required to recover the
-             * original bytecode.
-             */
             const std::uint32_t position =
                 static_cast<std::uint32_t>(
                     i
@@ -275,25 +290,24 @@ namespace
             );
         }
 
-        return std::string(
-            reinterpret_cast<const char*>(
-                result.data()
-            ),
-            result.size()
+        return Bytecode(
+            std::move(result)
         );
     }
 }
 
-// -------------------------------------------------------------
-// Transformer
-// -------------------------------------------------------------
+/*
+ * -------------------------------------------------------------
+ * Transformer
+ * -------------------------------------------------------------
+ */
 
-std::string Transformer::protect(
-    const std::string& bytecode
+Bytecode Transformer::protect(
+    const Bytecode& bytecode
 )
 {
     if (bytecode.empty())
-        return {};
+        return Bytecode{};
 
     return protectBytecode(
         bytecode
