@@ -7,8 +7,9 @@ class Transformer
 public:
     Transformer() = default;
 
-    // Takes compiled Luau bytecode and returns the protected package.
-    std::string protect(
-        const std::string& bytecode
+    // Takes valid Luau source and returns valid,
+    // source-level-obfuscated Luau.
+    std::string transform(
+        const std::string& source
     );
 };
