@@ -1,1196 +1,581 @@
-#include "compiler.hpp"
+#include “compiler.hpp”
 
-#include <Luau/Compiler.h>
-
-#include <algorithm>
-#include <cctype>
-#include <cstring>
-#include <sstream>
-#include <stdexcept>
+#include 
+#include 
+#include 
+#include 
 
 namespace
 {
-    std::string trim(
-        const std::string& value
-    )
+/*
+* ———————————————————
+* Custom VM instruction set
+* ———————————————————
+*
+* These values belong ONLY to our VM.
+*
+* 0x01 = HALT
+* 0x02 = PUSH_STRING
+* 0x03 = PRINT
+*
+* The VM must use exactly the same definitions.
+*/
+
+constexpr std::uint8_t OP_HALT        = 0x01;
+constexpr std::uint8_t OP_PUSH_STRING  = 0x02;
+constexpr std::uint8_t OP_PRINT        = 0x03;
+/*
+ * Custom bytecode header.
+ *
+ * "LVM1"
+ */
+constexpr std::uint8_t MAGIC_0 = 'L';
+constexpr std::uint8_t MAGIC_1 = 'V';
+constexpr std::uint8_t MAGIC_2 = 'M';
+constexpr std::uint8_t MAGIC_3 = '1';
+constexpr std::uint8_t VERSION = 1;
+class Builder
+{
+public:
+    std::vector<std::uint8_t> bytes;
+    void u8(std::uint8_t value)
     {
-        std::size_t start = 0;
-
-        while (
-            start < value.size() &&
-            std::isspace(
-                static_cast<unsigned char>(
-                    value[start]
-                )
+        bytes.push_back(value);
+    }
+    void u32(std::uint32_t value)
+    {
+        bytes.push_back(
+            static_cast<std::uint8_t>(
+                value & 0xFFu
             )
-        )
-        {
-            ++start;
-        }
-
-        std::size_t end = value.size();
-
-        while (
-            end > start &&
-            std::isspace(
-                static_cast<unsigned char>(
-                    value[end - 1]
-                )
+        );
+        bytes.push_back(
+            static_cast<std::uint8_t>(
+                (value >> 8) & 0xFFu
             )
-        )
-        {
-            --end;
-        }
-
-        return value.substr(
-            start,
-            end - start
+        );
+        bytes.push_back(
+            static_cast<std::uint8_t>(
+                (value >> 16) & 0xFFu
+            )
+        );
+        bytes.push_back(
+            static_cast<std::uint8_t>(
+                (value >> 24) & 0xFFu
+            )
         );
     }
-
-    bool isIdentifier(
-        const std::string& value
-    )
+    void string(const std::string& value)
     {
-        if (value.empty())
-            return false;
-
         if (
-            !std::isalpha(
-                static_cast<unsigned char>(
-                    value[0]
-                )
-            ) &&
-            value[0] != '_'
+            value.size() >
+            0xFFFFFFFFull
         )
         {
-            return false;
-        }
-
-        for (std::size_t i = 1; i < value.size(); ++i)
-        {
-            const unsigned char c =
-                static_cast<unsigned char>(
-                    value[i]
-                );
-
-            if (
-                !std::isalnum(c) &&
-                c != '_'
-            )
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    bool parseBoolean(
-        const std::string& value,
-        bool& result
-    )
-    {
-        if (value == "true")
-        {
-            result = true;
-            return true;
-        }
-
-        if (value == "false")
-        {
-            result = false;
-            return true;
-        }
-
-        return false;
-    }
-
-    bool parseNumber(
-        const std::string& value,
-        double& result
-    )
-    {
-        if (value.empty())
-            return false;
-
-        char* end = nullptr;
-
-        result =
-            std::strtod(
-                value.c_str(),
-                &end
+            throw std::runtime_error(
+                "String is too large"
             );
-
-        if (end == value.c_str())
-            return false;
-
-        while (
-            *end != '\0' &&
-            std::isspace(
-                static_cast<unsigned char>(
-                    *end
-                )
-            )
-        )
-        {
-            ++end;
         }
-
-        return *end == '\0';
+        u32(
+            static_cast<std::uint32_t>(
+                value.size()
+            )
+        );
+        bytes.insert(
+            bytes.end(),
+            value.begin(),
+            value.end()
+        );
     }
-
-    bool parseString(
-        const std::string& value,
-        std::string& result
+};
+/*
+ * Skip whitespace.
+ */
+std::size_t skipWhitespace(
+    const std::string& source,
+    std::size_t position
+)
+{
+    while (
+        position < source.size()
     )
     {
-        if (value.size() < 2)
-            return false;
-
-        const char quote = value.front();
-
+        const char c =
+            source[position];
         if (
-            quote != '"' &&
-            quote != '\''
+            c == ' ' ||
+            c == '\t' ||
+            c == '\r' ||
+            c == '\n'
         )
         {
-            return false;
+            ++position;
+            continue;
         }
-
-        if (value.back() != quote)
-            return false;
-
-        result.clear();
-
-        bool escaped = false;
-
-        for (
-            std::size_t i = 1;
-            i + 1 < value.size();
-            ++i
+        break;
+    }
+    return position;
+}
+/*
+ * Read a quoted Luau string.
+ *
+ * Supports:
+ *
+ * "hello"
+ * 'hello'
+ *
+ * and basic escapes:
+ *
+ * \n
+ * \r
+ * \t
+ * \\
+ * \"
+ * \'
+ */
+std::string readString(
+    const std::string& source,
+    std::size_t& position
+)
+{
+    if (
+        position >= source.size()
+    )
+    {
+        throw std::runtime_error(
+            "Expected string"
+        );
+    }
+    const char quote =
+        source[position];
+    if (
+        quote != '"' &&
+        quote != '\''
+    )
+    {
+        throw std::runtime_error(
+            "Expected quoted string"
+        );
+    }
+    ++position;
+    std::string result;
+    while (
+        position < source.size()
+    )
+    {
+        const char c =
+            source[position++];
+        if (c == quote)
+            return result;
+        if (c != '\\')
+        {
+            result += c;
+            continue;
+        }
+        if (
+            position >= source.size()
         )
         {
-            const char c = value[i];
-
+            throw std::runtime_error(
+                "Unterminated escape sequence"
+            );
+        }
+        const char escaped =
+            source[position++];
+        switch (escaped)
+        {
+            case 'n':
+                result += '\n';
+                break;
+            case 'r':
+                result += '\r';
+                break;
+            case 't':
+                result += '\t';
+                break;
+            case '\\':
+                result += '\\';
+                break;
+            case '"':
+                result += '"';
+                break;
+            case '\'':
+                result += '\'';
+                break;
+            default:
+                /*
+                 * Preserve unknown Luau escapes
+                 * instead of silently deleting them.
+                 */
+                result += '\\';
+                result += escaped;
+                break;
+        }
+    }
+    throw std::runtime_error(
+        "Unterminated string literal"
+    );
+}
+/*
+ * Read an identifier.
+ */
+std::string readIdentifier(
+    const std::string& source,
+    std::size_t& position
+)
+{
+    const std::size_t start =
+        position;
+    if (
+        position >= source.size()
+    )
+    {
+        return {};
+    }
+    const auto isStart =
+        [](char c)
+        {
+            return
+                (c >= 'a' && c <= 'z') ||
+                (c >= 'A' && c <= 'Z') ||
+                c == '_';
+        };
+    const auto isPart =
+        [](char c)
+        {
+            return
+                (c >= 'a' && c <= 'z') ||
+                (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') ||
+                c == '_';
+        };
+    if (!isStart(source[position]))
+        return {};
+    ++position;
+    while (
+        position < source.size() &&
+        isPart(source[position])
+    )
+    {
+        ++position;
+    }
+    return source.substr(
+        start,
+        position - start
+    );
+}
+/*
+ * Expect a specific character.
+ */
+void expect(
+    const std::string& source,
+    std::size_t& position,
+    char expected
+)
+{
+    position =
+        skipWhitespace(
+            source,
+            position
+        );
+    if (
+        position >= source.size() ||
+        source[position] != expected
+    )
+    {
+        throw std::runtime_error(
+            std::string(
+                "Expected '"
+            ) +
+            expected +
+            "'"
+        );
+    }
+    ++position;
+}
+/*
+ * Remove Lua/Luau line comments.
+ *
+ * This intentionally handles only normal
+ * -- comments. Long-bracket comments are
+ * handled later when the parser is expanded.
+ */
+std::string stripComments(
+    const std::string& source
+)
+{
+    std::string result;
+    result.reserve(
+        source.size()
+    );
+    bool inString = false;
+    char stringQuote = 0;
+    bool escaped = false;
+    for (
+        std::size_t i = 0;
+        i < source.size();
+        ++i
+    )
+    {
+        const char c =
+            source[i];
+        if (inString)
+        {
+            result += c;
             if (escaped)
             {
-                switch (c)
-                {
-                    case 'n':
-                        result += '\n';
-                        break;
-
-                    case 'r':
-                        result += '\r';
-                        break;
-
-                    case 't':
-                        result += '\t';
-                        break;
-
-                    case '\\':
-                        result += '\\';
-                        break;
-
-                    case '"':
-                        result += '"';
-                        break;
-
-                    case '\'':
-                        result += '\'';
-                        break;
-
-                    default:
-                        result += c;
-                        break;
-                }
-
                 escaped = false;
                 continue;
             }
-
             if (c == '\\')
             {
                 escaped = true;
                 continue;
             }
-
+            if (c == stringQuote)
+            {
+                inString = false;
+                stringQuote = 0;
+            }
+            continue;
+        }
+        if (
+            c == '"' ||
+            c == '\''
+        )
+        {
+            inString = true;
+            stringQuote = c;
             result += c;
+            continue;
         }
-
-        return !escaped;
-    }
-
-    void writeU8(
-        std::string& output,
-        std::uint8_t value
-    )
-    {
-        output.push_back(
-            static_cast<char>(value)
-        );
-    }
-
-    void writeU32(
-        std::string& output,
-        std::uint32_t value
-    )
-    {
-        output.push_back(
-            static_cast<char>(
-                value & 0xFF
-            )
-        );
-
-        output.push_back(
-            static_cast<char>(
-                (value >> 8) & 0xFF
-            )
-        );
-
-        output.push_back(
-            static_cast<char>(
-                (value >> 16) & 0xFF
-            )
-        );
-
-        output.push_back(
-            static_cast<char>(
-                (value >> 24) & 0xFF
-            )
-        );
-    }
-
-    void writeI32(
-        std::string& output,
-        std::int32_t value
-    )
-    {
-        writeU32(
-            output,
-            static_cast<std::uint32_t>(
-                value
-            )
-        );
-    }
-
-    void writeDouble(
-        std::string& output,
-        double value
-    )
-    {
-        static_assert(
-            sizeof(double) == sizeof(std::uint64_t),
-            "Unexpected double size"
-        );
-
-        std::uint64_t bits = 0;
-
-        std::memcpy(
-            &bits,
-            &value,
-            sizeof(bits)
-        );
-
-        for (int i = 0; i < 8; ++i)
-        {
-            writeU8(
-                output,
-                static_cast<std::uint8_t>(
-                    (bits >> (i * 8)) & 0xFF
-                )
-            );
-        }
-    }
-
-    void writeString(
-        std::string& output,
-        const std::string& value
-    )
-    {
-        writeU32(
-            output,
-            static_cast<std::uint32_t>(
-                value.size()
-            )
-        );
-
-        output.append(value);
-    }
-
-    /*
-     * Find an operator outside quoted strings.
-     */
-    std::size_t findOperator(
-        const std::string& expression,
-        char wanted
-    )
-    {
-        bool singleQuote = false;
-        bool doubleQuote = false;
-        bool escaped = false;
-
-        int depth = 0;
-
-        for (
-            std::size_t i = 0;
-            i < expression.size();
-            ++i
+        if (
+            c == '-' &&
+            i + 1 < source.size() &&
+            source[i + 1] == '-'
         )
         {
-            const char c = expression[i];
-
-            if (escaped)
-            {
-                escaped = false;
-                continue;
-            }
-
-            if (
-                singleQuote ||
-                doubleQuote
+            ++i;
+            while (
+                i + 1 < source.size() &&
+                source[i + 1] != '\n'
             )
             {
-                if (c == '\\')
-                {
-                    escaped = true;
-                    continue;
-                }
-
-                if (
-                    singleQuote &&
-                    c == '\''
-                )
-                {
-                    singleQuote = false;
-                }
-
-                if (
-                    doubleQuote &&
-                    c == '"'
-                )
-                {
-                    doubleQuote = false;
-                }
-
-                continue;
+                ++i;
             }
-
-            if (c == '\'')
-            {
-                singleQuote = true;
-                continue;
-            }
-
-            if (c == '"')
-            {
-                doubleQuote = true;
-                continue;
-            }
-
-            if (c == '(')
-            {
-                ++depth;
-                continue;
-            }
-
-            if (c == ')')
-            {
-                --depth;
-                continue;
-            }
-
-            if (
-                depth == 0 &&
-                c == wanted
-            )
-            {
-                return i;
-            }
+            result += '\n';
+            continue;
         }
-
-        return std::string::npos;
+        result += c;
     }
-
-    VMOpcode arithmeticOpcode(
-        char op
-    )
-    {
-        switch (op)
-        {
-            case '+':
-                return VMOpcode::ADD;
-
-            case '-':
-                return VMOpcode::SUB;
-
-            case '*':
-                return VMOpcode::MUL;
-
-            case '/':
-                return VMOpcode::DIV;
-
-            default:
-                return VMOpcode::NOP;
-        }
-    }
+    return result;
 }
-
-bool Compiler::compile(
+/*
+ * Compile:
+ *
+ * print("hello")
+ *
+ * into:
+ *
+ * PUSH_STRING "hello"
+ * PRINT
+ */
+void compilePrint(
     const std::string& source,
-    std::vector<VMInstruction>& output,
-    std::string& error
+    std::size_t& position,
+    Builder& builder
 )
 {
-    output.clear();
-    error.clear();
-
-    if (source.empty())
+    const std::string identifier =
+        readIdentifier(
+            source,
+            position
+        );
+    if (identifier != "print")
     {
-        error = "Source cannot be empty";
-        return false;
+        throw std::runtime_error(
+            "Expected print"
+        );
     }
-
-    /*
-     * First validate the source with the actual Luau
-     * compiler. This prevents our small custom compiler
-     * from accepting malformed Luau.
-     */
-    try
-    {
-        const std::string bytecode =
-            Luau::compile(source);
-
-        if (bytecode.empty())
-        {
-            error =
-                "Luau compiler rejected the source";
-
-            return false;
-        }
-    }
-    catch (
-        const std::exception& exception
-    )
-    {
-        error =
-            std::string(
-                "Luau validation failed: "
-            ) +
-            exception.what();
-
-        return false;
-    }
-
-    /*
-     * This first compiler intentionally handles a
-     * small, deterministic subset.
-     *
-     * We expand the instruction set later rather than
-     * pretending arbitrary Luau can already be represented.
-     */
-
-    std::stringstream stream(source);
-
-    std::string line;
-
-    while (
-        std::getline(
-            stream,
-            line
-        )
-    )
-    {
-        line = trim(line);
-
-        if (line.empty())
-            continue;
-
-        /*
-         * Ignore ordinary Lua comments.
-         */
-        if (
-            line.size() >= 2 &&
-            line[0] == '-' &&
-            line[1] == '-'
-        )
-        {
-            continue;
-        }
-
-        /*
-         * Remove a trailing semicolon.
-         */
-        if (
-            !line.empty() &&
-            line.back() == ';'
-        )
-        {
-            line.pop_back();
-            line = trim(line);
-        }
-
-        if (!compileStatement(
-                line,
-                output,
-                error
-            ))
-        {
-            return false;
-        }
-    }
-
-    output.push_back(
-        VMInstruction{
-            VMOpcode::RETURN
-        }
+    position =
+        skipWhitespace(
+            source,
+            position
+        );
+    expect(
+        source,
+        position,
+        '('
     );
-
-    return true;
-}
-
-bool Compiler::compileStatement(
-    const std::string& statement,
-    std::vector<VMInstruction>& output,
-    std::string& error
-)
-{
-    const std::string code =
-        trim(statement);
-
-    if (code.empty())
-        return true;
-
-    /*
-     * print(...)
-     *
-     * We represent this as a global function call.
-     */
+    position =
+        skipWhitespace(
+            source,
+            position
+        );
     if (
-        code.size() >= 6 &&
-        code.compare(
-            0,
-            6,
-            "print("
-        ) == 0 &&
-        code.back() == ')'
+        position >= source.size()
     )
     {
-        const std::string argument =
-            trim(
-                code.substr(
-                    6,
-                    code.size() - 7
-                )
-            );
-
-        if (!compileExpression(
-                argument,
-                output,
-                error
-            ))
-        {
-            return false;
-        }
-
-        VMInstruction getPrint;
-
-        getPrint.opcode =
-            VMOpcode::GET_GLOBAL;
-
-        getPrint.text =
-            "print";
-
-        output.push_back(
-            getPrint
+        throw std::runtime_error(
+            "Expected print argument"
         );
-
-        /*
-         * Stack arrangement expected by the VM:
-         *
-         * function
-         * argument
-         *
-         * The exact calling convention can be finalized
-         * when vm.cpp is updated.
-         */
-        VMInstruction call;
-
-        call.opcode =
-            VMOpcode::CALL;
-
-        call.operandA = 1;
-
-        output.push_back(
-            call
-        );
-
-        return true;
     }
-
-    /*
-     * local x = expression
-     */
+    const char first =
+        source[position];
     if (
-        code.size() >= 6 &&
-        code.compare(
-            0,
-            6,
-            "local "
-        ) == 0
+        first != '"' &&
+        first != '\''
     )
     {
-        const std::string declaration =
-            trim(
-                code.substr(6)
-            );
-
-        const std::size_t equals =
-            findOperator(
-                declaration,
-                '='
-            );
-
-        if (
-            equals == std::string::npos
-        )
-        {
-            error =
-                "Local declaration requires '='";
-
-            return false;
-        }
-
-        const std::string name =
-            trim(
-                declaration.substr(
-                    0,
-                    equals
-                )
-            );
-
-        const std::string expression =
-            trim(
-                declaration.substr(
-                    equals + 1
-                )
-            );
-
-        if (!isIdentifier(name))
-        {
-            error =
-                "Invalid local identifier: " +
-                name;
-
-            return false;
-        }
-
-        if (!compileExpression(
-                expression,
-                output,
-                error
-            ))
-        {
-            return false;
-        }
-
-        VMInstruction instruction;
-
-        instruction.opcode =
-            VMOpcode::SET_GLOBAL;
-
-        instruction.text =
-            name;
-
-        output.push_back(
-            instruction
+        throw std::runtime_error(
+            "Custom compiler currently "
+            "supports string arguments "
+            "for print()"
         );
-
-        return true;
     }
-
-    /*
-     * x = expression
-     */
-    {
-        const std::size_t equals =
-            findOperator(
-                code,
-                '='
-            );
-
-        if (
-            equals != std::string::npos
-        )
-        {
-            const std::string name =
-                trim(
-                    code.substr(
-                        0,
-                        equals
-                    )
-                );
-
-            const std::string expression =
-                trim(
-                    code.substr(
-                        equals + 1
-                    )
-                );
-
-            if (!isIdentifier(name))
-            {
-                error =
-                    "Invalid assignment target: " +
-                    name;
-
-                return false;
-            }
-
-            if (!compileExpression(
-                    expression,
-                    output,
-                    error
-                ))
-            {
-                return false;
-            }
-
-            VMInstruction instruction;
-
-            instruction.opcode =
-                VMOpcode::SET_GLOBAL;
-
-            instruction.text =
-                name;
-
-            output.push_back(
-                instruction
-            );
-
-            return true;
-        }
-    }
-
-    /*
-     * return expression
-     */
-    if (
-        code == "return"
-    )
-    {
-        output.push_back(
-            VMInstruction{
-                VMOpcode::RETURN
-            }
-        );
-
-        return true;
-    }
-
-    if (
-        code.size() > 7 &&
-        code.compare(
-            0,
-            7,
-            "return "
-        ) == 0
-    )
-    {
-        const std::string expression =
-            trim(
-                code.substr(7)
-            );
-
-        if (!compileExpression(
-                expression,
-                output,
-                error
-            ))
-        {
-            return false;
-        }
-
-        output.push_back(
-            VMInstruction{
-                VMOpcode::RETURN
-            }
-        );
-
-        return true;
-    }
-
-    /*
-     * Standalone expression.
-     */
-    return compileExpression(
-        code,
-        output,
-        error
-    );
-}
-
-bool Compiler::compileExpression(
-    const std::string& expression,
-    std::vector<VMInstruction>& output,
-    std::string& error
-)
-{
     const std::string value =
-        trim(expression);
-
-    if (value.empty())
-    {
-        error =
-            "Empty expression";
-
-        return false;
-    }
-
-    /*
-     * Parenthesized expression.
-     */
-    if (
-        value.size() >= 2 &&
-        value.front() == '(' &&
-        value.back() == ')'
-    )
-    {
-        return compileExpression(
-            value.substr(
-                1,
-                value.size() - 2
-            ),
-            output,
-            error
+        readString(
+            source,
+            position
         );
-    }
-
-    /*
-     * nil
-     */
-    if (value == "nil")
-    {
-        output.push_back(
-            VMInstruction{
-                VMOpcode::PUSH_NIL
-            }
+    position =
+        skipWhitespace(
+            source,
+            position
         );
-
-        return true;
-    }
-
-    /*
-     * booleans
-     */
-    bool booleanValue = false;
-
-    if (
-        parseBoolean(
-            value,
-            booleanValue
-        )
-    )
-    {
-        VMInstruction instruction;
-
-        instruction.opcode =
-            VMOpcode::PUSH_BOOL;
-
-        instruction.operandA =
-            booleanValue ? 1 : 0;
-
-        output.push_back(
-            instruction
-        );
-
-        return true;
-    }
-
-    /*
-     * strings
-     */
-    std::string stringValue;
-
-    if (
-        parseString(
-            value,
-            stringValue
-        )
-    )
-    {
-        VMInstruction instruction;
-
-        instruction.opcode =
-            VMOpcode::PUSH_STRING;
-
-        instruction.text =
-            stringValue;
-
-        output.push_back(
-            instruction
-        );
-
-        return true;
-    }
-
-    /*
-     * number
-     */
-    double numberValue = 0.0;
-
-    if (
-        parseNumber(
-            value,
-            numberValue
-        )
-    )
-    {
-        VMInstruction instruction;
-
-        instruction.opcode =
-            VMOpcode::PUSH_NUMBER;
-
-        instruction.number =
-            numberValue;
-
-        output.push_back(
-            instruction
-        );
-
-        return true;
-    }
-
-    /*
-     * Unary minus.
-     */
-    if (
-        value.size() > 1 &&
-        value.front() == '-'
-    )
-    {
-        if (!compileExpression(
-                value.substr(1),
-                output,
-                error
-            ))
-        {
-            return false;
-        }
-
-        output.push_back(
-            VMInstruction{
-                VMOpcode::NEG
-            }
-        );
-
-        return true;
-    }
-
-    /*
-     * Unary not.
-     */
-    if (
-        value.size() > 4 &&
-        value.compare(
-            0,
-            4,
-            "not "
-        ) == 0
-    )
-    {
-        if (!compileExpression(
-                value.substr(4),
-                output,
-                error
-            ))
-        {
-            return false;
-        }
-
-        output.push_back(
-            VMInstruction{
-                VMOpcode::NOT
-            }
-        );
-
-        return true;
-    }
-
-    /*
-     * Arithmetic.
-     *
-     * We intentionally search from the right so
-     * expressions such as:
-     *
-     * 1 + 2 * 3
-     *
-     * can later be improved into a proper precedence
-     * parser without changing the VM format.
-     */
-    for (
-        const char operatorCharacter :
-        {'+', '-', '*', '/'}
-    )
-    {
-        const std::size_t position =
-            findOperator(
-                value,
-                operatorCharacter
-            );
-
-        if (
-            position != std::string::npos &&
-            position > 0 &&
-            position + 1 < value.size()
-        )
-        {
-            const VMOpcode opcode =
-                arithmeticOpcode(
-                    operatorCharacter
-                );
-
-            if (
-                opcode == VMOpcode::NOP
-            )
-            {
-                continue;
-            }
-
-            if (!compileExpression(
-                    value.substr(
-                        0,
-                        position
-                    ),
-                    output,
-                    error
-                ))
-            {
-                return false;
-            }
-
-            if (!compileExpression(
-                    value.substr(
-                        position + 1
-                    ),
-                    output,
-                    error
-                ))
-            {
-                return false;
-            }
-
-            output.push_back(
-                VMInstruction{
-                    opcode
-                }
-            );
-
-            return true;
-        }
-    }
-
-    /*
-     * Global lookup.
-     */
-    if (isIdentifier(value))
-    {
-        VMInstruction instruction;
-
-        instruction.opcode =
-            VMOpcode::GET_GLOBAL;
-
-        instruction.text =
-            value;
-
-        output.push_back(
-            instruction
-        );
-
-        return true;
-    }
-
-    error =
-        "Unsupported expression: " +
-        value;
-
-    return false;
+    expect(
+        source,
+        position,
+        ')'
+    );
+    builder.u8(
+        OP_PUSH_STRING
+    );
+    builder.string(
+        value
+    );
+    builder.u8(
+        OP_PRINT
+    );
 }
 
-std::string Compiler::serialize(
-    const std::vector<VMInstruction>& instructions
+}
+
+Bytecode Compiler::compile(
+const std::string& source
 ) const
 {
-    /*
-     * Binary format:
-     *
-     * Header:
-     *   "CVMI"
-     *   version u8
-     *   instruction count u32
-     *
-     * Each instruction:
-     *   opcode      u8
-     *   operandA    i32
-     *   operandB    i32
-     *   number      f64
-     *   textLength  u32
-     *   text        bytes
-     */
+if (source.empty())
+{
+throw std::runtime_error(
+“Source cannot be empty”
+);
+}
 
-    std::string output;
-
-    output.reserve(
-        instructions.size() * 32
+const std::string cleaned =
+    stripComments(
+        source
     );
-
-    output.append("CVMI", 4);
-
-    writeU8(
-        output,
-        1
-    );
-
-    writeU32(
-        output,
-        static_cast<std::uint32_t>(
-            instructions.size()
-        )
-    );
-
-    for (
-        const VMInstruction& instruction :
-        instructions
+Builder builder;
+/*
+ * Header:
+ *
+ * LVM1
+ * version
+ */
+builder.u8(MAGIC_0);
+builder.u8(MAGIC_1);
+builder.u8(MAGIC_2);
+builder.u8(MAGIC_3);
+builder.u8(VERSION);
+std::size_t position = 0;
+while (true)
+{
+    position =
+        skipWhitespace(
+            cleaned,
+            position
+        );
+    if (
+        position >= cleaned.size()
     )
     {
-        writeU8(
-            output,
-            static_cast<std::uint8_t>(
-                instruction.opcode
-            )
+        break;
+    }
+    /*
+     * A semicolon is optional.
+     */
+    if (cleaned[position] == ';')
+    {
+        ++position;
+        continue;
+    }
+    /*
+     * The first supported statement is:
+     *
+     * print("...")
+     */
+    const std::size_t statementStart =
+        position;
+    const std::string identifier =
+        readIdentifier(
+            cleaned,
+            position
         );
-
-        writeI32(
-            output,
-            instruction.operandA
-        );
-
-        writeI32(
-            output,
-            instruction.operandB
-        );
-
-        writeDouble(
-            output,
-            instruction.number
-        );
-
-        writeString(
-            output,
-            instruction.text
+    position =
+        statementStart;
+    if (identifier == "print")
+    {
+        compilePrint(
+            cleaned,
+            position,
+            builder
         );
     }
+    else
+    {
+        throw std::runtime_error(
+            "Unsupported Luau statement: " +
+            (
+                identifier.empty()
+                    ? std::string("<unknown>")
+                    : identifier
+            )
+        );
+    }
+    position =
+        skipWhitespace(
+            cleaned,
+            position
+        );
+    /*
+     * Allow:
+     *
+     * print("a")
+     * print("b")
+     *
+     * and:
+     *
+     * print("a"); print("b")
+     */
+    if (
+        position < cleaned.size() &&
+        cleaned[position] == ';'
+    )
+    {
+        ++position;
+    }
+}
+/*
+ * Every valid program ends with HALT.
+ */
+builder.u8(
+    OP_HALT
+);
+return Bytecode(
+    std::move(
+        builder.bytes
+    )
+);
 
-    return output;
 }
