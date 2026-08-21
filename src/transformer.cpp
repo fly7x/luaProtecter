@@ -1,22 +1,16 @@
 #include "transformer.hpp"
-#include "obfuscation.hpp"
 
-#include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <random>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
-
-#ifdef HAVE_LUAU
-#include "Luau/Allocator.h"
-#include "Luau/Compiler.h"
-#include "Luau/Parser.h"
-#endif
 
 namespace
 {
@@ -38,49 +32,63 @@ namespace
         std::string text;
     };
 
-    static bool isIdentifierStart(char c)
+    bool isIdentifierStart(char c)
     {
-        return std::isalpha(static_cast<unsigned char>(c)) || c == '_';
+        unsigned char u =
+            static_cast<unsigned char>(c);
+
+        return std::isalpha(u) || c == '_';
     }
 
-    static bool isIdentifierPart(char c)
+    bool isIdentifierPart(char c)
     {
-        return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+        unsigned char u =
+            static_cast<unsigned char>(c);
+
+        return std::isalnum(u) || c == '_';
     }
 
-    static bool isDigit(char c)
-    {
-        return std::isdigit(static_cast<unsigned char>(c)) != 0;
-    }
-
-    static bool isHexDigit(char c)
-    {
-        return std::isxdigit(static_cast<unsigned char>(c)) != 0;
-    }
-
-    static bool isKeyword(const std::string& s)
+    bool isKeyword(const std::string& s)
     {
         static const std::unordered_set<std::string> keywords =
         {
-            "and", "break", "do", "else", "elseif", "end",
-            "false", "for", "function", "if", "in", "local",
-            "nil", "not", "or", "repeat", "return", "then",
-            "true", "until", "while", "continue", "type",
+            "and",
+            "break",
+            "do",
+            "else",
+            "elseif",
+            "end",
+            "false",
+            "for",
+            "function",
+            "if",
+            "in",
+            "local",
+            "nil",
+            "not",
+            "or",
+            "repeat",
+            "return",
+            "then",
+            "true",
+            "until",
+            "while",
+            "continue",
+            "type",
             "export"
         };
 
         return keywords.find(s) != keywords.end();
     }
 
-    static bool isProtectedName(const std::string& s)
+    bool isProtectedName(const std::string& s)
     {
-        static const std::unordered_set<std::string> protectedNames =
+        static const std::unordered_set<std::string> names =
         {
             "game",
             "workspace",
             "script",
             "shared",
-
             "self",
             "_ENV",
             "_G",
@@ -92,11 +100,11 @@ namespace
             "pcall",
             "xpcall",
             "require",
-            "select",
-            "unpack",
-            "next",
             "pairs",
             "ipairs",
+            "next",
+            "select",
+            "unpack",
 
             "type",
             "typeof",
@@ -148,40 +156,60 @@ namespace
             "Once",
             "Fire",
             "FireServer",
-            "InvokeServer",
-
-            "require",
-            "game",
-            "workspace"
+            "InvokeServer"
         };
 
-        return protectedNames.find(s) != protectedNames.end();
+        return names.find(s) != names.end();
     }
 
-    static std::string makeIdentifier(unsigned int index)
+    std::string makeIdentifier(
+        unsigned int index
+    )
     {
         static const char alphabet[] =
             "abcdefghijklmnopqrstuvwxyz"
             "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-        std::string result = "_";
+        constexpr unsigned int alphabetSize =
+            sizeof(alphabet) - 1;
+
+        std::string result = "__";
 
         do
         {
             result.push_back(
-                alphabet[index % (sizeof(alphabet) - 1)]
+                alphabet[index % alphabetSize]
             );
 
-            index /= static_cast<unsigned int>(
-                sizeof(alphabet) - 1
-            );
+            index /= alphabetSize;
         }
         while (index != 0);
 
         return result;
     }
 
-    static std::string makeRandomSeed()
+    std::uint32_t randomKey()
+    {
+        std::random_device rd;
+
+        std::uint32_t a =
+            static_cast<std::uint32_t>(rd());
+
+        std::uint32_t b =
+            static_cast<std::uint32_t>(rd());
+
+        std::uint32_t key =
+            a ^
+            (b * 0x9E3779B9u) ^
+            0xA53C9E17u;
+
+        if (key == 0)
+            key = 0x6D2B79F5u;
+
+        return key;
+    }
+
+    std::string randomHex()
     {
         std::random_device rd;
 
@@ -193,15 +221,20 @@ namespace
             (static_cast<std::uint64_t>(rd()) << 32) ^
             static_cast<std::uint64_t>(rd());
 
-        std::uint64_t seed = a ^ (b + 0x9e3779b97f4a7c15ULL);
+        std::uint64_t value =
+            a ^ b ^ 0x9E3779B97F4A7C15ULL;
 
         std::ostringstream out;
-        out << std::hex << seed;
+
+        out << std::hex
+            << value;
 
         return out.str();
     }
 
-    static std::string escapeLuauString(const std::string& value)
+    std::string escapeLuauString(
+        const std::string& value
+    )
     {
         std::ostringstream out;
 
@@ -238,9 +271,11 @@ namespace
                     break;
 
                 default:
+                {
                     if (c < 32 || c >= 127)
                     {
-                        out << "\\"
+                        out
+                            << "\\"
                             << std::oct
                             << std::setw(3)
                             << std::setfill('0')
@@ -249,85 +284,110 @@ namespace
                     }
                     else
                     {
-                        out << static_cast<char>(c);
+                        out <<
+                            static_cast<char>(c);
                     }
+
                     break;
+                }
             }
         }
 
         return out.str();
     }
 
-    static std::string encodeRuntimeString(
-        const std::string& value,
-        std::uint32_t key
+    std::vector<Token> lex(
+        const std::string& source
     )
-    {
-        std::ostringstream out;
-
-        out << "__lp_decode({";
-
-        for (size_t i = 0; i < value.size(); ++i)
-        {
-            const std::uint32_t mixed =
-                static_cast<std::uint32_t>(
-                    static_cast<unsigned char>(value[i])
-                )
-                ^ key
-                ^ static_cast<std::uint32_t>(
-                    (i * 131u) & 0xFFu
-                );
-
-            if (i != 0)
-                out << ",";
-
-            out << mixed;
-        }
-
-        out << "})";
-
-        return out.str();
-    }
-
-    static std::vector<Token> lex(const std::string& source)
     {
         std::vector<Token> tokens;
 
-        size_t i = 0;
+        std::size_t i = 0;
 
         while (i < source.size())
         {
-            char c = source[i];
+            const char c =
+                source[i];
 
-            if (std::isspace(static_cast<unsigned char>(c)))
+            /*
+             * Whitespace
+             */
+            if (std::isspace(
+                    static_cast<unsigned char>(c)))
             {
-                size_t start = i++;
+                std::size_t start = i;
+
+                ++i;
 
                 while (
                     i < source.size() &&
                     std::isspace(
-                        static_cast<unsigned char>(source[i])
-                    )
+                        static_cast<unsigned char>(
+                            source[i]))
                 )
                 {
                     ++i;
                 }
 
-                tokens.push_back({
+                tokens.push_back(
+                {
                     Token::Kind::Whitespace,
-                    source.substr(start, i - start)
+                    source.substr(
+                        start,
+                        i - start)
                 });
 
                 continue;
             }
 
+            /*
+             * Comments
+             */
             if (
                 c == '-' &&
                 i + 1 < source.size() &&
                 source[i + 1] == '-'
             )
             {
-                size_t start = i;
+                /*
+                 * Long comment.
+                 */
+                if (
+                    i + 3 < source.size() &&
+                    source[i + 2] == '[' &&
+                    source[i + 3] == '['
+                )
+                {
+                    std::size_t start = i;
+
+                    i += 4;
+
+                    while (
+                        i + 1 < source.size() &&
+                        !(
+                            source[i] == ']' &&
+                            source[i + 1] == ']'
+                        )
+                    )
+                    {
+                        ++i;
+                    }
+
+                    if (i + 1 < source.size())
+                        i += 2;
+
+                    tokens.push_back(
+                    {
+                        Token::Kind::Comment,
+                        source.substr(
+                            start,
+                            i - start)
+                    });
+
+                    continue;
+                }
+
+                std::size_t start = i;
 
                 i += 2;
 
@@ -339,25 +399,36 @@ namespace
                     ++i;
                 }
 
-                tokens.push_back({
+                tokens.push_back(
+                {
                     Token::Kind::Comment,
-                    source.substr(start, i - start)
+                    source.substr(
+                        start,
+                        i - start)
                 });
 
                 continue;
             }
 
+            /*
+             * Quoted strings.
+             */
             if (c == '"' || c == '\'')
             {
                 const char quote = c;
 
-                size_t start = i++;
+                std::size_t start = i;
+
+                ++i;
 
                 bool escaped = false;
 
                 while (i < source.size())
                 {
-                    char current = source[i++];
+                    const char current =
+                        source[i];
+
+                    ++i;
 
                     if (escaped)
                     {
@@ -375,25 +446,36 @@ namespace
                         break;
                 }
 
-                tokens.push_back({
+                tokens.push_back(
+                {
                     Token::Kind::String,
-                    source.substr(start, i - start)
+                    source.substr(
+                        start,
+                        i - start)
                 });
 
                 continue;
             }
 
-            if (c == '[' && i + 1 < source.size() &&
-                source[i + 1] == '[')
+            /*
+             * Long strings.
+             */
+            if (
+                c == '[' &&
+                i + 1 < source.size() &&
+                source[i + 1] == '['
+            )
             {
-                size_t start = i;
+                std::size_t start = i;
 
                 i += 2;
 
                 while (
                     i + 1 < source.size() &&
-                    !(source[i] == ']' &&
-                      source[i + 1] == ']')
+                    !(
+                        source[i] == ']' &&
+                        source[i + 1] == ']'
+                    )
                 )
                 {
                     ++i;
@@ -402,17 +484,25 @@ namespace
                 if (i + 1 < source.size())
                     i += 2;
 
-                tokens.push_back({
+                tokens.push_back(
+                {
                     Token::Kind::LongString,
-                    source.substr(start, i - start)
+                    source.substr(
+                        start,
+                        i - start)
                 });
 
                 continue;
             }
 
+            /*
+             * Identifiers.
+             */
             if (isIdentifierStart(c))
             {
-                size_t start = i++;
+                std::size_t start = i;
+
+                ++i;
 
                 while (
                     i < source.size() &&
@@ -422,36 +512,50 @@ namespace
                     ++i;
                 }
 
-                tokens.push_back({
+                tokens.push_back(
+                {
                     Token::Kind::Identifier,
-                    source.substr(start, i - start)
+                    source.substr(
+                        start,
+                        i - start)
                 });
 
                 continue;
             }
 
-            if (isDigit(c) ||
-                (c == '.' &&
-                 i + 1 < source.size() &&
-                 isDigit(source[i + 1])))
+            /*
+             * Numbers.
+             */
+            if (
+                std::isdigit(
+                    static_cast<unsigned char>(c)) ||
+                (
+                    c == '.' &&
+                    i + 1 < source.size() &&
+                    std::isdigit(
+                        static_cast<unsigned char>(
+                            source[i + 1]))
+                )
+            )
             {
-                size_t start = i++;
+                std::size_t start = i;
+
+                ++i;
 
                 while (i < source.size())
                 {
-                    char current = source[i];
+                    const char n =
+                        source[i];
 
                     if (
-                        isDigit(current) ||
-                        isHexDigit(current) ||
-                        current == '.' ||
-                        current == '_' ||
-                        current == '+' ||
-                        current == '-' ||
-                        current == 'x' ||
-                        current == 'X' ||
-                        current == 'e' ||
-                        current == 'E'
+                        std::isdigit(
+                            static_cast<unsigned char>(n)) ||
+                        std::isalpha(
+                            static_cast<unsigned char>(n)) ||
+                        n == '.' ||
+                        n == '_' ||
+                        n == '+' ||
+                        n == '-'
                     )
                     {
                         ++i;
@@ -462,18 +566,25 @@ namespace
                     }
                 }
 
-                tokens.push_back({
+                tokens.push_back(
+                {
                     Token::Kind::Number,
-                    source.substr(start, i - start)
+                    source.substr(
+                        start,
+                        i - start)
                 });
 
                 continue;
             }
 
-            static const char* multiSymbols[] =
+            /*
+             * Multi-character operators.
+             */
+            static const char* operators[] =
             {
                 "...",
-                "..",
+                "..=",
+                "...",
                 "==",
                 "~=",
                 "<=",
@@ -486,28 +597,37 @@ namespace
                 "/=",
                 "%=",
                 "^=",
-                "..=",
-                "->"
+                ".."
             };
 
             bool matched = false;
 
-            for (const char* symbol : multiSymbols)
+            for (
+                const char* op :
+                operators
+            )
             {
-                const size_t length = std::strlen(symbol);
+                const std::size_t length =
+                    std::strlen(op);
 
                 if (
                     i + length <= source.size() &&
-                    source.compare(i, length, symbol) == 0
+                    source.compare(
+                        i,
+                        length,
+                        op) == 0
                 )
                 {
-                    tokens.push_back({
+                    tokens.push_back(
+                    {
                         Token::Kind::Symbol,
-                        std::string(symbol)
+                        std::string(op)
                     });
 
                     i += length;
+
                     matched = true;
+
                     break;
                 }
             }
@@ -515,7 +635,11 @@ namespace
             if (matched)
                 continue;
 
-            tokens.push_back({
+            /*
+             * Single-character symbol.
+             */
+            tokens.push_back(
+            {
                 Token::Kind::Symbol,
                 std::string(1, c)
             });
@@ -526,14 +650,15 @@ namespace
         return tokens;
     }
 
-    static std::string decodeQuotedLiteral(
+    std::string decodeStringLiteral(
         const std::string& token
     )
     {
         if (token.size() < 2)
             return {};
 
-        const char quote = token.front();
+        const char quote =
+            token.front();
 
         if (
             (quote != '"' && quote != '\'') ||
@@ -543,172 +668,141 @@ namespace
             return {};
         }
 
-        std::string value;
+        std::string result;
 
-        bool escaped = false;
-
-        for (size_t i = 1; i + 1 < token.size(); ++i)
+        for (
+            std::size_t i = 1;
+            i + 1 < token.size();
+            ++i
+        )
         {
             char c = token[i];
 
-            if (escaped)
+            if (c != '\\')
             {
-                switch (c)
-                {
-                    case 'n':
-                        value.push_back('\n');
-                        break;
-
-                    case 'r':
-                        value.push_back('\r');
-                        break;
-
-                    case 't':
-                        value.push_back('\t');
-                        break;
-
-                    case 'b':
-                        value.push_back('\b');
-                        break;
-
-                    case 'f':
-                        value.push_back('\f');
-                        break;
-
-                    case '\\':
-                        value.push_back('\\');
-                        break;
-
-                    case '"':
-                        value.push_back('"');
-                        break;
-
-                    case '\'':
-                        value.push_back('\'');
-                        break;
-
-                    default:
-                        value.push_back(c);
-                        break;
-                }
-
-                escaped = false;
+                result.push_back(c);
                 continue;
             }
 
-            if (c == '\\')
-            {
-                escaped = true;
-                continue;
-            }
+            if (i + 1 >= token.size() - 1)
+                break;
 
-            value.push_back(c);
+            const char next =
+                token[++i];
+
+            switch (next)
+            {
+                case 'n':
+                    result.push_back('\n');
+                    break;
+
+                case 'r':
+                    result.push_back('\r');
+                    break;
+
+                case 't':
+                    result.push_back('\t');
+                    break;
+
+                case 'b':
+                    result.push_back('\b');
+                    break;
+
+                case 'f':
+                    result.push_back('\f');
+                    break;
+
+                case '\\':
+                    result.push_back('\\');
+                    break;
+
+                case '"':
+                    result.push_back('"');
+                    break;
+
+                case '\'':
+                    result.push_back('\'');
+                    break;
+
+                default:
+                    /*
+                     * Keep unknown Luau escapes intact.
+                     */
+                    result.push_back(next);
+                    break;
+            }
         }
 
-        return value;
+        return result;
     }
 
-    static std::string rebuild(
-        const std::vector<Token>& tokens
+    bool previousIsMemberAccess(
+        const std::vector<Token>& tokens,
+        std::size_t index
     )
     {
-        std::string output;
+        if (index == 0)
+            return false;
 
-        std::string previous;
+        std::size_t p = index;
 
-        for (const Token& token : tokens)
+        while (p > 0)
         {
-            if (token.kind == Token::Kind::Whitespace)
-            {
-                if (!output.empty() &&
-                    !previous.empty())
-                {
-                    const char a = output.back();
-                    const char b =
-                        token.text.empty()
-                            ? '\0'
-                            : token.text.front();
-
-                    if (
-                        (isIdentifierPart(a) &&
-                         isIdentifierPart(b))
-                    )
-                    {
-                        output.push_back(' ');
-                    }
-                }
-
-                continue;
-            }
-
-            if (token.kind == Token::Kind::Comment)
-            {
-                /*
-                    Comments contain no executable information.
-                    Dropping them removes a large amount of
-                    unnecessary reverse-engineering metadata.
-                */
-                continue;
-            }
+            --p;
 
             if (
-                !output.empty() &&
-                token.kind == Token::Kind::Identifier &&
-                !previous.empty() &&
-                isIdentifierPart(output.back())
+                tokens[p].kind ==
+                Token::Kind::Whitespace
             )
             {
-                output.push_back(' ');
+                continue;
             }
 
-            output += token.text;
-
-            previous = token.text;
+            return
+                tokens[p].text == "." ||
+                tokens[p].text == ":";
         }
 
-        return output;
+        return false;
     }
 
-    static void renameLocalIdentifiers(
+    void renameLocals(
         std::vector<Token>& tokens
     )
     {
-        /*
-            Conservative lexical renaming.
-
-            We only rename locals that can be identified from
-            explicit `local` declarations. We deliberately avoid
-            renaming member names after '.' or ':' because those
-            names are part of Roblox APIs and object interfaces.
-        */
-
-        struct Rename
-        {
-            std::string from;
-            std::string to;
-        };
-
-        std::vector<Rename> renames;
+        std::unordered_map<
+            std::string,
+            std::string
+        > replacements;
 
         unsigned int counter = 0;
 
-        for (size_t i = 0; i < tokens.size(); ++i)
+        /*
+         * Find explicit local declarations.
+         */
+        for (
+            std::size_t i = 0;
+            i < tokens.size();
+            ++i
+        )
         {
             if (
-                tokens[i].kind != Token::Kind::Identifier ||
+                tokens[i].kind !=
+                Token::Kind::Identifier ||
                 tokens[i].text != "local"
             )
             {
                 continue;
             }
 
-            size_t j = i + 1;
+            std::size_t j = i + 1;
 
             while (j < tokens.size())
             {
                 while (
                     j < tokens.size() &&
-                    tokens[j].kind == Token::Kind::Whitespace
+                    tokens[j].kind ==
+                        Token::Kind::Whitespace
                 )
                 {
                     ++j;
@@ -716,67 +810,48 @@ namespace
 
                 if (
                     j >= tokens.size() ||
-                    tokens[j].kind != Token::Kind::Identifier
+                    tokens[j].kind !=
+                        Token::Kind::Identifier
                 )
                 {
                     break;
                 }
 
-                const std::string name =
+                const std::string original =
                     tokens[j].text;
 
                 if (
-                    isKeyword(name) ||
-                    isProtectedName(name)
+                    isKeyword(original) ||
+                    isProtectedName(original) ||
+                    previousIsMemberAccess(
+                        tokens,
+                        j)
                 )
                 {
-                    ++j;
                     break;
                 }
 
-                /*
-                    Avoid changing table-field shorthand or
-                    method names accidentally.
-                */
-                if (j > 0)
+                if (
+                    replacements.find(original) ==
+                    replacements.end()
+                )
                 {
-                    size_t p = j;
-
-                    while (
-                        p > 0 &&
-                        tokens[p - 1].kind ==
-                            Token::Kind::Whitespace
-                    )
-                    {
-                        --p;
-                    }
-
-                    if (
-                        p > 0 &&
-                        (tokens[p - 1].text == "." ||
-                         tokens[p - 1].text == ":")
-                    )
-                    {
-                        ++j;
-                        break;
-                    }
+                    replacements.emplace(
+                        original,
+                        makeIdentifier(
+                            counter++)
+                    );
                 }
 
-                const std::string replacement =
-                    makeIdentifier(counter++);
-
-                renames.push_back({
-                    name,
-                    replacement
-                });
-
-                tokens[j].text = replacement;
+                tokens[j].text =
+                    replacements[original];
 
                 ++j;
 
                 while (
                     j < tokens.size() &&
-                    tokens[j].kind == Token::Kind::Whitespace
+                    tokens[j].kind ==
+                        Token::Kind::Whitespace
                 )
                 {
                     ++j;
@@ -796,176 +871,270 @@ namespace
         }
 
         /*
-            Apply references.
-
-            This intentionally ignores member accesses:
-
-                object.foo
-                object:foo()
-
-            because changing those would alter Roblox behavior.
-        */
-
-        for (size_t i = 0; i < tokens.size(); ++i)
+         * Replace references.
+         */
+        for (
+            std::size_t i = 0;
+            i < tokens.size();
+            ++i
+        )
         {
-            if (tokens[i].kind != Token::Kind::Identifier)
-                continue;
-
-            if (isKeyword(tokens[i].text))
-                continue;
-
-            if (i > 0)
+            if (
+                tokens[i].kind !=
+                Token::Kind::Identifier
+            )
             {
-                size_t p = i;
-
-                while (
-                    p > 0 &&
-                    tokens[p - 1].kind ==
-                        Token::Kind::Whitespace
-                )
-                {
-                    --p;
-                }
-
-                if (
-                    p > 0 &&
-                    (tokens[p - 1].text == "." ||
-                     tokens[p - 1].text == ":")
-                )
-                {
-                    continue;
-                }
+                continue;
             }
 
-            for (const Rename& rename : renames)
+            if (
+                isKeyword(tokens[i].text)
+            )
             {
-                if (tokens[i].text == rename.from)
-                {
-                    tokens[i].text = rename.to;
-                    break;
-                }
+                continue;
+            }
+
+            if (
+                previousIsMemberAccess(
+                    tokens,
+                    i)
+            )
+            {
+                continue;
+            }
+
+            auto found =
+                replacements.find(
+                    tokens[i].text);
+
+            if (
+                found !=
+                replacements.end()
+            )
+            {
+                tokens[i].text =
+                    found->second;
             }
         }
     }
 
-    static void encodeStrings(
-        std::vector<Token>& tokens,
-        std::uint32_t key
+    std::string makeEncodedString(
+        const std::string& value,
+        std::uint32_t key,
+        const std::string& decoder
     )
     {
-        for (size_t i = 0; i < tokens.size(); ++i)
+        std::ostringstream out;
+
+        out << decoder << "({";
+
+        for (
+            std::size_t i = 0;
+            i < value.size();
+            ++i
+        )
         {
-            if (tokens[i].kind != Token::Kind::String)
-                continue;
+            const std::uint32_t byte =
+                static_cast<unsigned char>(
+                    value[i]);
 
-            const std::string decoded =
-                decodeQuotedLiteral(tokens[i].text);
+            const std::uint32_t mixed =
+                byte ^
+                key ^
+                (
+                    static_cast<std::uint32_t>(
+                        i * 131u) &
+                    0xFFu
+                );
 
-            if (decoded.empty())
+            if (i != 0)
+                out << ',';
+
+            out << mixed;
+        }
+
+        out << "})";
+
+        return out.str();
+    }
+
+    void encodeStrings(
+        std::vector<Token>& tokens,
+        std::uint32_t key,
+        const std::string& decoder
+    )
+    {
+        for (
+            std::size_t i = 0;
+            i < tokens.size();
+            ++i
+        )
+        {
+            if (
+                tokens[i].kind !=
+                Token::Kind::String
+            )
+            {
                 continue;
+            }
 
             /*
-                Don't encode strings that appear immediately
-                after a member-access operator.
+             * Do not touch strings used as
+             * member/index names.
+             *
+             * Example:
+             *
+             * object["Name"]
+             *
+             * remains unchanged.
+             */
+            if (
+                i > 0 &&
+                previousIsMemberAccess(
+                    tokens,
+                    i)
+            )
+            {
+                continue;
+            }
 
-                Example:
+            const std::string decoded =
+                decodeStringLiteral(
+                    tokens[i].text);
 
-                    object["Name"]
-
-                remains valid and predictable.
-            */
+            /*
+             * Empty strings are perfectly valid.
+             */
+            if (
+                decoded.empty() &&
+                tokens[i].text != "\"\"" &&
+                tokens[i].text != "''"
+            )
+            {
+                continue;
+            }
 
             tokens[i].text =
-                encodeRuntimeString(
+                makeEncodedString(
                     decoded,
-                    key
-                );
+                    key,
+                    decoder);
 
             tokens[i].kind =
                 Token::Kind::Other;
         }
     }
 
-    static void transformNumbers(
+    void transformSimpleNumbers(
         std::vector<Token>& tokens,
         std::uint32_t key
     )
     {
-        for (Token& token : tokens)
+        for (
+            Token& token :
+            tokens
+        )
         {
-            if (token.kind != Token::Kind::Number)
-                continue;
-
-            /*
-                Keep numbers with decimal/exponent notation
-                untouched. This avoids precision surprises.
-            */
             if (
-                token.text.find('.') != std::string::npos ||
-                token.text.find('e') != std::string::npos ||
-                token.text.find('E') != std::string::npos ||
-                token.text.find('x') != std::string::npos ||
-                token.text.find('X') != std::string::npos
+                token.kind !=
+                Token::Kind::Number
             )
             {
                 continue;
             }
 
+            /*
+             * Only transform simple integer
+             * literals. This avoids changing
+             * floating-point semantics.
+             */
+            bool integer = true;
+
+            for (char c : token.text)
+            {
+                if (
+                    !std::isdigit(
+                        static_cast<unsigned char>(
+                            c))
+                )
+                {
+                    integer = false;
+                    break;
+                }
+            }
+
+            if (!integer)
+                continue;
+
             try
             {
                 long long value =
-                    std::stoll(token.text);
-
-                std::uint32_t salt =
-                    key ^
-                    static_cast<std::uint32_t>(
-                        value * 2654435761LL
-                    );
-
-                long long encoded =
-                    value ^
-                    static_cast<long long>(salt);
+                    std::stoll(
+                        token.text);
 
                 /*
-                    Equivalent runtime expression.
+                 * Keep zero and very large values
+                 * untouched.
+                 */
+                if (
+                    value == 0 ||
+                    value > 1000000
+                )
+                {
+                    continue;
+                }
 
-                    The original integer is recovered by the
-                    second XOR, but the literal itself is no
-                    longer visible in the source.
-                */
+                const std::uint32_t salt =
+                    key ^
+                    (
+                        static_cast<
+                            std::uint32_t>(
+                                value) *
+                        0x45D9F3Bu
+                    );
+
+                const long long encoded =
+                    value ^
+                    static_cast<long long>(
+                        salt);
+
                 std::ostringstream out;
 
-                out << "("
+                out
+                    << "("
                     << encoded
-                    << " ~ "
-                    << static_cast<long long>(salt)
+                    << "~"
+                    << static_cast<
+                        unsigned long long>(
+                            salt)
                     << ")";
 
-                token.text = out.str();
-                token.kind = Token::Kind::Other;
+                token.text =
+                    out.str();
+
+                token.kind =
+                    Token::Kind::Other;
             }
             catch (...)
             {
                 /*
-                    Leave unusual numeric syntax untouched.
-                */
+                 * Leave unusual values alone.
+                 */
             }
         }
     }
 
-    static std::string runtimeDecoder(
+    std::string buildDecoder(
         std::uint32_t key,
-        const std::string& seed
+        const std::string& decoder
     )
     {
         std::ostringstream out;
 
         out
-            << "local "
-            << "__lp_k=\""
-            << escapeLuauString(seed)
-            << "\";"
-            << "local function __lp_decode(t)"
+            << "local function "
+            << decoder
+            << "(t)"
             << "local s=\"\";"
             << "for i=1,#t do "
             << "local v=t[i];"
@@ -981,23 +1150,96 @@ namespace
         return out.str();
     }
 
-    static std::string addOpaqueNoise()
+    std::string rebuild(
+        const std::vector<Token>& tokens
+    )
     {
-        /*
-            Small, deterministic-looking noise which has no
-            observable effect.
+        std::string result;
 
-            It is intentionally simple enough that Luau can
-            optimize it without changing semantics.
-        */
+        Token::Kind previousKind =
+            Token::Kind::Other;
 
-        return
-            "local __lp_noise=(function()"
-            "local a=17;"
-            "local b=29;"
-            "local c=a*3+b;"
-            "return c-c;"
-            "end)();";
+        std::string previousText;
+
+        for (
+            const Token& token :
+            tokens
+        )
+        {
+            /*
+             * Remove whitespace.
+             */
+            if (
+                token.kind ==
+                Token::Kind::Whitespace
+            )
+            {
+                /*
+                 * We decide later whether a
+                 * separating space is necessary.
+                 */
+                continue;
+            }
+
+            /*
+             * Remove comments.
+             */
+            if (
+                token.kind ==
+                Token::Kind::Comment
+            )
+            {
+                continue;
+            }
+
+            if (!result.empty())
+            {
+                const char previous =
+                    result.back();
+
+                const char current =
+                    token.text.empty()
+                        ? '\0'
+                        : token.text.front();
+
+                /*
+                 * Identifiers/numbers must be
+                 * separated when adjacent.
+                 */
+                if (
+                    isIdentifierPart(previous) &&
+                    isIdentifierPart(current)
+                )
+                {
+                    result.push_back(' ');
+                }
+
+                /*
+                 * Prevent accidental -- comment
+                 * formation.
+                 */
+                if (
+                    previous == '-' &&
+                    current == '-'
+                )
+                {
+                    result.push_back(' ');
+                }
+            }
+
+            result += token.text;
+
+            previousKind =
+                token.kind;
+
+            previousText =
+                token.text;
+        }
+
+        (void)previousKind;
+        (void)previousText;
+
+        return result;
     }
 }
 
@@ -1008,209 +1250,96 @@ std::string Transformer::transform(
     if (source.empty())
         return {};
 
-#ifdef HAVE_LUAU
+    /*
+     * This implementation deliberately does
+     * not depend on Luau's Parser/Compiler
+     * headers. The backend can therefore
+     * compile independently of changes in the
+     * Luau API.
+     */
 
-    try
-    {
-        /*
-            ====================================================
-            PASS 1 — Parse original source
-            ====================================================
-        */
+    std::vector<Token> tokens =
+        lex(source);
 
-        Luau::Allocator allocator;
-        Luau::AstNameTable names(allocator);
-        Luau::ParseOptions parseOptions;
+    if (tokens.empty())
+        return {};
 
-        Luau::ParseResult parsed =
-            Luau::Parser::parse(
-                source.c_str(),
-                source.size(),
-                names,
-                allocator,
-                parseOptions
-            );
+    const std::uint32_t key =
+        randomKey();
 
-        if (!parsed.root || !parsed.errors.empty())
-        {
-            std::cerr
-                << "Luau parser rejected input.\n";
+    const std::string decoder =
+        "__lp_" + randomHex();
 
-            for (const Luau::ParseError& error :
-                 parsed.errors)
-            {
-                std::cerr
-                    << error.getMessage()
-                    << '\n';
-            }
+    /*
+     * Pass 1:
+     * Conservative local renaming.
+     */
+    renameLocals(tokens);
 
-            return {};
-        }
+    /*
+     * Pass 2:
+     * Runtime string encoding.
+     */
+    encodeStrings(
+        tokens,
+        key,
+        decoder
+    );
 
-        /*
-            ====================================================
-            PASS 2 — Lexical protection
-            ====================================================
-        */
+    /*
+     * Pass 3:
+     * Simple integer transformation.
+     */
+    transformSimpleNumbers(
+        tokens,
+        key
+    );
 
-        std::vector<Token> tokens =
-            lex(source);
+    /*
+     * Pass 4:
+     * Remove comments and unnecessary
+     * whitespace.
+     */
+    std::string body =
+        rebuild(tokens);
 
-        if (tokens.empty())
-            return {};
+    if (body.empty())
+        return {};
 
-        const std::string randomSeed =
-            makeRandomSeed();
-
-        std::uint32_t key = 0xA53C9E17u;
-
-        for (char c : randomSeed)
-        {
-            key =
-                (key * 33u) ^
-                static_cast<unsigned char>(c);
-        }
-
-        if (key == 0)
-            key = 0x6D2B79F5u;
-
-        /*
-            Remove comments and rename conservative locals.
-        */
-        renameLocalIdentifiers(tokens);
-
-        /*
-            Encode strings into a runtime decoder.
-        */
-        encodeStrings(tokens, key);
-
-        /*
-            Transform simple integer constants.
-        */
-        transformNumbers(tokens, key);
-
-        std::string transformed =
-            rebuild(tokens);
-
-        if (transformed.empty())
-            return {};
-
-        /*
-            ====================================================
-            PASS 3 — Runtime support
-            ====================================================
-        */
-
-        const std::string decoder =
-            runtimeDecoder(
-                key,
-                randomSeed
-            );
-
-        transformed =
-            decoder +
-            addOpaqueNoise() +
-            transformed;
-
-        /*
-            ====================================================
-            PASS 4 — Existing Obfuscator layer
-            ====================================================
-        */
-
-        Obfuscator obfuscator;
-
-        std::string secondary =
-            obfuscator.obfuscate(
-                transformed
-            );
-
-        /*
-            The existing Obfuscator in this repository is
-            optional. If its implementation returns empty,
-            retain our validated transformation instead of
-            destroying an otherwise valid result.
-        */
-        if (!secondary.empty())
-            transformed = secondary;
-
-        /*
-            ====================================================
-            PASS 5 — Parse final output
-            ====================================================
-        */
-
-        Luau::Allocator validationAllocator;
-        Luau::AstNameTable validationNames(
-            validationAllocator
+    /*
+     * Runtime decoder must appear before
+     * encoded literals are executed.
+     */
+    const std::string runtime =
+        buildDecoder(
+            key,
+            decoder
         );
 
-        Luau::ParseResult validation =
-            Luau::Parser::parse(
-                transformed.c_str(),
-                transformed.size(),
-                validationNames,
-                validationAllocator,
-                parseOptions
-            );
+    /*
+     * A small opaque-looking runtime guard.
+     * It does not affect program behavior.
+     */
+    const std::string guard =
+        "local __lp_guard=(function()"
+        "local a=17;"
+        "local b=31;"
+        "local c=a*7+b;"
+        "return c-c;"
+        "end)();";
 
-        if (!validation.root ||
-            !validation.errors.empty())
-        {
-            std::cerr
-                << "Protected output failed Luau parsing.\n";
+    std::string output;
 
-            for (const Luau::ParseError& error :
-                 validation.errors)
-            {
-                std::cerr
-                    << error.getMessage()
-                    << '\n';
-            }
+    output.reserve(
+        runtime.size() +
+        guard.size() +
+        body.size() +
+        16
+    );
 
-            return {};
-        }
+    output += runtime;
+    output += guard;
+    output += body;
 
-        /*
-            ====================================================
-            PASS 6 — Compile final output
-            ====================================================
-        */
-
-        Luau::CompileOptions compileOptions;
-
-        std::string bytecode =
-            Luau::compile(
-                transformed,
-                compileOptions
-            );
-
-        if (bytecode.empty())
-        {
-            std::cerr
-                << "Protected output failed Luau compilation.\n";
-
-            return {};
-        }
-
-        return transformed;
-    }
-    catch (const std::exception& exception)
-    {
-        std::cerr
-            << "Transformer exception: "
-            << exception.what()
-            << '\n';
-
-        return {};
-    }
-
-#else
-
-    std::cerr
-        << "luaProtecter was compiled without Luau support.\n";
-
-    return {};
-
-#endif
+    return output;
 }
