@@ -1,20 +1,20 @@
 #include "vm.hpp"
 
-#include <Luau/BytecodeBuilder.h>
-#include <Luau/Compiler.h>
-#include <Luau/Config.h>
-
 #include <cstdint>
-#include <exception>
+#include <cstring>
 #include <string>
 #include <vector>
 
+#include "Luau/Compiler.h"
+#include "lua.h"
+#include "lualib.h"
+
 namespace
 {
-    constexpr std::uint32_t PROTECTION_MAGIC =
-        0x31564D4Cu; // "LVM1"
+    constexpr std::uint32_t MAGIC = 0x31564D4Cu; // LVM1
+    constexpr std::uint8_t VERSION = 1;
 
-    constexpr std::uint8_t PROTECTION_VERSION = 1;
+    constexpr std::size_t HEADER_SIZE = 13;
 
     bool readU32(
         const std::vector<std::uint8_t>& data,
@@ -22,8 +22,11 @@ namespace
         std::uint32_t& value
     )
     {
-        if (position + 4 > data.size())
+        if (position > data.size() ||
+            data.size() - position < 4)
+        {
             return false;
+        }
 
         value =
             static_cast<std::uint32_t>(data[position]) |
@@ -53,12 +56,12 @@ namespace
         std::size_t position
     )
     {
+        const std::uint32_t index =
+            static_cast<std::uint32_t>(position);
+
         std::uint32_t state =
             seed ^
-            (
-                static_cast<std::uint32_t>(position) *
-                0x9E3779B9u
-            );
+            (index * 0x9E3779B9u);
 
         state = mix32(state);
 
@@ -67,16 +70,15 @@ namespace
         );
     }
 
-    bool restore(
-        const Bytecode& protectedBytecode,
-        std::string& bytecode,
+    bool unwrap(
+        const Bytecode& package,
+        std::vector<std::uint8_t>& recovered,
         std::string& error
     )
     {
-        const auto& data =
-            protectedBytecode.data();
+        const auto& data = package.data();
 
-        if (data.size() < 14)
+        if (data.size() < HEADER_SIZE)
         {
             error = "Protected bytecode is too small";
             return false;
@@ -88,22 +90,22 @@ namespace
 
         if (!readU32(data, position, magic))
         {
-            error = "Invalid protected header";
+            error = "Invalid protected bytecode header";
             return false;
         }
 
-        if (magic != PROTECTION_MAGIC)
+        if (magic != MAGIC)
         {
-            error = "Invalid protected bytecode magic";
+            error = "Invalid LVM package";
             return false;
         }
 
         const std::uint8_t version =
             data[position++];
 
-        if (version != PROTECTION_VERSION)
+        if (version != VERSION)
         {
-            error = "Unsupported protected bytecode version";
+            error = "Unsupported LVM package version";
             return false;
         }
 
@@ -111,45 +113,67 @@ namespace
 
         if (!readU32(data, position, seed))
         {
-            error = "Missing protection seed";
+            error = "Missing LVM seed";
             return false;
         }
 
         std::uint32_t originalSize = 0;
 
-        if (!readU32(data, position, originalSize))
+        if (!readU32(
+                data,
+                position,
+                originalSize
+            ))
         {
-            error = "Missing bytecode size";
+            error = "Missing LVM bytecode size";
             return false;
         }
 
+        const std::size_t payloadSize =
+            data.size() - position;
+
         if (
-            static_cast<std::size_t>(originalSize) !=
-            data.size() - position
+            static_cast<std::size_t>(
+                originalSize
+            ) != payloadSize
         )
         {
             error = "Protected bytecode size mismatch";
             return false;
         }
 
-        bytecode.resize(
-            static_cast<std::size_t>(originalSize)
-        );
+        recovered.resize(payloadSize);
 
         for (
             std::size_t i = 0;
-            i < bytecode.size();
+            i < payloadSize;
             ++i
         )
         {
-            bytecode[i] =
-                static_cast<char>(
+            recovered[i] =
+                static_cast<std::uint8_t>(
                     data[position + i] ^
                     keyByte(seed, i)
                 );
         }
 
         return true;
+    }
+
+    std::string luaError(
+        lua_State* state
+    )
+    {
+        const char* message =
+            lua_tostring(
+                state,
+                -1
+            );
+
+        if (!message)
+            return "Luau execution failed";
+
+        return message;
     }
 }
 
@@ -160,43 +184,122 @@ bool VM::execute(
 {
     output.clear();
 
-    if (bytecode.empty())
-    {
-        output = "Bytecode is empty";
-        return false;
-    }
+    std::vector<std::uint8_t> recovered;
 
-    std::string restored;
     std::string error;
 
-    if (!restore(bytecode, restored, error))
+    if (!unwrap(
+            bytecode,
+            recovered,
+            error
+        ))
     {
         output = error;
         return false;
     }
 
-    /*
-     * The important point here is that Luau's actual runtime
-     * must execute the restored Luau bytecode.
-     *
-     * This VM wrapper deliberately does not implement a fake
-     * three-opcode interpreter such as OP_PRINT.
-     */
+    if (recovered.empty())
+    {
+        output = "Recovered Luau bytecode is empty";
+        return false;
+    }
 
     /*
-     * A Luau state/runtime integration belongs here.
-     *
-     * Do not attempt to interpret Luau bytecode as:
-     *
-     *     PUSH_STRING
-     *     PRINT
-     *
-     * because that only supports toy examples and cannot
-     * execute real Luau programs.
+     * Create a real Luau state.
      */
+    lua_State* state =
+        luaL_newstate();
 
-    output =
-        "Protected Luau bytecode restored successfully";
+    if (!state)
+    {
+        output = "Failed to create Luau state";
+        return false;
+    }
+
+    luaL_openlibs(state);
+
+    /*
+     * The recovered data is Luau bytecode.
+     *
+     * luaL_loadbuffer is intentionally used here instead
+     * of interpreting individual instructions ourselves.
+     */
+    const int loadResult =
+        luaL_loadbuffer(
+            state,
+            reinterpret_cast<const char*>(
+                recovered.data()
+            ),
+            recovered.size(),
+            "@protected"
+        );
+
+    if (loadResult != 0)
+    {
+        output = luaError(state);
+
+        lua_close(state);
+
+        return false;
+    }
+
+    /*
+     * Execute the loaded Luau chunk.
+     */
+    const int callResult =
+        lua_pcall(
+            state,
+            0,
+            LUA_MULTRET,
+            0
+        );
+
+    if (callResult != 0)
+    {
+        output = luaError(state);
+
+        lua_close(state);
+
+        return false;
+    }
+
+    /*
+     * Collect returned values as a basic diagnostic.
+     *
+     * Normal print() output should be redirected through
+     * a custom print function if the HTTP API needs to
+     * capture it.
+     */
+    const int resultCount =
+        lua_gettop(state);
+
+    if (resultCount > 0)
+    {
+        for (int i = 1; i <= resultCount; ++i)
+        {
+            if (i > 1)
+                output += '\n';
+
+            if (lua_isstring(state, i))
+            {
+                output +=
+                    lua_tostring(state, i);
+            }
+            else
+            {
+                output +=
+                    luaL_tolstring(
+                        state,
+                        i,
+                        nullptr
+                    );
+
+                lua_pop(state, 1);
+            }
+        }
+    }
+
+    lua_close(state);
 
     return true;
 }
