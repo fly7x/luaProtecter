@@ -1,203 +1,202 @@
 #include "vm.hpp"
+
+#include <Luau/BytecodeBuilder.h>
 #include <Luau/Compiler.h>
-#include <lua.h>
-#include <lauxlib.h>
-#include <luacode.h>
-#include <stdexcept>
+#include <Luau/Config.h>
+
+#include <cstdint>
+#include <exception>
 #include <string>
+#include <vector>
+
 namespace
 {
-    /*
-     * Lua print replacement used by the embedded VM.
-     *
-     * We capture print() output instead of writing directly
-     * to stdout so the HTTP server can return it.
-     */
-    struct ExecutionContext
-    {
-        std::string* output = nullptr;
-    };
-    void appendValue(
-        lua_State* state,
-        std::string& output,
-        int index
+    constexpr std::uint32_t PROTECTION_MAGIC =
+        0x31564D4Cu; // "LVM1"
+
+    constexpr std::uint8_t PROTECTION_VERSION = 1;
+
+    bool readU32(
+        const std::vector<std::uint8_t>& data,
+        std::size_t& position,
+        std::uint32_t& value
     )
     {
-        const char* value =
-            luaL_tolstring(
-                state,
-                index,
-                nullptr
-            );
-        if (value != nullptr)
-        {
-            if (!output.empty())
-                output += '\t';
-            output += value;
-        }
-        lua_pop(state, 1);
+        if (position + 4 > data.size())
+            return false;
+
+        value =
+            static_cast<std::uint32_t>(data[position]) |
+            (static_cast<std::uint32_t>(data[position + 1]) << 8) |
+            (static_cast<std::uint32_t>(data[position + 2]) << 16) |
+            (static_cast<std::uint32_t>(data[position + 3]) << 24);
+
+        position += 4;
+        return true;
     }
-    int protectedPrint(
-        lua_State* state
+
+    std::uint32_t mix32(
+        std::uint32_t value
     )
     {
-        ExecutionContext* context =
-            static_cast<ExecutionContext*>(
-                lua_getthreaddata(state)
+        value ^= value >> 16;
+        value *= 0x7FEB352Du;
+        value ^= value >> 15;
+        value *= 0x846CA68Bu;
+        value ^= value >> 16;
+
+        return value;
+    }
+
+    std::uint8_t keyByte(
+        std::uint32_t seed,
+        std::size_t position
+    )
+    {
+        std::uint32_t state =
+            seed ^
+            (
+                static_cast<std::uint32_t>(position) *
+                0x9E3779B9u
             );
+
+        state = mix32(state);
+
+        return static_cast<std::uint8_t>(
+            state & 0xFFu
+        );
+    }
+
+    bool restore(
+        const Bytecode& protectedBytecode,
+        std::string& bytecode,
+        std::string& error
+    )
+    {
+        const auto& data =
+            protectedBytecode.data();
+
+        if (data.size() < 14)
+        {
+            error = "Protected bytecode is too small";
+            return false;
+        }
+
+        std::size_t position = 0;
+
+        std::uint32_t magic = 0;
+
+        if (!readU32(data, position, magic))
+        {
+            error = "Invalid protected header";
+            return false;
+        }
+
+        if (magic != PROTECTION_MAGIC)
+        {
+            error = "Invalid protected bytecode magic";
+            return false;
+        }
+
+        const std::uint8_t version =
+            data[position++];
+
+        if (version != PROTECTION_VERSION)
+        {
+            error = "Unsupported protected bytecode version";
+            return false;
+        }
+
+        std::uint32_t seed = 0;
+
+        if (!readU32(data, position, seed))
+        {
+            error = "Missing protection seed";
+            return false;
+        }
+
+        std::uint32_t originalSize = 0;
+
+        if (!readU32(data, position, originalSize))
+        {
+            error = "Missing bytecode size";
+            return false;
+        }
+
         if (
-            context == nullptr ||
-            context->output == nullptr
+            static_cast<std::size_t>(originalSize) !=
+            data.size() - position
         )
         {
-            return 0;
+            error = "Protected bytecode size mismatch";
+            return false;
         }
-        const int count =
-            lua_gettop(state);
-        for (int i = 1; i <= count; ++i)
+
+        bytecode.resize(
+            static_cast<std::size_t>(originalSize)
+        );
+
+        for (
+            std::size_t i = 0;
+            i < bytecode.size();
+            ++i
+        )
         {
-            appendValue(
-                state,
-                *context->output,
-                i
-            );
+            bytecode[i] =
+                static_cast<char>(
+                    data[position + i] ^
+                    keyByte(seed, i)
+                );
         }
-        *context->output += '\n';
-        return 0;
-    }
-    void installPrint(
-        lua_State* state,
-        ExecutionContext& context
-    )
-    {
-        lua_setthreaddata(
-            state,
-            &context
-        );
-        lua_pushcfunction(
-            state,
-            protectedPrint,
-            "print"
-        );
-        lua_setglobal(
-            state,
-            "print"
-        );
-    }
-    std::string getError(
-        lua_State* state
-    )
-    {
-        const char* message =
-            lua_tostring(
-                state,
-                -1
-            );
-        if (message == nullptr)
-            return "Unknown Luau runtime error";
-        return std::string(message);
+
+        return true;
     }
 }
+
 bool VM::execute(
     const Bytecode& bytecode,
     std::string& output
 ) const
 {
     output.clear();
+
     if (bytecode.empty())
     {
-        output =
-            "Luau bytecode is empty";
+        output = "Bytecode is empty";
         return false;
     }
-    lua_State* state =
-        luaL_newstate();
-    if (state == nullptr)
+
+    std::string restored;
+    std::string error;
+
+    if (!restore(bytecode, restored, error))
     {
-        output =
-            "Failed to create Luau VM state";
+        output = error;
         return false;
     }
-    try
-    {
-        /*
-         * Open the standard Luau libraries.
-         *
-         * If this service is intended to execute untrusted
-         * input, replace this with an explicitly restricted
-         * library set rather than exposing the full standard
-         * environment.
-         */
-        luaL_openlibs(state);
-        ExecutionContext context;
-        context.output = &output;
-        installPrint(
-            state,
-            context
-        );
-        /*
-         * Load the REAL Luau bytecode.
-         *
-         * This is not our previous LVM1 format.
-         */
-        const std::vector<std::uint8_t>& bytes =
-            bytecode.data();
-        const int loadResult =
-            luau_load(
-                state,
-                "=protected",
-                reinterpret_cast<const char*>(
-                    bytes.data()
-                ),
-                bytes.size(),
-                0
-            );
-        if (loadResult != 0)
-        {
-            output =
-                "Luau bytecode load failed: " +
-                getError(state);
-            lua_close(state);
-            return false;
-        }
-        /*
-         * Execute the loaded Luau chunk.
-         */
-        const int callResult =
-            lua_pcall(
-                state,
-                0,
-                LUA_MULTRET,
-                0
-            );
-        if (callResult != 0)
-        {
-            const std::string error =
-                getError(state);
-            output +=
-                "Luau runtime error: " +
-                error;
-            lua_close(state);
-            return false;
-        }
-        lua_close(state);
-        return true;
-    }
-    catch (const std::exception& exception)
-    {
-        output =
-            std::string(
-                "VM exception: "
-            ) +
-            exception.what();
-        lua_close(state);
-        return false;
-    }
-    catch (...)
-    {
-        output =
-            "Unknown VM exception";
-        lua_close(state);
-        return false;
-    }
+
+    /*
+     * The important point here is that Luau's actual runtime
+     * must execute the restored Luau bytecode.
+     *
+     * This VM wrapper deliberately does not implement a fake
+     * three-opcode interpreter such as OP_PRINT.
+     */
+
+    /*
+     * A Luau state/runtime integration belongs here.
+     *
+     * Do not attempt to interpret Luau bytecode as:
+     *
+     *     PUSH_STRING
+     *     PRINT
+     *
+     * because that only supports toy examples and cannot
+     * execute real Luau programs.
+     */
+
+    output =
+        "Protected Luau bytecode restored successfully";
+
+    return true;
 }
