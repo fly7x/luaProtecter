@@ -1,8 +1,6 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 class Bytecode
@@ -10,31 +8,35 @@ class Bytecode
 public:
     Bytecode() = default;
 
-    explicit Bytecode(std::vector<std::uint8_t> data);
+    explicit Bytecode(
+        std::vector<std::uint8_t> data
+    )
+        : data_(
+            std::move(data)
+        )
+    {
+    }
 
-    explicit Bytecode(const std::string& data);
+    const std::vector<std::uint8_t>& data() const
+    {
+        return data_;
+    }
 
-    const std::vector<std::uint8_t>& data() const noexcept;
+    std::vector<std::uint8_t>& data()
+    {
+        return data_;
+    }
 
-    std::vector<std::uint8_t>& data() noexcept;
+    bool empty() const
+    {
+        return data_.empty();
+    }
 
-    std::size_t size() const noexcept;
-
-    bool empty() const noexcept;
-
-    void clear() noexcept;
-
-    void append(
-        const std::uint8_t* data,
-        std::size_t size
-    );
-
-    void append(
-        const std::vector<std::uint8_t>& data
-    );
-
-    std::string asString() const;
+    std::size_t size() const
+    {
+        return data_.size();
+    }
 
 private:
-    std::vector<std::uint8_t> bytes;
+    std::vector<std::uint8_t> data_;
 };
