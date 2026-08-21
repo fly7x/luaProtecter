@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(luaProtecter LANGUAGES C CXX)
+project(luaProtecter LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,49 +27,43 @@ add_subdirectory(
 )
 
 # ============================================================
-# Application
+# LuaProtecter
 # ============================================================
 
 add_executable(luaProtecter
 
     src/main.cpp
 
-    src/bytecode.cpp
-    src/bytecode.hpp
-
-    src/compiler.cpp
-    src/compiler.hpp
+    src/obfuscator.cpp
+    src/obfuscator.hpp
 
     src/transformer.cpp
     src/transformer.hpp
-
-    src/vm.cpp
-    src/vm.hpp
 )
 
 # ============================================================
 # Includes
 # ============================================================
 
-target_include_directories(
-    luaProtecter
+target_include_directories(luaProtecter
     PRIVATE
 
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Ast/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Compiler/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/VM/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Bytecode/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Ast/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Common/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Bytecode/include
 )
 
 # ============================================================
 # Luau libraries
 # ============================================================
 
-target_link_libraries(
-    luaProtecter
+target_link_libraries(luaProtecter
     PRIVATE
 
     Luau.Compiler
@@ -124,5 +118,5 @@ set_target_properties(
     PROPERTIES
 
     RUNTIME_OUTPUT_DIRECTORY
-        ${CMAKE_BINARY_DIR}/bin
+    ${CMAKE_BINARY_DIR}/bin
 )
