@@ -1,31 +1,21 @@
 #include "transformer.hpp"
+
 #include "obfuscator.hpp"
 
-#include <stdexcept>
-#include <string>
-
-std::string Transformer::protect(
-    const std::string& source
+Bytecode Transformer::protect(
+    const Bytecode& bytecode
 ) const
 {
-    if (source.empty())
-    {
-        throw std::runtime_error(
-            "Source cannot be empty"
-        );
-    }
+    if (bytecode.empty())
+        return {};
 
+    /*
+     * Pass the real Luau bytecode through the
+     * existing obfuscation layer.
+     */
     Obfuscator obfuscator;
 
-    const std::string result =
-        obfuscator.transform(source);
-
-    if (result.empty())
-    {
-        throw std::runtime_error(
-            "Obfuscator produced empty output"
-        );
-    }
-
-    return result;
+    return obfuscator.transform(
+        bytecode
+    );
 }
