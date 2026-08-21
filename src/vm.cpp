@@ -1,101 +1,118 @@
 #include "vm.hpp"
 
-#include <cstdint>
-#include <stdexcept>
+#include <Luau/Compiler.h>
+#include <lua.h>
+#include <lualib.h>
+
 #include <string>
 
-namespace
+struct VM::State
 {
-    /*
-     * FNV-1a 32-bit hash.
-     *
-     * This is only used as a lightweight integrity identifier.
-     * It is NOT intended to be cryptographic protection.
-     */
-    std::uint32_t hashBytes(
-        const std::vector<std::uint8_t>& bytes
-    )
+    lua_State* L = nullptr;
+};
+
+VM::VM()
+    : state_(new State())
+{
+    state_->L = luaL_newstate();
+
+    if (!state_->L)
     {
-        std::uint32_t hash = 2166136261u;
-
-        for (std::uint8_t byte : bytes)
-        {
-            hash ^= byte;
-            hash *= 16777619u;
-        }
-
-        return hash;
+        delete state_;
+        state_ = nullptr;
+        return;
     }
 
-    std::string hex32(
-        std::uint32_t value
-    )
+    luaL_openlibs(state_->L);
+}
+
+VM::~VM()
+{
+    if (state_)
     {
-        static constexpr char hex[] =
-            "0123456789abcdef";
+        if (state_->L)
+            lua_close(state_->L);
 
-        std::string result(8, '0');
-
-        for (int i = 7; i >= 0; --i)
-        {
-            result[
-                static_cast<std::size_t>(i)
-            ] = hex[value & 0x0Fu];
-
-            value >>= 4;
-        }
-
-        return result;
+        delete state_;
     }
 }
 
-bool VM::validate(
-    const Bytecode& bytecode,
+bool VM::execute(
+    const std::string& source,
     std::string& error
-) const
+)
 {
     error.clear();
 
+    if (!state_ || !state_->L)
+    {
+        error = "Failed to create Luau VM";
+        return false;
+    }
+
+    if (source.empty())
+    {
+        error = "Source is empty";
+        return false;
+    }
+
+    std::string bytecode = Luau::compile(
+        source,
+        {},
+        nullptr
+    );
+
     if (bytecode.empty())
     {
-        error =
-            "Empty Luau bytecode.";
-
+        error = "Luau compiler returned empty bytecode";
         return false;
     }
 
-    if (bytecode.size() < 4)
+    const int loadResult = luau_load(
+        state_->L,
+        "=LuaProtecter",
+        bytecode.data(),
+        bytecode.size(),
+        0
+    );
+
+    if (loadResult != 0)
     {
-        error =
-            "Luau bytecode is too small.";
+        const char* message =
+            lua_tostring(state_->L, -1);
+
+        error = message
+            ? message
+            : "luau_load failed";
+
+        lua_pop(state_->L, 1);
 
         return false;
     }
 
-    /*
-     * At this stage validation deliberately remains conservative.
-     *
-     * The Luau compiler is responsible for producing valid
-     * bytecode. We do not reinterpret or modify its instruction
-     * stream here.
-     */
+    const int callResult =
+        lua_pcall(
+            state_->L,
+            0,
+            LUA_MULTRET,
+            0
+        );
+
+    if (callResult != 0)
+    {
+        const char* message =
+            lua_tostring(state_->L, -1);
+
+        error = message
+            ? message
+            : "Luau execution failed";
+
+        lua_pop(state_->L, 1);
+
+        return false;
+    }
+
+    lua_settop(state_->L, 0);
+
     return true;
-}
-
-std::string VM::package(
-    const Bytecode& bytecode
-) const
-{
-    std::string error;
-
-    if (!validate(bytecode, error))
-        throw std::runtime_error(error);
-
-    /*
-     * Return the binary-safe Base64 representation.
-     *
-     * This is a transport/package representation, NOT a second
-     * interpreter and NOT a conversion back into source code.
-     */
-    return bytecode.toBase64();
 }
