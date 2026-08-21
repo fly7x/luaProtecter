@@ -2,13 +2,10 @@
 
 #include <Luau/Compiler.h>
 
-#include "lua.h"
-#include "lualib.h"
-#include "luacode.h"
-
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -26,6 +23,10 @@ namespace
     constexpr std::size_t MAX_REQUEST_SIZE = 4 * 1024 * 1024;
     constexpr int DEFAULT_PORT = 10000;
 
+    // ---------------------------------------------------------
+    // File helpers
+    // ---------------------------------------------------------
+
     std::string readFile(const std::string& path)
     {
         std::ifstream file(path, std::ios::binary);
@@ -38,6 +39,10 @@ namespace
 
         return buffer.str();
     }
+
+    // ---------------------------------------------------------
+    // JSON helpers
+    // ---------------------------------------------------------
 
     std::string jsonEscape(const std::string& value)
     {
@@ -80,7 +85,7 @@ namespace
                 {
                     if (c < 0x20)
                     {
-                        const char hex[] =
+                        static constexpr char hex[] =
                             "0123456789abcdef";
 
                         result += "\\u00";
@@ -204,18 +209,36 @@ namespace
 
                         for (int j = 1; j <= 4; ++j)
                         {
-                            const char h = json[i + j];
+                            const char h =
+                                json[i + j];
 
                             value <<= 4;
 
                             if (h >= '0' && h <= '9')
-                                value += h - '0';
+                            {
+                                value +=
+                                    static_cast<unsigned int>(
+                                        h - '0'
+                                    );
+                            }
                             else if (h >= 'a' && h <= 'f')
-                                value += h - 'a' + 10;
+                            {
+                                value +=
+                                    static_cast<unsigned int>(
+                                        h - 'a' + 10
+                                    );
+                            }
                             else if (h >= 'A' && h <= 'F')
-                                value += h - 'A' + 10;
+                            {
+                                value +=
+                                    static_cast<unsigned int>(
+                                        h - 'A' + 10
+                                    );
+                            }
                             else
+                            {
                                 return false;
+                            }
                         }
 
                         if (value <= 0x7F)
@@ -225,29 +248,34 @@ namespace
                         }
                         else if (value <= 0x7FF)
                         {
-                            result += static_cast<char>(
-                                0xC0 | (value >> 6)
-                            );
+                            result +=
+                                static_cast<char>(
+                                    0xC0 | (value >> 6)
+                                );
 
-                            result += static_cast<char>(
-                                0x80 | (value & 0x3F)
-                            );
+                            result +=
+                                static_cast<char>(
+                                    0x80 | (value & 0x3F)
+                                );
                         }
                         else
                         {
-                            result += static_cast<char>(
-                                0xE0 | (value >> 12)
-                            );
+                            result +=
+                                static_cast<char>(
+                                    0xE0 | (value >> 12)
+                                );
 
-                            result += static_cast<char>(
-                                0x80 |
-                                ((value >> 6) & 0x3F)
-                            );
+                            result +=
+                                static_cast<char>(
+                                    0x80 |
+                                    ((value >> 6) & 0x3F)
+                                );
 
-                            result += static_cast<char>(
-                                0x80 |
-                                (value & 0x3F)
-                            );
+                            result +=
+                                static_cast<char>(
+                                    0x80 |
+                                    (value & 0x3F)
+                                );
                         }
 
                         i += 4;
@@ -282,6 +310,117 @@ namespace
         return false;
     }
 
+    // ---------------------------------------------------------
+    // Base64
+    // ---------------------------------------------------------
+
+    std::string base64Encode(const std::string& data)
+    {
+        static constexpr char table[] =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "abcdefghijklmnopqrstuvwxyz"
+            "0123456789+/";
+
+        std::string encoded;
+
+        encoded.reserve(
+            ((data.size() + 2) / 3) * 4
+        );
+
+        std::size_t i = 0;
+
+        while (i + 2 < data.size())
+        {
+            const std::uint8_t a =
+                static_cast<std::uint8_t>(
+                    static_cast<unsigned char>(
+                        data[i++]
+                    )
+                );
+
+            const std::uint8_t b =
+                static_cast<std::uint8_t>(
+                    static_cast<unsigned char>(
+                        data[i++]
+                    )
+                );
+
+            const std::uint8_t c =
+                static_cast<std::uint8_t>(
+                    static_cast<unsigned char>(
+                        data[i++]
+                    )
+                );
+
+            encoded += table[(a >> 2) & 0x3F];
+
+            encoded += table[
+                ((a & 0x03) << 4) |
+                (b >> 4)
+            ];
+
+            encoded += table[
+                ((b & 0x0F) << 2) |
+                (c >> 6)
+            ];
+
+            encoded += table[c & 0x3F];
+        }
+
+        const std::size_t remaining =
+            data.size() - i;
+
+        if (remaining == 1)
+        {
+            const std::uint8_t a =
+                static_cast<std::uint8_t>(
+                    static_cast<unsigned char>(
+                        data[i]
+                    )
+                );
+
+            encoded += table[(a >> 2) & 0x3F];
+            encoded += table[(a & 0x03) << 4];
+            encoded += '=';
+            encoded += '=';
+        }
+        else if (remaining == 2)
+        {
+            const std::uint8_t a =
+                static_cast<std::uint8_t>(
+                    static_cast<unsigned char>(
+                        data[i]
+                    )
+                );
+
+            const std::uint8_t b =
+                static_cast<std::uint8_t>(
+                    static_cast<unsigned char>(
+                        data[i + 1]
+                    )
+                );
+
+            encoded += table[(a >> 2) & 0x3F];
+
+            encoded += table[
+                ((a & 0x03) << 4) |
+                (b >> 4)
+            ];
+
+            encoded += table[
+                (b & 0x0F) << 2
+            ];
+
+            encoded += '=';
+        }
+
+        return encoded;
+    }
+
+    // ---------------------------------------------------------
+    // HTTP
+    // ---------------------------------------------------------
+
     void sendAll(
         int client,
         const std::string& data
@@ -302,7 +441,10 @@ namespace
             if (count <= 0)
                 return;
 
-            sent += static_cast<std::size_t>(count);
+            sent +=
+                static_cast<std::size_t>(
+                    count
+                );
         }
     }
 
@@ -354,21 +496,28 @@ namespace
             << " "
             << statusText
             << "\r\n"
+
             << "Content-Type: "
             << contentType
             << "\r\n"
+
             << "Content-Length: "
             << body.size()
             << "\r\n"
+
             << "Access-Control-Allow-Origin: *\r\n"
             << "Access-Control-Allow-Headers: Content-Type\r\n"
             << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
             << "Cache-Control: no-store\r\n"
             << "Connection: close\r\n"
             << "\r\n"
+
             << body;
 
-        sendAll(client, response.str());
+        sendAll(
+            client,
+            response.str()
+        );
     }
 
     bool parseContentLength(
@@ -376,7 +525,8 @@ namespace
         std::size_t& length
     )
     {
-        const std::string key = "Content-Length:";
+        const std::string key =
+            "Content-Length:";
 
         const std::size_t position =
             headers.find(key);
@@ -421,12 +571,13 @@ namespace
 
         try
         {
-            length = std::stoull(
-                headers.substr(
-                    start,
-                    end - start
-                )
-            );
+            length =
+                std::stoull(
+                    headers.substr(
+                        start,
+                        end - start
+                    )
+                );
         }
         catch (...)
         {
@@ -461,7 +612,9 @@ namespace
 
             request.append(
                 buffer,
-                static_cast<std::size_t>(received)
+                static_cast<std::size_t>(
+                    received
+                )
             );
 
             if (request.size() > MAX_REQUEST_SIZE)
@@ -471,257 +624,68 @@ namespace
         return true;
     }
 
-    struct LuauState
-    {
-        lua_State* state = nullptr;
+    // ---------------------------------------------------------
+    // Luau compilation
+    // ---------------------------------------------------------
 
-        LuauState()
-        {
-            state = luaL_newstate();
-
-            if (!state)
-                throw std::runtime_error(
-                    "Failed to create Luau state"
-                );
-
-            luaL_openlibs(state);
-
-            luaL_sandbox(state);
-            luaL_sandboxthread(state);
-        }
-
-        ~LuauState()
-        {
-            if (state)
-                lua_close(state);
-        }
-
-        LuauState(const LuauState&) = delete;
-        LuauState& operator=(const LuauState&) = delete;
-    };
-
-    std::string executeLuau(
-        const std::string& source
+    bool compileLuau(
+        const std::string& source,
+        std::string& bytecode,
+        std::string& error
     )
     {
-        if (source.empty())
-            throw std::runtime_error(
-                "Source cannot be empty"
-            );
-
-        std::string bytecode;
+        bytecode.clear();
+        error.clear();
 
         try
         {
-            bytecode = Luau::compile(source);
+            /*
+             * IMPORTANT:
+             *
+             * This uses the Luau API version included in
+             * your third_party/luau tree.
+             *
+             * Do not pass nullptr as ParseOptions.
+             */
+            bytecode =
+                Luau::compile(
+                    source
+                );
         }
-        catch (const std::exception& exception)
+        catch (
+            const std::exception& exception
+        )
         {
-            throw std::runtime_error(
+            error =
                 std::string(
                     "Luau compilation failed: "
-                ) + exception.what()
-            );
+                ) +
+                exception.what();
+
+            return false;
+        }
+        catch (...)
+        {
+            error =
+                "Unknown Luau compilation failure";
+
+            return false;
         }
 
         if (bytecode.empty())
-            throw std::runtime_error(
-                "Luau compiler produced empty bytecode"
-            );
-
-        LuauState runtime;
-        lua_State* L = runtime.state;
-
-        const int loadResult =
-            luau_load(
-                L,
-                "=luaProtecter",
-                bytecode.data(),
-                bytecode.size(),
-                0
-            );
-
-        if (loadResult != LUA_OK)
         {
-            const char* error =
-                lua_tostring(L, -1);
+            error =
+                "Luau compiler produced empty bytecode";
 
-            std::string message =
-                error
-                    ? error
-                    : "Unknown Luau bytecode load error";
-
-            lua_pop(L, 1);
-
-            throw std::runtime_error(
-                "Luau bytecode load failed: " +
-                message
-            );
+            return false;
         }
 
-        int status =
-            lua_resume(
-                L,
-                nullptr,
-                0
-            );
-
-        if (status != LUA_OK)
-        {
-            const char* error =
-                lua_tostring(L, -1);
-
-            std::string message =
-                error
-                    ? error
-                    : "Unknown Luau runtime error";
-
-            lua_pop(L, 1);
-
-            throw std::runtime_error(
-                "Luau runtime error: " +
-                message
-            );
-        }
-
-        const int top = lua_gettop(L);
-
-        if (top <= 0)
-            return {};
-
-        std::ostringstream result;
-
-        for (int i = 1; i <= top; ++i)
-        {
-            if (i > 1)
-                result << "\n";
-
-            const int type =
-                lua_type(L, i);
-
-            switch (type)
-            {
-                case LUA_TSTRING:
-                {
-                    const char* value =
-                        lua_tostring(L, i);
-
-                    if (value)
-                        result << value;
-
-                    break;
-                }
-
-                case LUA_TBOOLEAN:
-                    result
-                        << (
-                            lua_toboolean(L, i)
-                                ? "true"
-                                : "false"
-                        );
-                    break;
-
-                case LUA_TNUMBER:
-                    result
-                        << lua_tonumber(L, i);
-                    break;
-
-                case LUA_TNIL:
-                    result << "nil";
-                    break;
-
-                default:
-                    result
-                        << "<"
-                        << lua_typename(L, type)
-                        << ">";
-                    break;
-            }
-        }
-
-        return result.str();
+        return true;
     }
 
-    std::string base64Encode(
-        const std::string& input
-    )
-    {
-        static constexpr char table[] =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            "abcdefghijklmnopqrstuvwxyz"
-            "0123456789+/";
-
-        std::string encoded;
-
-        encoded.reserve(
-            ((input.size() + 2) / 3) * 4
-        );
-
-        std::size_t i = 0;
-
-        while (i + 2 < input.size())
-        {
-            const unsigned char a =
-                static_cast<unsigned char>(input[i++]);
-
-            const unsigned char b =
-                static_cast<unsigned char>(input[i++]);
-
-            const unsigned char c =
-                static_cast<unsigned char>(input[i++]);
-
-            encoded += table[(a >> 2) & 0x3F];
-
-            encoded += table[
-                ((a & 0x03) << 4) |
-                (b >> 4)
-            ];
-
-            encoded += table[
-                ((b & 0x0F) << 2) |
-                (c >> 6)
-            ];
-
-            encoded += table[c & 0x3F];
-        }
-
-        const std::size_t remaining =
-            input.size() - i;
-
-        if (remaining == 1)
-        {
-            const unsigned char a =
-                static_cast<unsigned char>(input[i]);
-
-            encoded += table[(a >> 2) & 0x3F];
-            encoded += table[(a & 0x03) << 4];
-            encoded += '=';
-            encoded += '=';
-        }
-        else if (remaining == 2)
-        {
-            const unsigned char a =
-                static_cast<unsigned char>(input[i]);
-
-            const unsigned char b =
-                static_cast<unsigned char>(input[i + 1]);
-
-            encoded += table[(a >> 2) & 0x3F];
-
-            encoded += table[
-                ((a & 0x03) << 4) |
-                (b >> 4)
-            ];
-
-            encoded += table[
-                (b & 0x0F) << 2
-            ];
-
-            encoded += '=';
-        }
-
-        return encoded;
-    }
+    // ---------------------------------------------------------
+    // Client
+    // ---------------------------------------------------------
 
     void handleClient(int client)
     {
@@ -757,20 +721,33 @@ namespace
         }
 
         const std::string headers =
-            request.substr(0, headerEnd);
+            request.substr(
+                0,
+                headerEnd
+            );
 
         std::string body =
-            request.substr(headerEnd + 4);
+            request.substr(
+                headerEnd + 4
+            );
 
-        std::istringstream headerStream(headers);
+        std::istringstream headerStream(
+            headers
+        );
 
         std::string method;
         std::string path;
         std::string version;
 
-        headerStream >> method >> path >> version;
+        headerStream
+            >> method
+            >> path
+            >> version;
 
-        if (method.empty() || path.empty())
+        if (
+            method.empty() ||
+            path.empty()
+        )
         {
             sendResponse(
                 client,
@@ -844,7 +821,9 @@ namespace
 
             body.append(
                 buffer,
-                static_cast<std::size_t>(received)
+                static_cast<std::size_t>(
+                    received
+                )
             );
 
             if (body.size() > MAX_REQUEST_SIZE)
@@ -885,13 +864,14 @@ namespace
             body.resize(contentLength);
         }
 
-        /*
-         * -----------------------------------------------------
-         * Static files
-         * -----------------------------------------------------
-         */
+        // -----------------------------------------------------
+        // Static website
+        // -----------------------------------------------------
 
-        if (method == "GET" && path == "/")
+        if (
+            method == "GET" &&
+            path == "/"
+        )
         {
             const std::string html =
                 readFile("web/index.html");
@@ -919,7 +899,10 @@ namespace
             return;
         }
 
-        if (method == "GET" && path == "/style.css")
+        if (
+            method == "GET" &&
+            path == "/style.css"
+        )
         {
             const std::string css =
                 readFile("web/style.css");
@@ -947,7 +930,10 @@ namespace
             return;
         }
 
-        if (method == "GET" && path == "/app.js")
+        if (
+            method == "GET" &&
+            path == "/app.js"
+        )
         {
             const std::string js =
                 readFile("web/app.js");
@@ -975,7 +961,14 @@ namespace
             return;
         }
 
-        if (method == "GET" && path == "/health")
+        // -----------------------------------------------------
+        // Health
+        // -----------------------------------------------------
+
+        if (
+            method == "GET" &&
+            path == "/health"
+        )
         {
             sendResponse(
                 client,
@@ -988,11 +981,11 @@ namespace
             return;
         }
 
-        /*
-         * -----------------------------------------------------
-         * Compile endpoint
-         * -----------------------------------------------------
-         */
+        // -----------------------------------------------------
+        // /api/compile
+        //
+        // Source -> REAL Luau bytecode
+        // -----------------------------------------------------
 
         if (
             method == "POST" &&
@@ -1018,46 +1011,18 @@ namespace
                 return;
             }
 
-            try
-            {
-                const std::string bytecode =
-                    Luau::compile(source);
+            std::string bytecode;
+            std::string error;
 
-                if (bytecode.empty())
-                {
-                    sendResponse(
-                        client,
-                        422,
-                        "application/json; charset=utf-8",
-                        "{\"success\":false,\"error\":\"Luau produced empty bytecode\"}"
-                    );
-
-                    close(client);
-                    return;
-                }
-
-                const std::string encoded =
-                    base64Encode(bytecode);
-
-                const std::string response =
-                    "{\"success\":true,\"bytecode\":\"" +
-                    jsonEscape(encoded) +
-                    "\",\"size\":" +
-                    std::to_string(bytecode.size()) +
-                    "}";
-
-                sendResponse(
-                    client,
-                    200,
-                    "application/json; charset=utf-8",
-                    response
-                );
-            }
-            catch (const std::exception& exception)
+            if (!compileLuau(
+                    source,
+                    bytecode,
+                    error
+                ))
             {
                 const std::string response =
                     "{\"success\":false,\"error\":\"" +
-                    jsonEscape(exception.what()) +
+                    jsonEscape(error) +
                     "\"}";
 
                 sendResponse(
@@ -1065,84 +1030,55 @@ namespace
                     422,
                     "application/json; charset=utf-8",
                     response
-                );
-            }
-
-            close(client);
-            return;
-        }
-
-        /*
-         * -----------------------------------------------------
-         * Execute endpoint
-         * -----------------------------------------------------
-         */
-
-        if (
-            method == "POST" &&
-            path == "/api/execute"
-        )
-        {
-            std::string source;
-
-            if (!extractJsonString(
-                    body,
-                    "code",
-                    source
-                ))
-            {
-                sendResponse(
-                    client,
-                    400,
-                    "application/json; charset=utf-8",
-                    "{\"success\":false,\"error\":\"Missing code field\"}"
                 );
 
                 close(client);
                 return;
             }
 
-            try
-            {
-                const std::string result =
-                    executeLuau(source);
+            const std::string encoded =
+                base64Encode(bytecode);
 
-                const std::string response =
-                    "{\"success\":true,\"output\":\"" +
-                    jsonEscape(result) +
-                    "\"}";
+            const std::string response =
+                "{\"success\":true,"
+                "\"bytecode\":\"" +
+                jsonEscape(encoded) +
+                "\","
+                "\"size\":" +
+                std::to_string(bytecode.size()) +
+                "}";
 
-                sendResponse(
-                    client,
-                    200,
-                    "application/json; charset=utf-8",
-                    response
-                );
-            }
-            catch (const std::exception& exception)
-            {
-                const std::string response =
-                    "{\"success\":false,\"error\":\"" +
-                    jsonEscape(exception.what()) +
-                    "\"}";
-
-                sendResponse(
-                    client,
-                    422,
-                    "application/json; charset=utf-8",
-                    response
-                );
-            }
+            sendResponse(
+                client,
+                200,
+                "application/json; charset=utf-8",
+                response
+            );
 
             close(client);
             return;
         }
 
-        /*
-         * -----------------------------------------------------
-         * Obfuscation endpoint
-         * -----------------------------------------------------
-         */
+        // -----------------------------------------------------
+        // /api/obfuscate
+        //
+        // THIS IS THE IMPORTANT PIPELINE:
+        //
+        // Roblox Luau source
+        //        ↓
+        // Luau::compile()
+        //        ↓
+        // Luau bytecode
+        //        ↓
+        // Transformer::protect()
+        //        ↓
+        // YOUR CUSTOM VM PACKAGE
+        //        ↓
+        // Base64
+        //
+        // We do NOT call transformer.transform().
+        // Your class only exposes protect().
+        // -----------------------------------------------------
 
         if (
             method == "POST" &&
@@ -1181,51 +1117,88 @@ namespace
                 return;
             }
 
+            // Step 1:
+            // Compile the original Luau source.
+
+            std::string bytecode;
+            std::string compileError;
+
+            if (!compileLuau(
+                    source,
+                    bytecode,
+                    compileError
+                ))
+            {
+                const std::string response =
+                    "{\"success\":false,"
+                    "\"stage\":\"compile\","
+                    "\"error\":\"" +
+                    jsonEscape(compileError) +
+                    "\"}";
+
+                sendResponse(
+                    client,
+                    422,
+                    "application/json; charset=utf-8",
+                    response
+                );
+
+                close(client);
+                return;
+            }
+
+            // Step 2:
+            // Feed the REAL Luau bytecode into YOUR
+            // Transformer::protect() implementation.
+
             try
             {
                 Transformer transformer;
 
-                const std::string transformed =
-                    transformer.transform(source);
+                const std::string protectedPackage =
+                    transformer.protect(
+                        bytecode
+                    );
 
-                if (transformed.empty())
+                if (protectedPackage.empty())
                 {
                     sendResponse(
                         client,
                         422,
                         "application/json; charset=utf-8",
-                        "{\"success\":false,\"error\":\"Transformation produced empty output\"}"
+                        "{\"success\":false,\"stage\":\"protect\",\"error\":\"Transformer produced an empty package\"}"
                     );
 
                     close(client);
                     return;
                 }
 
-                /*
-                 * Always verify the transformed source
-                 * using the same Luau compiler.
-                 */
-                const std::string bytecode =
-                    Luau::compile(transformed);
+                // Step 3:
+                // Binary protected VM package -> Base64.
+                //
+                // This makes it safe to put inside JSON and
+                // transport it to the web frontend.
 
-                if (bytecode.empty())
-                {
-                    sendResponse(
-                        client,
-                        422,
-                        "application/json; charset=utf-8",
-                        "{\"success\":false,\"error\":\"Transformed source was rejected by Luau compiler\"}"
+                const std::string encoded =
+                    base64Encode(
+                        protectedPackage
                     );
-
-                    close(client);
-                    return;
-                }
 
                 const std::string response =
-                    "{\"success\":true,\"code\":\"" +
-                    jsonEscape(transformed) +
-                    "\",\"bytecode_size\":" +
-                    std::to_string(bytecode.size()) +
+                    "{\"success\":true,"
+                    "\"format\":\"custom-vm-package\","
+                    "\"payload\":\"" +
+                    jsonEscape(encoded) +
+                    "\","
+                    "\"bytecode_size\":" +
+                    std::to_string(
+                        bytecode.size()
+                    ) +
+                    ","
+                    "\"package_size\":" +
+                    std::to_string(
+                        protectedPackage.size()
+                    ) +
                     "}";
 
                 sendResponse(
@@ -1235,16 +1208,22 @@ namespace
                     response
                 );
             }
-            catch (const std::exception& exception)
+            catch (
+                const std::exception& exception
+            )
             {
                 const std::string response =
-                    "{\"success\":false,\"error\":\"" +
-                    jsonEscape(exception.what()) +
+                    "{\"success\":false,"
+                    "\"stage\":\"protect\","
+                    "\"error\":\"" +
+                    jsonEscape(
+                        exception.what()
+                    ) +
                     "\"}";
 
                 sendResponse(
                     client,
-                    422,
+                    500,
                     "application/json; charset=utf-8",
                     response
                 );
@@ -1255,13 +1234,17 @@ namespace
                     client,
                     500,
                     "application/json; charset=utf-8",
-                    "{\"success\":false,\"error\":\"Unknown obfuscation failure\"}"
+                    "{\"success\":false,\"stage\":\"protect\",\"error\":\"Unknown transformer failure\"}"
                 );
             }
 
             close(client);
             return;
         }
+
+        // -----------------------------------------------------
+        // Unsupported method
+        // -----------------------------------------------------
 
         if (
             method != "GET" &&
@@ -1279,6 +1262,10 @@ namespace
             return;
         }
 
+        // -----------------------------------------------------
+        // 404
+        // -----------------------------------------------------
+
         sendResponse(
             client,
             404,
@@ -1289,6 +1276,10 @@ namespace
         close(client);
     }
 }
+
+// -------------------------------------------------------------
+// Main
+// -------------------------------------------------------------
 
 int main()
 {
@@ -1302,7 +1293,9 @@ int main()
         try
         {
             const int parsed =
-                std::stoi(portEnvironment);
+                std::stoi(
+                    portEnvironment
+                );
 
             if (
                 parsed > 0 &&
@@ -1363,13 +1356,17 @@ int main()
 
     address.sin_port =
         htons(
-            static_cast<unsigned short>(port)
+            static_cast<std::uint16_t>(
+                port
+            )
         );
 
     if (
         bind(
             server,
-            reinterpret_cast<sockaddr*>(&address),
+            reinterpret_cast<sockaddr*>(
+                &address
+            ),
             sizeof(address)
         ) < 0
     )
