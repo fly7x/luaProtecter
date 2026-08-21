@@ -33,10 +33,7 @@ namespace
 }
 
 Bytecode::Bytecode(const std::string& data)
-    : bytes(
-        data.begin(),
-        data.end()
-    )
+    : bytes(data.begin(), data.end())
 {
 }
 
@@ -185,19 +182,6 @@ Bytecode::fromBase64(
             );
         }
 
-        /*
-         * '=' is only valid in the final quartet.
-         */
-        if (
-            (c == '=' || d == '=') &&
-            i + 4 != encoded.size()
-        )
-        {
-            throw std::runtime_error(
-                "Invalid Base64 padding"
-            );
-        }
-
         const int vc =
             c == '=' ? 0 : base64Value(c);
 
@@ -215,17 +199,6 @@ Bytecode::fromBase64(
         {
             throw std::runtime_error(
                 "Invalid Base64 character"
-            );
-        }
-
-        /*
-         * '=' in the third position means the fourth
-         * character must also be '='.
-         */
-        if (c == '=' && d != '=')
-        {
-            throw std::runtime_error(
-                "Invalid Base64 padding"
             );
         }
 
@@ -260,7 +233,5 @@ Bytecode::fromBase64(
         }
     }
 
-    return Bytecode(
-        std::move(output)
-    );
+    return Bytecode(std::move(output));
 }
