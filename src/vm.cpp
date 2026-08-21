@@ -1,179 +1,319 @@
 #include "vm.hpp"
 
-#include <cstdint>
-#include <cstring>
-#include <string>
-#include <vector>
-
-#include "Luau/Compiler.h"
 #include "lua.h"
 #include "lualib.h"
+#include "luacode.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
 
 namespace
 {
-    constexpr std::uint32_t MAGIC = 0x31564D4Cu; // LVM1
-    constexpr std::uint8_t VERSION = 1;
+    constexpr std::size_t MAX_OUTPUT_SIZE =
+        4 * 1024 * 1024;
 
-    constexpr std::size_t HEADER_SIZE = 13;
-
-    bool readU32(
-        const std::vector<std::uint8_t>& data,
-        std::size_t& position,
-        std::uint32_t& value
+    /*
+     * Append output while preventing a malicious script from
+     * generating an unbounded response.
+     */
+    void appendOutput(
+        std::string& output,
+        const char* text,
+        std::size_t length
     )
     {
-        if (position > data.size() ||
-            data.size() - position < 4)
-        {
-            return false;
-        }
+        if (!text || length == 0)
+            return;
 
-        value =
-            static_cast<std::uint32_t>(data[position]) |
-            (static_cast<std::uint32_t>(data[position + 1]) << 8) |
-            (static_cast<std::uint32_t>(data[position + 2]) << 16) |
-            (static_cast<std::uint32_t>(data[position + 3]) << 24);
+        if (output.size() >= MAX_OUTPUT_SIZE)
+            return;
 
-        position += 4;
-        return true;
-    }
+        const std::size_t remaining =
+            MAX_OUTPUT_SIZE - output.size();
 
-    std::uint32_t mix32(
-        std::uint32_t value
-    )
-    {
-        value ^= value >> 16;
-        value *= 0x7FEB352Du;
-        value ^= value >> 15;
-        value *= 0x846CA68Bu;
-        value ^= value >> 16;
+        const std::size_t amount =
+            length < remaining
+                ? length
+                : remaining;
 
-        return value;
-    }
-
-    std::uint8_t keyByte(
-        std::uint32_t seed,
-        std::size_t position
-    )
-    {
-        const std::uint32_t index =
-            static_cast<std::uint32_t>(position);
-
-        std::uint32_t state =
-            seed ^
-            (index * 0x9E3779B9u);
-
-        state = mix32(state);
-
-        return static_cast<std::uint8_t>(
-            state & 0xFFu
+        output.append(
+            text,
+            amount
         );
     }
 
-    bool unwrap(
-        const Bytecode& package,
-        std::vector<std::uint8_t>& recovered,
-        std::string& error
+    /*
+     * Convert a Luau value to a readable string.
+     *
+     * luaL_tolstring is part of Luau's public Lua-compatible
+     * auxiliary API.
+     */
+    void appendStackValue(
+        lua_State* L,
+        int index,
+        std::string& output
     )
     {
-        const auto& data = package.data();
+        size_t length = 0;
 
-        if (data.size() < HEADER_SIZE)
+        const char* value =
+            luaL_tolstring(
+                L,
+                index,
+                &length
+            );
+
+        if (value)
         {
-            error = "Protected bytecode is too small";
-            return false;
+            appendOutput(
+                output,
+                value,
+                length
+            );
         }
 
-        std::size_t position = 0;
-
-        std::uint32_t magic = 0;
-
-        if (!readU32(data, position, magic))
-        {
-            error = "Invalid protected bytecode header";
-            return false;
-        }
-
-        if (magic != MAGIC)
-        {
-            error = "Invalid LVM package";
-            return false;
-        }
-
-        const std::uint8_t version =
-            data[position++];
-
-        if (version != VERSION)
-        {
-            error = "Unsupported LVM package version";
-            return false;
-        }
-
-        std::uint32_t seed = 0;
-
-        if (!readU32(data, position, seed))
-        {
-            error = "Missing LVM seed";
-            return false;
-        }
-
-        std::uint32_t originalSize = 0;
-
-        if (!readU32(
-                data,
-                position,
-                originalSize
-            ))
-        {
-            error = "Missing LVM bytecode size";
-            return false;
-        }
-
-        const std::size_t payloadSize =
-            data.size() - position;
-
-        if (
-            static_cast<std::size_t>(
-                originalSize
-            ) != payloadSize
-        )
-        {
-            error = "Protected bytecode size mismatch";
-            return false;
-        }
-
-        recovered.resize(payloadSize);
-
-        for (
-            std::size_t i = 0;
-            i < payloadSize;
-            ++i
-        )
-        {
-            recovered[i] =
-                static_cast<std::uint8_t>(
-                    data[position + i] ^
-                    keyByte(seed, i)
-                );
-        }
-
-        return true;
+        lua_pop(L, 1);
     }
 
-    std::string luaError(
-        lua_State* state
+    /*
+     * Replacement print implementation.
+     *
+     * This allows the embedded VM to return print() output to
+     * the HTTP server instead of writing directly to stdout.
+     */
+    int vmPrint(
+        lua_State* L
     )
     {
+        std::string* output =
+            static_cast<std::string*>(
+                lua_getthreaddata(L)
+            );
+
+        if (!output)
+            return 0;
+
+        const int count =
+            lua_gettop(L);
+
+        for (int i = 1; i <= count; ++i)
+        {
+            if (i > 1)
+                appendOutput(
+                    *output,
+                    "\t",
+                    1
+                );
+
+            size_t length = 0;
+
+            const char* value =
+                luaL_tolstring(
+                    L,
+                    i,
+                    &length
+                );
+
+            if (value)
+            {
+                appendOutput(
+                    *output,
+                    value,
+                    length
+                );
+            }
+
+            lua_pop(L, 1);
+        }
+
+        appendOutput(
+            *output,
+            "\n",
+            1
+        );
+
+        return 0;
+    }
+
+    /*
+     * Install our print implementation.
+     */
+    void installPrint(
+        lua_State* L
+    )
+    {
+        lua_pushcfunction(
+            L,
+            vmPrint,
+            "print"
+        );
+
+        lua_setglobal(
+            L,
+            "print"
+        );
+    }
+
+    /*
+     * Get the error currently sitting on the Luau stack.
+     */
+    std::string getError(
+        lua_State* L
+    )
+    {
+        if (lua_gettop(L) == 0)
+            return "Unknown Luau VM error";
+
+        size_t length = 0;
+
         const char* message =
-            lua_tostring(
-                state,
-                -1
+            luaL_tolstring(
+                L,
+                -1,
+                &length
             );
 
         if (!message)
-            return "Luau execution failed";
+        {
+            lua_pop(L, 1);
 
-        return message;
+            return "Unknown Luau VM error";
+        }
+
+        std::string result(
+            message,
+            length
+        );
+
+        lua_pop(L, 1);
+
+        return result;
+    }
+
+    /*
+     * Execute the already-compiled Luau bytecode.
+     */
+    bool executeLuauBytecode(
+        const std::vector<std::uint8_t>& bytes,
+        std::string& output
+    )
+    {
+        if (bytes.empty())
+        {
+            output =
+                "Bytecode is empty";
+
+            return false;
+        }
+
+        /*
+         * Create an isolated Luau state.
+         */
+        lua_State* L =
+            luaL_newstate();
+
+        if (!L)
+        {
+            output =
+                "Failed to create Luau VM state";
+
+            return false;
+        }
+
+        /*
+         * Make the state responsible for the lifetime of the
+         * execution output pointer.
+         *
+         * The pointer itself is owned by VM::execute().
+         */
+        lua_setthreaddata(
+            L,
+            &output
+        );
+
+        /*
+         * Open Luau's standard libraries.
+         *
+         * If your production configuration wants a stricter
+         * sandbox, this can be replaced with only the libraries
+         * you explicitly want to expose.
+         */
+        luaL_openlibs(L);
+
+        /*
+         * Replace print() so the caller receives its output.
+         */
+        installPrint(L);
+
+        /*
+         * Load the REAL Luau bytecode.
+         *
+         * This is the Luau API intended for embedding.
+         * Do NOT use luaL_loadbuffer(); Luau uses luau_load().
+         */
+        const int loadResult =
+            luau_load(
+                L,
+                "@protected",
+                reinterpret_cast<const char*>(
+                    bytes.data()
+                ),
+                bytes.size(),
+                0
+            );
+
+        if (loadResult != 0)
+        {
+            output =
+                getError(L);
+
+            lua_close(L);
+
+            return false;
+        }
+
+        /*
+         * The loaded chunk is now on top of the stack.
+         *
+         * Execute it with protected-call semantics so runtime
+         * errors are returned instead of crashing the server.
+         */
+        const int callResult =
+            lua_pcall(
+                L,
+                0,
+                LUA_MULTRET,
+                0
+            );
+
+        if (callResult != 0)
+        {
+            const std::string error =
+                getError(L);
+
+            if (!output.empty())
+                output += "\n";
+
+            output +=
+                "Luau runtime error: ";
+
+            output += error;
+
+            lua_close(L);
+
+            return false;
+        }
+
+        /*
+         * Successful execution.
+         *
+         * Normally the output has already been captured by our
+         * print implementation.
+         */
+        lua_close(L);
+
+        return true;
     }
 }
 
@@ -184,122 +324,14 @@ bool VM::execute(
 {
     output.clear();
 
-    std::vector<std::uint8_t> recovered;
-
-    std::string error;
-
-    if (!unwrap(
-            bytecode,
-            recovered,
-            error
-        ))
-    {
-        output = error;
-        return false;
-    }
-
-    if (recovered.empty())
-    {
-        output = "Recovered Luau bytecode is empty";
-        return false;
-    }
-
     /*
-     * Create a real Luau state.
+     * Bytecode owns the actual compiled Luau bytes.
      */
-    lua_State* state =
-        luaL_newstate();
+    const std::vector<std::uint8_t>& bytes =
+        bytecode.data();
 
-    if (!state)
-    {
-        output = "Failed to create Luau state";
-        return false;
-    }
-
-    luaL_openlibs(state);
-
-    /*
-     * The recovered data is Luau bytecode.
-     *
-     * luaL_loadbuffer is intentionally used here instead
-     * of interpreting individual instructions ourselves.
-     */
-    const int loadResult =
-        luaL_loadbuffer(
-            state,
-            reinterpret_cast<const char*>(
-                recovered.data()
-            ),
-            recovered.size(),
-            "@protected"
-        );
-
-    if (loadResult != 0)
-    {
-        output = luaError(state);
-
-        lua_close(state);
-
-        return false;
-    }
-
-    /*
-     * Execute the loaded Luau chunk.
-     */
-    const int callResult =
-        lua_pcall(
-            state,
-            0,
-            LUA_MULTRET,
-            0
-        );
-
-    if (callResult != 0)
-    {
-        output = luaError(state);
-
-        lua_close(state);
-
-        return false;
-    }
-
-    /*
-     * Collect returned values as a basic diagnostic.
-     *
-     * Normal print() output should be redirected through
-     * a custom print function if the HTTP API needs to
-     * capture it.
-     */
-    const int resultCount =
-        lua_gettop(state);
-
-    if (resultCount > 0)
-    {
-        for (int i = 1; i <= resultCount; ++i)
-        {
-            if (i > 1)
-                output += '\n';
-
-            if (lua_isstring(state, i))
-            {
-                output +=
-                    lua_tostring(state, i);
-            }
-            else
-            {
-                output +=
-                    luaL_tolstring(
-                        state,
-                        i,
-                        nullptr
-                    );
-
-                lua_pop(state, 1);
-            }
-        }
-    }
-
-    lua_close(state);
-
-    return true;
+    return executeLuauBytecode(
+        bytes,
+        output
+    );
 }
