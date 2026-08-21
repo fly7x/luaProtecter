@@ -1,120 +1,65 @@
 #include "transformer.hpp"
 #include "obfuscation.hpp"
 #include "emitter.hpp"
+#include "protector/config.hpp"
 
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <string>
 
-static constexpr const char* INPUT_FILE =
-    "input/script.lua";
-
-static constexpr const char* OUTPUT_FILE =
-    "output/protected.lua";
-
 int main()
 {
-    std::ifstream input(
-        INPUT_FILE,
-        std::ios::in
-    );
+    const std::string inputPath = protector::DEFAULT_INPUT;
+    const std::string outputPath = protector::DEFAULT_OUTPUT;
+
+    std::ifstream input(inputPath, std::ios::binary);
 
     if (!input)
     {
-        std::cerr
-            << "Failed to open "
-            << INPUT_FILE
-            << '\n';
-
+        std::cerr << "Failed to open input file: " << inputPath << '\n';
         return 1;
     }
 
-    std::string source(
+    // Use braces here so the compiler cannot interpret this as
+    // a function declaration.
+    const std::string source{
         std::istreambuf_iterator<char>(input),
         std::istreambuf_iterator<char>()
-    );
-
-    input.close();
+    };
 
     if (source.empty())
     {
-        std::cerr
-            << "Input source is empty.\n";
-
+        std::cerr << "Input file is empty: " << inputPath << '\n';
         return 1;
     }
 
     Transformer transformer;
-
-    std::string transformed =
-        transformer.transform(source);
-
-    if (transformed.empty())
-    {
-        std::cerr
-            << "Transformation failed.\n";
-
-        return 2;
-    }
-
-    /*
-        Transformer performs the actual protection.
-
-        Obfuscator remains as the dedicated protection
-        component so future protection passes can be
-        separated cleanly.
-    */
-
     Obfuscator obfuscator;
-
-    std::string protectedSource =
-        obfuscator.obfuscate(transformed);
-
-    if (protectedSource.empty())
-    {
-        std::cerr
-            << "Obfuscation failed.\n";
-
-        return 3;
-    }
-
     Emitter emitter;
 
-    std::string output =
-        emitter.emit(protectedSource);
+    std::string transformed = transformer.transform(source);
+    std::string obfuscated = obfuscator.obfuscate(transformed);
+    std::string output = emitter.emit(obfuscated);
 
-    if (output.empty())
+    std::ofstream out(outputPath, std::ios::binary);
+
+    if (!out)
     {
-        std::cerr
-            << "Emitter produced empty output.\n";
-
-        return 4;
+        std::cerr << "Failed to open output file: " << outputPath << '\n';
+        return 1;
     }
 
-    std::ofstream file(
-        OUTPUT_FILE,
-        std::ios::out |
-        std::ios::trunc
-    );
+    out.write(output.data(), static_cast<std::streamsize>(output.size()));
 
-    if (!file)
+    if (!out)
     {
-        std::cerr
-            << "Failed to create "
-            << OUTPUT_FILE
-            << '\n';
-
-        return 5;
+        std::cerr << "Failed while writing output file: " << outputPath << '\n';
+        return 1;
     }
 
-    file << output;
-    file.close();
-
-    std::cout
-        << "Protected output written to "
-        << OUTPUT_FILE
-        << '\n';
+    std::cout << "Protected output written to: "
+              << outputPath << '\n';
 
     return 0;
 }
