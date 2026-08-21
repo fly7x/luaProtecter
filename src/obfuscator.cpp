@@ -3,46 +3,75 @@
 #include <chrono>
 #include <cstdint>
 #include <random>
+#include <utility>
 #include <vector>
 
 namespace
 {
+    constexpr std::uint32_t MAGIC =
+        0x31564D4Cu; // "LVM1"
+
+    constexpr std::uint8_t VERSION = 1;
+
     std::uint32_t generateSeed()
     {
-        std::random_device device;
+        std::random_device rd;
 
         const std::uint32_t a =
-            static_cast<std::uint32_t>(
-                device()
-            );
+            static_cast<std::uint32_t>(rd());
 
         const std::uint32_t b =
-            static_cast<std::uint32_t>(
-                device()
-            );
+            static_cast<std::uint32_t>(rd());
 
-        const std::uint64_t timestamp =
-            static_cast<std::uint64_t>(
-                std::chrono::high_resolution_clock::
-                    now()
-                    .time_since_epoch()
-                    .count()
-            );
+        const auto now =
+            std::chrono::high_resolution_clock::
+                now()
+                .time_since_epoch()
+                .count();
+
+        std::uint64_t timestamp =
+            static_cast<std::uint64_t>(now);
 
         std::uint32_t seed =
             a ^
             (b * 0x9E3779B9u) ^
-            static_cast<std::uint32_t>(
-                timestamp
-            ) ^
-            static_cast<std::uint32_t>(
-                timestamp >> 32
-            );
+            static_cast<std::uint32_t>(timestamp) ^
+            static_cast<std::uint32_t>(timestamp >> 32);
 
         if (seed == 0)
             seed = 0xA341316Cu;
 
         return seed;
+    }
+
+    void writeU32(
+        std::vector<std::uint8_t>& output,
+        std::uint32_t value
+    )
+    {
+        output.push_back(
+            static_cast<std::uint8_t>(
+                value
+            )
+        );
+
+        output.push_back(
+            static_cast<std::uint8_t>(
+                value >> 8
+            )
+        );
+
+        output.push_back(
+            static_cast<std::uint8_t>(
+                value >> 16
+            )
+        );
+
+        output.push_back(
+            static_cast<std::uint8_t>(
+                value >> 24
+            )
+        );
     }
 }
 
@@ -95,10 +124,51 @@ Bytecode Obfuscator::transform(
     const std::vector<std::uint8_t>& source =
         input.data();
 
+    /*
+     * Format:
+     *
+     * 00-03  MAGIC
+     * 04     VERSION
+     * 05-08  SEED
+     * 09-0C  ORIGINAL SIZE
+     * 0D...  ENCRYPTED BYTECODE
+     */
+
     std::vector<std::uint8_t> result;
 
-    result.resize(
-        source.size()
+    result.reserve(
+        13 + source.size()
+    );
+
+    writeU32(
+        result,
+        MAGIC
+    );
+
+    result.push_back(
+        VERSION
+    );
+
+    writeU32(
+        result,
+        seed_
+    );
+
+    if (
+        source.size() >
+        static_cast<std::size_t>(
+            UINT32_MAX
+        )
+    )
+    {
+        return {};
+    }
+
+    writeU32(
+        result,
+        static_cast<std::uint32_t>(
+            source.size()
+        )
     );
 
     for (
@@ -107,7 +177,7 @@ Bytecode Obfuscator::transform(
         ++i
     )
     {
-        result[i] =
+        const std::uint8_t encrypted =
             static_cast<std::uint8_t>(
                 source[i] ^
                 keyByte(
@@ -115,6 +185,10 @@ Bytecode Obfuscator::transform(
                     i
                 )
             );
+
+        result.push_back(
+            encrypted
+        );
     }
 
     return Bytecode(
