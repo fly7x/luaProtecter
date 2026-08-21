@@ -1,17 +1,19 @@
 #pragma once
+
 #include "bytecode.hpp"
+
 #include <string>
+
 class VM
 {
 public:
     VM() = default;
+
     /*
-     * Execute real Luau bytecode produced by Compiler.
+     * Execute protected Luau bytecode.
      *
-     * Returns true when execution succeeds.
-     * Returns false when loading or execution fails.
-     *
-     * output receives captured program output where applicable.
+     * The VM first restores the protected representation,
+     * then executes it through the real Luau runtime.
      */
     bool execute(
         const Bytecode& bytecode,
