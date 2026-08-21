@@ -3,8 +3,8 @@
 #include "Luau/Compiler.h"
 
 #include "lua.h"
-#include "lauxlib.h"
 #include "lualib.h"
+#include "luacode.h"
 #include "luacode.h"
 
 #include <arpa/inet.h>
