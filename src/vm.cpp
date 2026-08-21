@@ -1,28 +1,51 @@
 #include "vm.hpp"
 
 #include <cstdint>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 
 namespace
 {
-    std::string hex32(std::uint32_t value)
+    /*
+     * FNV-1a 32-bit hash.
+     *
+     * This is only used as a lightweight integrity identifier.
+     * It is NOT intended to be cryptographic protection.
+     */
+    std::uint32_t hashBytes(
+        const std::vector<std::uint8_t>& bytes
+    )
+    {
+        std::uint32_t hash = 2166136261u;
+
+        for (std::uint8_t byte : bytes)
+        {
+            hash ^= byte;
+            hash *= 16777619u;
+        }
+
+        return hash;
+    }
+
+    std::string hex32(
+        std::uint32_t value
+    )
     {
         static constexpr char hex[] =
             "0123456789abcdef";
 
-        std::string out(8, '0');
+        std::string result(8, '0');
 
         for (int i = 7; i >= 0; --i)
         {
-            out[static_cast<std::size_t>(i)] =
-                hex[value & 0x0Fu];
+            result[
+                static_cast<std::size_t>(i)
+            ] = hex[value & 0x0Fu];
 
             value >>= 4;
         }
 
-        return out;
+        return result;
     }
 }
 
@@ -35,21 +58,27 @@ bool VM::validate(
 
     if (bytecode.empty())
     {
-        error = "Empty Luau bytecode.";
+        error =
+            "Empty Luau bytecode.";
+
+        return false;
+    }
+
+    if (bytecode.size() < 4)
+    {
+        error =
+            "Luau bytecode is too small.";
+
         return false;
     }
 
     /*
-     * The compiler is responsible for producing valid Luau
-     * bytecode.  The VM layer only accepts a non-empty,
-     * structurally complete bytecode object.
+     * At this stage validation deliberately remains conservative.
+     *
+     * The Luau compiler is responsible for producing valid
+     * bytecode. We do not reinterpret or modify its instruction
+     * stream here.
      */
-    if (bytecode.data.empty())
-    {
-        error = "Luau compiler returned no bytecode.";
-        return false;
-    }
-
     return true;
 }
 
@@ -63,17 +92,10 @@ std::string VM::package(
         throw std::runtime_error(error);
 
     /*
-     * Keep the compiled representation binary-safe.
+     * Return the binary-safe Base64 representation.
      *
-     * Do not convert bytecode into Lua source and do not expose
-     * the original source text here.
+     * This is a transport/package representation, NOT a second
+     * interpreter and NOT a conversion back into source code.
      */
-    std::ostringstream out;
-
-    out << "--!native\n";
-    out << "-- Luau compiled payload\n";
-    out << "-- payload-size:" << bytecode.data.size() << "\n";
-    out << "-- payload-hash:" << hex32(bytecode.hash()) << "\n";
-
-    return out.str();
+    return bytecode.toBase64();
 }
