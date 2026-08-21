@@ -1,30 +1,24 @@
 #pragma once
 
-#include "bytecode.hpp"
-
 #include <string>
 
 class VM
 {
 public:
-    VM() = default;
+    VM();
+    ~VM();
 
-    /*
-     * Validate that the supplied payload is structurally valid
-     * Luau bytecode produced by the compiler pipeline.
-     *
-     * This VM does not interpret arbitrary source text.
-     */
-    bool validate(
-        const Bytecode& bytecode,
+    VM(const VM&) = delete;
+    VM& operator=(const VM&) = delete;
+
+    // Compile and execute Luau source.
+    // Returns true when execution succeeds.
+    bool execute(
+        const std::string& source,
         std::string& error
-    ) const;
+    );
 
-    /*
-     * Return the protected representation used by the
-     * application transport layer.
-     */
-    std::string package(
-        const Bytecode& bytecode
-    ) const;
+private:
+    struct State;
+    State* state_;
 };
