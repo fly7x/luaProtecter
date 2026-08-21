@@ -9,16 +9,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # ============================================================
 # Luau
 # ============================================================
-#
-# Your repository stores Luau here:
-#
-#     third_party/luau/
-#
-# NOT:
-#
-#     luau/
-#
-# ============================================================
 
 set(LUAU_BUILD_CLI OFF CACHE BOOL "Build Luau CLI tools" FORCE)
 set(LUAU_BUILD_TESTS OFF CACHE BOOL "Build Luau tests" FORCE)
@@ -30,33 +20,34 @@ add_subdirectory(
 )
 
 # ============================================================
-# LuaProtecter
+# Application
 # ============================================================
 
 add_executable(luaProtecter
 
     src/main.cpp
 
-    src/transformer.cpp
-    src/transformer.hpp
+    src/compiler.cpp
+    src/compiler.hpp
 
     src/bytecode.cpp
     src/bytecode.hpp
+
+    src/transformer.cpp
+    src/transformer.hpp
 
     src/vm.cpp
     src/vm.hpp
 )
 
 # ============================================================
-# Include directories
+# Include paths
 # ============================================================
 
 target_include_directories(luaProtecter
     PRIVATE
 
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
 
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/VM/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Compiler/include
@@ -66,17 +57,7 @@ target_include_directories(luaProtecter
 )
 
 # ============================================================
-# Link against the REAL Luau compiler + VM
-# ============================================================
-#
-# Luau itself defines these targets in its CMake project.
-#
-# Compiler:
-#   Luau.Compiler
-#
-# Runtime VM:
-#   Luau.VM
-#
+# Luau libraries
 # ============================================================
 
 target_link_libraries(luaProtecter
@@ -85,10 +66,6 @@ target_link_libraries(luaProtecter
     Luau.Compiler
     Luau.VM
 )
-
-# ============================================================
-# Compiler warnings
-# ============================================================
 
 if(MSVC)
 
@@ -111,10 +88,6 @@ else()
 
 endif()
 
-# ============================================================
-# Linux / Unix
-# ============================================================
-
 if(UNIX AND NOT APPLE)
 
     target_link_libraries(
@@ -124,10 +97,6 @@ if(UNIX AND NOT APPLE)
     )
 
 endif()
-
-# ============================================================
-# Output
-# ============================================================
 
 set_target_properties(
     luaProtecter
