@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>LuaProtecter</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: #09090b;
+            color: #f4f4f5;
+            font-family: Inter, Arial, sans-serif;
+        }
+
+        .container {
+            width: min(1200px, 94%);
+            margin: 0 auto;
+            padding: 42px 0;
+        }
+
+        header {
+            margin-bottom: 28px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 34px;
+        }
+
+        .subtitle {
+            color: #a1a1aa;
+            margin-top: 8px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .card {
+            background: #111113;
+            border: 1px solid #27272a;
+            border-radius: 16px;
+            padding: 20px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 520px;
+            resize: vertical;
+            background: #09090b;
+            color: #e4e4e7;
+            border: 1px solid #27272a;
+            border-radius: 10px;
+            padding: 16px;
+            font-family: "SFMono-Regular", Consolas, monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            outline: none;
+        }
+
+        textarea:focus {
+            border-color: #52525b;
+        }
+
+        .options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 16px 0;
+        }
+
+        label {
+            background: #18181b;
+            border: 1px solid #27272a;
+            border-radius: 9px;
+            padding: 11px;
+            color: #d4d4d8;
+            font-size: 13px;
+        }
+
+        button {
+            width: 100%;
+            border: 0;
+            border-radius: 10px;
+            padding: 14px;
+            background: #f4f4f5;
+            color: #09090b;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        button:hover {
+            opacity: .9;
+        }
+
+        button:disabled {
+            opacity: .5;
+            cursor: wait;
+        }
+
+        .status {
+            margin-top: 12px;
+            color: #a1a1aa;
+            font-size: 13px;
+        }
+
+        @media (max-width: 800px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            textarea {
+                min-height: 360px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <header>
+        <h1>LuaProtecter</h1>
+        <div class="subtitle">
+            Luau source protection and transformation
+        </div>
+    </header>
+
+    <div class="grid">
+
+        <section class="card">
+            <h3>Input</h3>
+
+            <textarea
+                id="source"
+                placeholder="Paste your Luau script here..."
+            ></textarea>
+
+            <div class="options">
+                <label>
+                    <input type="checkbox" checked>
+                    Identifier protection
+                </label>
+
+                <label>
+                    <input type="checkbox" checked>
+                    String transformation
+                </label>
+
+                <label>
+                    <input type="checkbox" checked>
+                    Constant transformation
+                </label>
+
+                <label>
+                    <input type="checkbox" checked>
+                    Control-flow transformation
+                </label>
+
+                <label>
+                    <input type="checkbox" checked>
+                    Dead-code resistance
+                </label>
+
+                <label>
+                    <input type="checkbox" checked>
+                    Runtime decoding
+                </label>
+            </div>
+
+            <button id="protect">
+                PROTECT SCRIPT
+            </button>
+
+            <div class="status" id="status"></div>
+        </section>
+
+        <section class="card">
+            <h3>Protected Output</h3>
+
+            <textarea
+                id="output"
+                readonly
+                placeholder="Protected output will appear here..."
+            ></textarea>
+
+            <br><br>
+
+            <button id="copy">
+                COPY OUTPUT
+            </button>
+        </section>
+
+    </div>
+
+</div>
+
+<script>
+const source = document.getElementById("source");
+const output = document.getElementById("output");
+const protect = document.getElementById("protect");
+const copy = document.getElementById("copy");
+const status = document.getElementById("status");
+
+protect.addEventListener("click", async () => {
+    const code = source.value;
+
+    if (!code.trim()) {
+        status.textContent = "Paste a Luau script first.";
+        return;
+    }
+
+    protect.disabled = true;
+    status.textContent = "Protecting...";
+
+    try {
+        const response = await fetch("/api/protect", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                source: code
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+            throw new Error(data.error || "Protection failed.");
+        }
+
+        output.value = data.output;
+        status.textContent = "Protection complete.";
+    }
+    catch (error) {
+        status.textContent = error.message;
+    }
+    finally {
+        protect.disabled = false;
+    }
+});
+
+copy.addEventListener("click", async () => {
+    if (!output.value)
+        return;
+
+    await navigator.clipboard.writeText(output.value);
+
+    status.textContent = "Output copied.";
+});
+</script>
+
+</body>
+</html>
