@@ -1,30 +1,28 @@
 #include "vm.hpp"
 
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
 {
-    /*
-     * ---------------------------------------------------------
-     * Custom VM instruction set
-     * ---------------------------------------------------------
-     */
+    // =========================================================
+    // Custom VM instruction set
+    // =========================================================
 
-    constexpr std::uint8_t OP_HALT = 0x01;
+    constexpr std::uint8_t OP_HALT        = 0x01;
     constexpr std::uint8_t OP_PUSH_STRING = 0x02;
-    constexpr std::uint8_t OP_PRINT = 0x03;
+    constexpr std::uint8_t OP_PRINT       = 0x03;
 
-    /*
-     * ---------------------------------------------------------
-     * Custom bytecode header
-     * ---------------------------------------------------------
-     *
-     * LVM1
-     * version = 1
-     */
+    // =========================================================
+    // Custom bytecode header
+    //
+    // LVM1
+    // version = 1
+    // =========================================================
 
     constexpr std::uint8_t MAGIC_0 = 'L';
     constexpr std::uint8_t MAGIC_1 = 'V';
@@ -33,62 +31,60 @@ namespace
 
     constexpr std::uint8_t VERSION = 1;
 
-    /*
-     * Read a little-endian uint32.
-     */
+    constexpr std::size_t HEADER_SIZE = 5;
+
+    // =========================================================
+    // Limits
+    // =========================================================
+
+    constexpr std::size_t MAX_INSTRUCTIONS = 1'000'000;
+    constexpr std::size_t MAX_STRING_SIZE = 16 * 1024 * 1024;
+    constexpr std::size_t MAX_STACK_SIZE = 1'000'000;
+    constexpr std::size_t MAX_OUTPUT_SIZE = 64 * 1024 * 1024;
+
+    // =========================================================
+    // Little-endian uint32 reader
+    // =========================================================
+
     bool readU32(
         const std::vector<std::uint8_t>& bytes,
         std::size_t& position,
         std::uint32_t& value
     )
     {
-        if (
-            position + 4 >
-            bytes.size()
-        )
-        {
+        if (position > bytes.size())
             return false;
-        }
+
+        if (bytes.size() - position < 4)
+            return false;
 
         value =
-            static_cast<std::uint32_t>(
-                bytes[position]
-            )
+            static_cast<std::uint32_t>(bytes[position])
             |
-            (
-                static_cast<std::uint32_t>(
-                    bytes[position + 1]
-                )
-                << 8
-            )
+            (static_cast<std::uint32_t>(
+                bytes[position + 1]
+            ) << 8)
             |
-            (
-                static_cast<std::uint32_t>(
-                    bytes[position + 2]
-                )
-                << 16
-            )
+            (static_cast<std::uint32_t>(
+                bytes[position + 2]
+            ) << 16)
             |
-            (
-                static_cast<std::uint32_t>(
-                    bytes[position + 3]
-                )
-                << 24
-            );
+            (static_cast<std::uint32_t>(
+                bytes[position + 3]
+            ) << 24);
 
         position += 4;
 
         return true;
     }
 
-    /*
-     * Read a length-prefixed string.
-     *
-     * Format:
-     *
-     * [uint32 length]
-     * [raw bytes]
-     */
+    // =========================================================
+    // Read length-prefixed string
+    //
+    // [uint32 length]
+    // [raw string bytes]
+    // =========================================================
+
     bool readString(
         const std::vector<std::uint8_t>& bytes,
         std::size_t& position,
@@ -97,64 +93,46 @@ namespace
     {
         std::uint32_t length = 0;
 
-        if (
-            !readU32(
-                bytes,
-                position,
-                length
-            )
-        )
-        {
+        if (!readU32(bytes, position, length))
             return false;
-        }
 
-        if (
-            static_cast<std::size_t>(length) >
-            bytes.size() - position
-        )
-        {
+        const std::size_t stringLength =
+            static_cast<std::size_t>(length);
+
+        if (stringLength > MAX_STRING_SIZE)
             return false;
-        }
+
+        if (position > bytes.size())
+            return false;
+
+        if (stringLength > bytes.size() - position)
+            return false;
 
         value.assign(
             reinterpret_cast<const char*>(
                 bytes.data() + position
             ),
-            static_cast<std::size_t>(length)
+            stringLength
         );
 
-        position +=
-            static_cast<std::size_t>(
-                length
-            );
+        position += stringLength;
 
         return true;
     }
 
-    /*
-     * Validate the custom bytecode header.
-     */
+    // =========================================================
+    // Header validation
+    // =========================================================
+
     bool validateHeader(
         const std::vector<std::uint8_t>& bytes,
         std::size_t& position,
         std::string& error
     )
     {
-        /*
-         * Header:
-         *
-         * byte 0 = L
-         * byte 1 = V
-         * byte 2 = M
-         * byte 3 = 1
-         * byte 4 = version
-         */
-
-        if (bytes.size() < 5)
+        if (bytes.size() < HEADER_SIZE)
         {
-            error =
-                "Bytecode is too small";
-
+            error = "Bytecode is too small";
             return false;
         }
 
@@ -165,27 +143,61 @@ namespace
             bytes[3] != MAGIC_3
         )
         {
-            error =
-                "Invalid LVM magic";
-
+            error = "Invalid LVM magic";
             return false;
         }
 
-        if (
-            bytes[4] != VERSION
-        )
+        if (bytes[4] != VERSION)
         {
-            error =
-                "Unsupported LVM bytecode version";
-
+            error = "Unsupported LVM bytecode version";
             return false;
         }
 
-        position = 5;
+        position = HEADER_SIZE;
+
+        return true;
+    }
+
+    // =========================================================
+    // Safely append VM output
+    // =========================================================
+
+    bool appendOutput(
+        std::string& output,
+        const std::string& value
+    )
+    {
+        if (value.size() >
+            MAX_OUTPUT_SIZE - std::min(
+                output.size(),
+                MAX_OUTPUT_SIZE
+            ))
+        {
+            return false;
+        }
+
+        output += value;
+
+        return true;
+    }
+
+    bool appendOutputChar(
+        std::string& output,
+        char value
+    )
+    {
+        if (output.size() >= MAX_OUTPUT_SIZE)
+            return false;
+
+        output.push_back(value);
 
         return true;
     }
 }
+
+// =============================================================
+// VM
+// =============================================================
 
 bool VM::execute(
     const Bytecode& bytecode,
@@ -199,70 +211,65 @@ bool VM::execute(
 
     if (bytes.empty())
     {
-        output =
-            "Bytecode is empty";
-
+        output = "Bytecode is empty";
         return false;
     }
 
-    std::size_t position = 0;
+    // ---------------------------------------------------------
+    // Validate header
+    // ---------------------------------------------------------
 
+    std::size_t position = 0;
     std::string error;
 
-    if (
-        !validateHeader(
+    if (!validateHeader(
             bytes,
             position,
             error
-        )
-    )
+        ))
     {
         output = error;
         return false;
     }
 
-    /*
-     * ---------------------------------------------------------
-     * VM stack
-     * ---------------------------------------------------------
-     */
+    // ---------------------------------------------------------
+    // VM stack
+    //
+    // Current instruction set only has strings.
+    // Later this can become a Value variant supporting:
+    //
+    // nil
+    // boolean
+    // number
+    // string
+    // table
+    // function
+    // userdata
+    // thread
+    // etc.
+    // ---------------------------------------------------------
 
     std::vector<std::string> stack;
 
-    /*
-     * Safety limit.
-     *
-     * Prevents malformed bytecode from running
-     * indefinitely.
-     */
-    constexpr std::size_t MAX_INSTRUCTIONS =
-        1'000'000;
+    stack.reserve(32);
+
+    // ---------------------------------------------------------
+    // Interpreter state
+    // ---------------------------------------------------------
 
     std::size_t instructionCount = 0;
 
     bool halted = false;
 
-    /*
-     * ---------------------------------------------------------
-     * Main interpreter loop
-     * ---------------------------------------------------------
-     */
+    // ---------------------------------------------------------
+    // Main interpreter loop
+    // ---------------------------------------------------------
 
-    while (
-        position <
-        bytes.size()
-    )
+    while (position < bytes.size())
     {
-        ++instructionCount;
-
-        if (
-            instructionCount >
-            MAX_INSTRUCTIONS
-        )
+        if (++instructionCount > MAX_INSTRUCTIONS)
         {
-            output =
-                "VM instruction limit exceeded";
-
+            output = "VM instruction limit exceeded";
             return false;
         }
 
@@ -271,24 +278,15 @@ bool VM::execute(
 
         switch (opcode)
         {
-            /*
-             * -------------------------------------------------
-             * HALT
-             * -------------------------------------------------
-             */
+            // =================================================
+            // HALT
+            // =================================================
 
             case OP_HALT:
             {
                 halted = true;
 
-                /*
-                 * HALT should normally be the final
-                 * instruction.
-                 */
-                if (
-                    position !=
-                    bytes.size()
-                )
+                if (position != bytes.size())
                 {
                     output =
                         "Trailing bytes after HALT";
@@ -299,29 +297,33 @@ bool VM::execute(
                 break;
             }
 
-            /*
-             * -------------------------------------------------
-             * PUSH_STRING
-             * -------------------------------------------------
-             *
-             * Encoding:
-             *
-             * 02
-             * uint32 length
-             * string bytes
-             */
+            // =================================================
+            // PUSH_STRING
+            //
+            // Format:
+            //
+            // 02
+            // uint32 length
+            // string bytes
+            // =================================================
 
             case OP_PUSH_STRING:
             {
+                if (stack.size() >= MAX_STACK_SIZE)
+                {
+                    output =
+                        "VM stack limit exceeded";
+
+                    return false;
+                }
+
                 std::string value;
 
-                if (
-                    !readString(
+                if (!readString(
                         bytes,
                         position,
                         value
-                    )
-                )
+                    ))
                 {
                     output =
                         "Malformed PUSH_STRING instruction";
@@ -336,13 +338,11 @@ bool VM::execute(
                 break;
             }
 
-            /*
-             * -------------------------------------------------
-             * PRINT
-             * -------------------------------------------------
-             *
-             * Pops one string from the stack.
-             */
+            // =================================================
+            // PRINT
+            //
+            // Pops the top string and writes it to output.
+            // =================================================
 
             case OP_PRINT:
             {
@@ -361,21 +361,34 @@ bool VM::execute(
 
                 stack.pop_back();
 
-                output += value;
+                if (!appendOutput(
+                        output,
+                        value
+                    ))
+                {
+                    output =
+                        "VM output limit exceeded";
 
-                /*
-                 * Match normal print() behaviour.
-                 */
-                output += '\n';
+                    return false;
+                }
+
+                if (!appendOutputChar(
+                        output,
+                        '\n'
+                    ))
+                {
+                    output =
+                        "VM output limit exceeded";
+
+                    return false;
+                }
 
                 break;
             }
 
-            /*
-             * -------------------------------------------------
-             * Unknown opcode
-             * -------------------------------------------------
-             */
+            // =================================================
+            // UNKNOWN OPCODE
+            // =================================================
 
             default:
             {
@@ -395,9 +408,10 @@ bool VM::execute(
             break;
     }
 
-    /*
-     * A valid program must contain HALT.
-     */
+    // ---------------------------------------------------------
+    // Program must terminate with HALT
+    // ---------------------------------------------------------
+
     if (!halted)
     {
         output =
