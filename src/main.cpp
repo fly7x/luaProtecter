@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
