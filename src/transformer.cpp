@@ -7,7 +7,7 @@
 
 namespace
 {
-    constexpr std::uint32_t MAGIC = 0x4C50524Fu; // "LPRO"
+    constexpr std::uint32_t MAGIC = 0x4C50524Fu; // LPRO
     constexpr std::uint8_t VERSION = 1;
 
     std::uint32_t random32()
@@ -29,46 +29,25 @@ namespace
         return value;
     }
 
-    std::uint8_t randomKey()
-    {
-        std::uint8_t key =
-            static_cast<std::uint8_t>(
-                random32() & 0xFFu
-            );
-
-        if (key == 0)
-            key = 0xA7;
-
-        return key;
-    }
-
     void writeU32(
         std::vector<std::uint8_t>& out,
         std::uint32_t value
     )
     {
         out.push_back(
-            static_cast<std::uint8_t>(
-                value & 0xFFu
-            )
+            static_cast<std::uint8_t>(value)
         );
 
         out.push_back(
-            static_cast<std::uint8_t>(
-                (value >> 8) & 0xFFu
-            )
+            static_cast<std::uint8_t>(value >> 8)
         );
 
         out.push_back(
-            static_cast<std::uint8_t>(
-                (value >> 16) & 0xFFu
-            )
+            static_cast<std::uint8_t>(value >> 16)
         );
 
         out.push_back(
-            static_cast<std::uint8_t>(
-                (value >> 24) & 0xFFu
-            )
+            static_cast<std::uint8_t>(value >> 24)
         );
     }
 
@@ -76,8 +55,7 @@ namespace
         const std::string& data
     )
     {
-        std::uint32_t hash =
-            2166136261u;
+        std::uint32_t hash = 2166136261u;
 
         for (unsigned char c : data)
         {
@@ -88,53 +66,28 @@ namespace
         return hash;
     }
 
-    std::vector<std::uint8_t> protectBytecode(
+    std::string protectBytecode(
         const std::string& bytecode
     )
     {
-        std::vector<std::uint8_t> result;
-
         const std::uint8_t key =
-            randomKey();
+            static_cast<std::uint8_t>(
+                random32() & 0xFFu
+            );
 
         const std::uint32_t seed =
             random32();
 
-        const std::uint32_t checksum =
-            hashBytes(bytecode);
+        std::vector<std::uint8_t> result;
 
-        /*
-         * Header
-         *
-         * [magic]
-         * [version]
-         * [key]
-         * [reserved]
-         * [seed]
-         * [size]
-         * [checksum]
-         */
+        writeU32(result, MAGIC);
 
-        writeU32(
-            result,
-            MAGIC
-        );
-
-        result.push_back(
-            VERSION
-        );
-
-        result.push_back(
-            key
-        );
-
+        result.push_back(VERSION);
+        result.push_back(key);
         result.push_back(0);
         result.push_back(0);
 
-        writeU32(
-            result,
-            seed
-        );
+        writeU32(result, seed);
 
         writeU32(
             result,
@@ -145,23 +98,12 @@ namespace
 
         writeU32(
             result,
-            checksum
+            hashBytes(bytecode)
         );
 
-        /*
-         * Protect the bytecode payload.
-         *
-         * This is deliberately a packaging layer,
-         * not a replacement Luau interpreter.
-         */
-
-        for (
-            std::size_t i = 0;
-            i < bytecode.size();
-            ++i
-        )
+        for (std::size_t i = 0; i < bytecode.size(); ++i)
         {
-            const std::uint8_t original =
+            const std::uint8_t value =
                 static_cast<std::uint8_t>(
                     static_cast<unsigned char>(
                         bytecode[i]
@@ -181,42 +123,28 @@ namespace
                     ) & 0xFFu
                 );
 
-            const std::uint8_t encoded =
-                static_cast<std::uint8_t>(
-                    original ^ key ^ mix
-                );
-
             result.push_back(
-                encoded
+                static_cast<std::uint8_t>(
+                    value ^ key ^ mix
+                )
             );
         }
 
-        return result;
+        return std::string(
+            reinterpret_cast<const char*>(
+                result.data()
+            ),
+            result.size()
+        );
     }
 }
 
-std::string Transformer::transform(
-    const std::string& source
+std::string Transformer::protect(
+    const std::string& bytecode
 )
 {
-    /*
-     * This function expects the caller to have already
-     * compiled source with Luau::compile().
-     *
-     * The input here is therefore Luau bytecode,
-     * not Lua source text.
-     */
-
-    if (source.empty())
+    if (bytecode.empty())
         return {};
 
-    const std::vector<std::uint8_t> protectedData =
-        protectBytecode(source);
-
-    return std::string(
-        reinterpret_cast<const char*>(
-            protectedData.data()
-        ),
-        protectedData.size()
-    );
+    return protectBytecode(bytecode);
 }
