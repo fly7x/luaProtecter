@@ -1,80 +1,22 @@
 #pragma once
 
-#include <cstdint>
-#include <string>
-#include <vector>
+#include “bytecode.hpp”
 
-enum class VMOpcode : std::uint8_t
-{
-    NOP = 0,
-
-    PUSH_NIL,
-    PUSH_BOOL,
-    PUSH_NUMBER,
-    PUSH_STRING,
-
-    GET_GLOBAL,
-    SET_GLOBAL,
-
-    ADD,
-    SUB,
-    MUL,
-    DIV,
-
-    NEG,
-    NOT,
-
-    POP,
-
-    CALL,
-    RETURN
-};
-
-struct VMInstruction
-{
-    VMOpcode opcode = VMOpcode::NOP;
-
-    std::int32_t operandA = 0;
-    std::int32_t operandB = 0;
-
-    double number = 0.0;
-
-    std::string text;
-};
+#include 
 
 class Compiler
 {
 public:
-    Compiler() = default;
+Compiler() = default;
 
-    /*
-     * Compile valid Luau source into our custom VM
-     * instruction representation.
-     */
-    bool compile(
-        const std::string& source,
-        std::vector<VMInstruction>& output,
-        std::string& error
-    );
+/*
+ * Compile Luau source into the custom VM instruction format.
+ *
+ * This is NOT Luau bytecode.
+ * The resulting Bytecode is consumed by VM::execute().
+ */
+Bytecode compile(
+    const std::string& source
+) const;
 
-    /*
-     * Serialize the instruction stream into a binary
-     * representation suitable for Transformer::protect().
-     */
-    std::string serialize(
-        const std::vector<VMInstruction>& instructions
-    ) const;
-
-private:
-    bool compileStatement(
-        const std::string& statement,
-        std::vector<VMInstruction>& output,
-        std::string& error
-    );
-
-    bool compileExpression(
-        const std::string& expression,
-        std::vector<VMInstruction>& output,
-        std::string& error
-    );
 };
