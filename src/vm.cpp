@@ -1,92 +1,410 @@
 #include "vm.hpp"
 
-#include <Luau/Compiler.h>
-#include <Luau/BytecodeBuilder.h>
-#include <Luau/BytecodeUtils.h>
-
+#include <cstdint>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
-VM::VM()
+namespace
 {
-}
+    /*
+     * ---------------------------------------------------------
+     * Custom VM instruction set
+     * ---------------------------------------------------------
+     */
 
-bool VM::compile(
-    const std::string& source,
-    std::string& bytecode,
-    std::string& error
-)
-{
-    bytecode.clear();
-    error.clear();
+    constexpr std::uint8_t OP_HALT = 0x01;
+    constexpr std::uint8_t OP_PUSH_STRING = 0x02;
+    constexpr std::uint8_t OP_PRINT = 0x03;
 
-    if (source.empty())
+    /*
+     * ---------------------------------------------------------
+     * Custom bytecode header
+     * ---------------------------------------------------------
+     *
+     * LVM1
+     * version = 1
+     */
+
+    constexpr std::uint8_t MAGIC_0 = 'L';
+    constexpr std::uint8_t MAGIC_1 = 'V';
+    constexpr std::uint8_t MAGIC_2 = 'M';
+    constexpr std::uint8_t MAGIC_3 = '1';
+
+    constexpr std::uint8_t VERSION = 1;
+
+    /*
+     * Read a little-endian uint32.
+     */
+    bool readU32(
+        const std::vector<std::uint8_t>& bytes,
+        std::size_t& position,
+        std::uint32_t& value
+    )
     {
-        error = "Source is empty";
-        return false;
-    }
+        if (
+            position + 4 >
+            bytes.size()
+        )
+        {
+            return false;
+        }
 
-    Luau::CompileOptions options;
+        value =
+            static_cast<std::uint32_t>(
+                bytes[position]
+            )
+            |
+            (
+                static_cast<std::uint32_t>(
+                    bytes[position + 1]
+                )
+                << 8
+            )
+            |
+            (
+                static_cast<std::uint32_t>(
+                    bytes[position + 2]
+                )
+                << 16
+            )
+            |
+            (
+                static_cast<std::uint32_t>(
+                    bytes[position + 3]
+                )
+                << 24
+            );
 
-    bytecode = Luau::compile(
-        source,
-        options,
-        Luau::ParseOptions{},
-        nullptr
-    );
+        position += 4;
 
-    if (bytecode.empty())
-    {
-        error = "Luau compilation failed";
-        return false;
+        return true;
     }
 
     /*
-     * Luau's compiler returns diagnostics as a textual
-     * error string beginning with "-- ".
+     * Read a length-prefixed string.
+     *
+     * Format:
+     *
+     * [uint32 length]
+     * [raw bytes]
      */
-    if (
-        bytecode.size() >= 3 &&
-        bytecode[0] == '-' &&
-        bytecode[1] == '-' &&
-        bytecode[2] == ' '
+    bool readString(
+        const std::vector<std::uint8_t>& bytes,
+        std::size_t& position,
+        std::string& value
     )
     {
-        error = bytecode;
-        bytecode.clear();
-        return false;
+        std::uint32_t length = 0;
+
+        if (
+            !readU32(
+                bytes,
+                position,
+                length
+            )
+        )
+        {
+            return false;
+        }
+
+        if (
+            static_cast<std::size_t>(length) >
+            bytes.size() - position
+        )
+        {
+            return false;
+        }
+
+        value.assign(
+            reinterpret_cast<const char*>(
+                bytes.data() + position
+            ),
+            static_cast<std::size_t>(length)
+        );
+
+        position +=
+            static_cast<std::size_t>(
+                length
+            );
+
+        return true;
     }
 
-    return true;
+    /*
+     * Validate the custom bytecode header.
+     */
+    bool validateHeader(
+        const std::vector<std::uint8_t>& bytes,
+        std::size_t& position,
+        std::string& error
+    )
+    {
+        /*
+         * Header:
+         *
+         * byte 0 = L
+         * byte 1 = V
+         * byte 2 = M
+         * byte 3 = 1
+         * byte 4 = version
+         */
+
+        if (bytes.size() < 5)
+        {
+            error =
+                "Bytecode is too small";
+
+            return false;
+        }
+
+        if (
+            bytes[0] != MAGIC_0 ||
+            bytes[1] != MAGIC_1 ||
+            bytes[2] != MAGIC_2 ||
+            bytes[3] != MAGIC_3
+        )
+        {
+            error =
+                "Invalid LVM magic";
+
+            return false;
+        }
+
+        if (
+            bytes[4] != VERSION
+        )
+        {
+            error =
+                "Unsupported LVM bytecode version";
+
+            return false;
+        }
+
+        position = 5;
+
+        return true;
+    }
 }
 
 bool VM::execute(
-    const std::string& source,
-    std::string& output,
-    std::string& error
-)
+    const Bytecode& bytecode,
+    std::string& output
+) const
 {
     output.clear();
-    error.clear();
 
-    std::string bytecode;
+    const std::vector<std::uint8_t>& bytes =
+        bytecode.data();
 
-    if (!compile(source, bytecode, error))
+    if (bytes.empty())
+    {
+        output =
+            "Bytecode is empty";
+
         return false;
+    }
+
+    std::size_t position = 0;
+
+    std::string error;
+
+    if (
+        !validateHeader(
+            bytes,
+            position,
+            error
+        )
+    )
+    {
+        output = error;
+        return false;
+    }
 
     /*
-     * IMPORTANT:
-     *
-     * This function currently only verifies compilation.
-     *
-     * Actual execution requires creating a Luau lua_State,
-     * loading the compiled bytecode with Luau's runtime API,
-     * and calling the resulting closure.
-     *
-     * Do NOT attempt to execute the binary by passing it to
-     * a source parser.
+     * ---------------------------------------------------------
+     * VM stack
+     * ---------------------------------------------------------
      */
 
-    output = bytecode;
+    std::vector<std::string> stack;
+
+    /*
+     * Safety limit.
+     *
+     * Prevents malformed bytecode from running
+     * indefinitely.
+     */
+    constexpr std::size_t MAX_INSTRUCTIONS =
+        1'000'000;
+
+    std::size_t instructionCount = 0;
+
+    bool halted = false;
+
+    /*
+     * ---------------------------------------------------------
+     * Main interpreter loop
+     * ---------------------------------------------------------
+     */
+
+    while (
+        position <
+        bytes.size()
+    )
+    {
+        ++instructionCount;
+
+        if (
+            instructionCount >
+            MAX_INSTRUCTIONS
+        )
+        {
+            output =
+                "VM instruction limit exceeded";
+
+            return false;
+        }
+
+        const std::uint8_t opcode =
+            bytes[position++];
+
+        switch (opcode)
+        {
+            /*
+             * -------------------------------------------------
+             * HALT
+             * -------------------------------------------------
+             */
+
+            case OP_HALT:
+            {
+                halted = true;
+
+                /*
+                 * HALT should normally be the final
+                 * instruction.
+                 */
+                if (
+                    position !=
+                    bytes.size()
+                )
+                {
+                    output =
+                        "Trailing bytes after HALT";
+
+                    return false;
+                }
+
+                break;
+            }
+
+            /*
+             * -------------------------------------------------
+             * PUSH_STRING
+             * -------------------------------------------------
+             *
+             * Encoding:
+             *
+             * 02
+             * uint32 length
+             * string bytes
+             */
+
+            case OP_PUSH_STRING:
+            {
+                std::string value;
+
+                if (
+                    !readString(
+                        bytes,
+                        position,
+                        value
+                    )
+                )
+                {
+                    output =
+                        "Malformed PUSH_STRING instruction";
+
+                    return false;
+                }
+
+                stack.push_back(
+                    std::move(value)
+                );
+
+                break;
+            }
+
+            /*
+             * -------------------------------------------------
+             * PRINT
+             * -------------------------------------------------
+             *
+             * Pops one string from the stack.
+             */
+
+            case OP_PRINT:
+            {
+                if (stack.empty())
+                {
+                    output =
+                        "PRINT attempted with empty stack";
+
+                    return false;
+                }
+
+                std::string value =
+                    std::move(
+                        stack.back()
+                    );
+
+                stack.pop_back();
+
+                output += value;
+
+                /*
+                 * Match normal print() behaviour.
+                 */
+                output += '\n';
+
+                break;
+            }
+
+            /*
+             * -------------------------------------------------
+             * Unknown opcode
+             * -------------------------------------------------
+             */
+
+            default:
+            {
+                output =
+                    "Unknown VM opcode: " +
+                    std::to_string(
+                        static_cast<unsigned int>(
+                            opcode
+                        )
+                    );
+
+                return false;
+            }
+        }
+
+        if (halted)
+            break;
+    }
+
+    /*
+     * A valid program must contain HALT.
+     */
+    if (!halted)
+    {
+        output =
+            "VM reached end of bytecode without HALT";
+
+        return false;
+    }
 
     return true;
 }
