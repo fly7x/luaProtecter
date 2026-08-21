@@ -1,39 +1,50 @@
+#include "bytecode.hpp"
 #include "transformer.hpp"
+#include "vm.hpp"
 
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cctype>
-#include <cstdint>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <netinet/in.h>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <sys/socket.h>
-#include <sys/types.h>
 #include <unistd.h>
 
 namespace
 {
-    constexpr std::size_t MAX_REQUEST_SIZE = 4 * 1024 * 1024;
+    constexpr std::size_t MAX_REQUEST_SIZE =
+        4 * 1024 * 1024;
+
     constexpr int DEFAULT_PORT = 10000;
 
-    std::string readFile(const std::string& path)
+    std::string readFile(
+        const std::string& path
+    )
     {
-        std::ifstream file(path, std::ios::binary);
+        std::ifstream file(
+            path,
+            std::ios::binary
+        );
 
         if (!file)
             return {};
 
-        std::ostringstream buffer;
-        buffer << file.rdbuf();
+        std::ostringstream stream;
+        stream << file.rdbuf();
 
-        return buffer.str();
+        return stream.str();
     }
 
-    std::string jsonEscape(const std::string& value)
+    std::string jsonEscape(
+        const std::string& value
+    )
     {
         std::string result;
         result.reserve(value.size() + 32);
@@ -71,23 +82,20 @@ namespace
                     break;
 
                 default:
-                {
                     if (c < 0x20)
                     {
                         static constexpr char hex[] =
                             "0123456789abcdef";
 
                         result += "\\u00";
-                        result += hex[(c >> 4) & 0xF];
-                        result += hex[c & 0xF];
+                        result += hex[(c >> 4) & 0x0F];
+                        result += hex[c & 0x0F];
                     }
                     else
                     {
                         result += static_cast<char>(c);
                     }
-
                     break;
-                }
             }
         }
 
@@ -97,18 +105,23 @@ namespace
     bool extractJsonString(
         const std::string& json,
         const std::string& key,
-        std::string& output)
+        std::string& output
+    )
     {
-        const std::string search = "\"" + key + "\"";
+        const std::string target =
+            "\"" + key + "\"";
 
-        const std::size_t keyPosition =
-            json.find(search);
+        const std::size_t keyPos =
+            json.find(target);
 
-        if (keyPosition == std::string::npos)
+        if (keyPos == std::string::npos)
             return false;
 
         const std::size_t colon =
-            json.find(':', keyPosition + search.size());
+            json.find(
+                ':',
+                keyPos + target.size()
+            );
 
         if (colon == std::string::npos)
             return false;
@@ -118,14 +131,19 @@ namespace
         while (
             start < json.size() &&
             std::isspace(
-                static_cast<unsigned char>(json[start])))
+                static_cast<unsigned char>(
+                    json[start]
+                )
+            )
+        )
         {
             ++start;
         }
 
         if (
             start >= json.size() ||
-            json[start] != '"')
+            json[start] != '"'
+        )
         {
             return false;
         }
@@ -135,7 +153,11 @@ namespace
         std::string result;
         bool escaped = false;
 
-        for (std::size_t i = start; i < json.size(); ++i)
+        for (
+            std::size_t i = start;
+            i < json.size();
+            ++i
+        )
         {
             const char c = json[i];
 
@@ -184,21 +206,40 @@ namespace
 
                         for (int j = 1; j <= 4; ++j)
                         {
-                            const char h = json[i + j];
+                            const char h =
+                                json[i + j];
 
                             value <<= 4;
 
-                            if (h >= '0' && h <= '9')
+                            if (
+                                h >= '0' &&
+                                h <= '9'
+                            )
                             {
-                                value += h - '0';
+                                value +=
+                                    static_cast<unsigned>(
+                                        h - '0'
+                                    );
                             }
-                            else if (h >= 'a' && h <= 'f')
+                            else if (
+                                h >= 'a' &&
+                                h <= 'f'
+                            )
                             {
-                                value += h - 'a' + 10;
+                                value +=
+                                    static_cast<unsigned>(
+                                        h - 'a' + 10
+                                    );
                             }
-                            else if (h >= 'A' && h <= 'F')
+                            else if (
+                                h >= 'A' &&
+                                h <= 'F'
+                            )
                             {
-                                value += h - 'A' + 10;
+                                value +=
+                                    static_cast<unsigned>(
+                                        h - 'A' + 10
+                                    );
                             }
                             else
                             {
@@ -208,28 +249,44 @@ namespace
 
                         if (value <= 0x7F)
                         {
-                            result += static_cast<char>(value);
+                            result +=
+                                static_cast<char>(
+                                    value
+                                );
                         }
                         else if (value <= 0x7FF)
                         {
-                            result += static_cast<char>(
-                                0xC0 | (value >> 6));
+                            result +=
+                                static_cast<char>(
+                                    0xC0 |
+                                    (value >> 6)
+                                );
 
-                            result += static_cast<char>(
-                                0x80 | (value & 0x3F));
+                            result +=
+                                static_cast<char>(
+                                    0x80 |
+                                    (value & 0x3F)
+                                );
                         }
                         else
                         {
-                            result += static_cast<char>(
-                                0xE0 | (value >> 12));
+                            result +=
+                                static_cast<char>(
+                                    0xE0 |
+                                    (value >> 12)
+                                );
 
-                            result += static_cast<char>(
-                                0x80 |
-                                ((value >> 6) & 0x3F));
+                            result +=
+                                static_cast<char>(
+                                    0x80 |
+                                    ((value >> 6) & 0x3F)
+                                );
 
-                            result += static_cast<char>(
-                                0x80 |
-                                (value & 0x3F));
+                            result +=
+                                static_cast<char>(
+                                    0x80 |
+                                    (value & 0x3F)
+                                );
                         }
 
                         i += 4;
@@ -237,9 +294,7 @@ namespace
                     }
 
                     default:
-                        result += '\\';
-                        result += c;
-                        break;
+                        return false;
                 }
 
                 escaped = false;
@@ -266,62 +321,68 @@ namespace
 
     void sendAll(
         int client,
-        const std::string& data)
+        const std::string& data
+    )
     {
-        std::size_t sent = 0;
+        std::size_t offset = 0;
 
-        while (sent < data.size())
+        while (offset < data.size())
         {
-            const ssize_t count =
+            const ssize_t sent =
                 send(
                     client,
-                    data.data() + sent,
-                    data.size() - sent,
-                    0);
+                    data.data() + offset,
+                    data.size() - offset,
+                    0
+                );
 
-            if (count <= 0)
+            if (sent <= 0)
                 return;
 
-            sent += static_cast<std::size_t>(count);
+            offset +=
+                static_cast<std::size_t>(
+                    sent
+                );
         }
     }
 
     void sendResponse(
         int client,
         int status,
-        const std::string& contentType,
-        const std::string& body)
+        const std::string& type,
+        const std::string& body
+    )
     {
-        const char* statusText = "Unknown";
+        const char* text = "Unknown";
 
         switch (status)
         {
             case 200:
-                statusText = "OK";
+                text = "OK";
                 break;
 
             case 400:
-                statusText = "Bad Request";
+                text = "Bad Request";
                 break;
 
             case 404:
-                statusText = "Not Found";
+                text = "Not Found";
                 break;
 
             case 405:
-                statusText = "Method Not Allowed";
+                text = "Method Not Allowed";
                 break;
 
             case 413:
-                statusText = "Payload Too Large";
+                text = "Payload Too Large";
                 break;
 
             case 422:
-                statusText = "Unprocessable Entity";
+                text = "Unprocessable Entity";
                 break;
 
             case 500:
-                statusText = "Internal Server Error";
+                text = "Internal Server Error";
                 break;
         }
 
@@ -331,109 +392,65 @@ namespace
             << "HTTP/1.1 "
             << status
             << " "
-            << statusText
+            << text
             << "\r\n"
-
             << "Content-Type: "
-            << contentType
+            << type
             << "\r\n"
-
             << "Content-Length: "
             << body.size()
             << "\r\n"
-
             << "Access-Control-Allow-Origin: *\r\n"
             << "Access-Control-Allow-Headers: Content-Type\r\n"
             << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
             << "Cache-Control: no-store\r\n"
             << "Connection: close\r\n"
             << "\r\n"
-
             << body;
 
-        sendAll(client, response.str());
-    }
-
-    bool parseContentLength(
-        const std::string& headers,
-        std::size_t& length)
-    {
-        std::size_t position =
-            headers.find("Content-Length:");
-
-        if (position == std::string::npos)
-        {
-            length = 0;
-            return true;
-        }
-
-        position +=
-            std::string("Content-Length:").size();
-
-        while (
-            position < headers.size() &&
-            std::isspace(
-                static_cast<unsigned char>(
-                    headers[position])))
-        {
-            ++position;
-        }
-
-        const std::size_t start = position;
-
-        while (
-            position < headers.size() &&
-            std::isdigit(
-                static_cast<unsigned char>(
-                    headers[position])))
-        {
-            ++position;
-        }
-
-        if (position == start)
-            return false;
-
-        try
-        {
-            length = std::stoull(
-                headers.substr(
-                    start,
-                    position - start));
-        }
-        catch (...)
-        {
-            return false;
-        }
-
-        return true;
+        sendAll(
+            client,
+            response.str()
+        );
     }
 
     bool receiveRequest(
         int client,
-        std::string& request)
+        std::string& request
+    )
     {
         char buffer[16384];
 
         while (
             request.find("\r\n\r\n") ==
-            std::string::npos)
+            std::string::npos
+        )
         {
             const ssize_t received =
                 recv(
                     client,
                     buffer,
                     sizeof(buffer),
-                    0);
+                    0
+                );
 
             if (received <= 0)
                 return false;
 
             request.append(
                 buffer,
-                static_cast<std::size_t>(received));
+                static_cast<std::size_t>(
+                    received
+                )
+            );
 
-            if (request.size() > MAX_REQUEST_SIZE)
+            if (
+                request.size() >
+                MAX_REQUEST_SIZE
+            )
+            {
                 return false;
+            }
         }
 
         return true;
@@ -449,7 +466,8 @@ namespace
                 client,
                 413,
                 "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Request too large\"}");
+                "{\"success\":false,\"error\":\"Request too large\"}"
+            );
 
             close(client);
             return;
@@ -464,33 +482,46 @@ namespace
                 client,
                 400,
                 "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Malformed HTTP request\"}");
+                "{\"success\":false,\"error\":\"Malformed HTTP request\"}"
+            );
 
             close(client);
             return;
         }
 
         const std::string headers =
-            request.substr(0, headerEnd);
+            request.substr(
+                0,
+                headerEnd
+            );
 
         std::string body =
-            request.substr(headerEnd + 4);
+            request.substr(
+                headerEnd + 4
+            );
 
-        std::istringstream headerStream(headers);
+        std::istringstream stream(headers);
 
         std::string method;
         std::string path;
         std::string version;
 
-        headerStream >> method >> path >> version;
+        stream >>
+            method >>
+            path >>
+            version;
 
-        if (method.empty() || path.empty())
+        if (
+            method.empty() ||
+            path.empty()
+        )
         {
             sendResponse(
                 client,
                 400,
                 "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Invalid HTTP request\"}");
+                "{\"success\":false,\"error\":\"Invalid HTTP request\"}"
+            );
 
             close(client);
             return;
@@ -502,99 +533,33 @@ namespace
                 client,
                 200,
                 "text/plain; charset=utf-8",
-                "");
-
-            close(client);
-            return;
-        }
-
-        std::size_t contentLength = 0;
-
-        if (!parseContentLength(
-                headers,
-                contentLength))
-        {
-            sendResponse(
-                client,
-                400,
-                "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Invalid Content-Length\"}");
-
-            close(client);
-            return;
-        }
-
-        if (contentLength > MAX_REQUEST_SIZE)
-        {
-            sendResponse(
-                client,
-                413,
-                "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Payload too large\"}");
-
-            close(client);
-            return;
-        }
-
-        char buffer[16384];
-
-        while (body.size() < contentLength)
-        {
-            const ssize_t received =
-                recv(
-                    client,
-                    buffer,
-                    sizeof(buffer),
-                    0);
-
-            if (received <= 0)
-                break;
-
-            body.append(
-                buffer,
-                static_cast<std::size_t>(received));
-
-            if (body.size() > MAX_REQUEST_SIZE)
-            {
-                sendResponse(
-                    client,
-                    413,
-                    "application/json; charset=utf-8",
-                    "{\"success\":false,\"error\":\"Payload too large\"}");
-
-                close(client);
-                return;
-            }
-        }
-
-        if (
-            contentLength > 0 &&
-            body.size() < contentLength)
-        {
-            sendResponse(
-                client,
-                400,
-                "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Incomplete request body\"}");
+                ""
+            );
 
             close(client);
             return;
         }
 
         if (
-            contentLength > 0 &&
-            body.size() > contentLength)
+            method == "GET" &&
+            path == "/health"
+        )
         {
-            body.resize(contentLength);
+            sendResponse(
+                client,
+                200,
+                "application/json; charset=utf-8",
+                "{\"status\":\"ok\",\"compiler\":\"luau\"}"
+            );
+
+            close(client);
+            return;
         }
 
-        /*
-         * ----------------------------------------------------
-         * Website
-         * ----------------------------------------------------
-         */
-
-        if (method == "GET" && path == "/")
+        if (
+            method == "GET" &&
+            path == "/"
+        )
         {
             const std::string html =
                 readFile("web/index.html");
@@ -605,7 +570,8 @@ namespace
                     client,
                     500,
                     "text/plain; charset=utf-8",
-                    "web/index.html not found");
+                    "web/index.html not found"
+                );
             }
             else
             {
@@ -613,14 +579,18 @@ namespace
                     client,
                     200,
                     "text/html; charset=utf-8",
-                    html);
+                    html
+                );
             }
 
             close(client);
             return;
         }
 
-        if (method == "GET" && path == "/style.css")
+        if (
+            method == "GET" &&
+            path == "/style.css"
+        )
         {
             const std::string css =
                 readFile("web/style.css");
@@ -631,7 +601,8 @@ namespace
                     client,
                     404,
                     "text/plain; charset=utf-8",
-                    "style.css not found");
+                    "style.css not found"
+                );
             }
             else
             {
@@ -639,14 +610,18 @@ namespace
                     client,
                     200,
                     "text/css; charset=utf-8",
-                    css);
+                    css
+                );
             }
 
             close(client);
             return;
         }
 
-        if (method == "GET" && path == "/app.js")
+        if (
+            method == "GET" &&
+            path == "/app.js"
+        )
         {
             const std::string js =
                 readFile("web/app.js");
@@ -657,7 +632,8 @@ namespace
                     client,
                     404,
                     "text/plain; charset=utf-8",
-                    "app.js not found");
+                    "app.js not found"
+                );
             }
             else
             {
@@ -665,59 +641,80 @@ namespace
                     client,
                     200,
                     "application/javascript; charset=utf-8",
-                    js);
+                    js
+                );
             }
 
             close(client);
             return;
         }
 
-        if (method == "GET" && path == "/health")
+        if (
+            method != "POST" ||
+            path != "/api/obfuscate"
+        )
         {
             sendResponse(
                 client,
-                200,
+                404,
                 "application/json; charset=utf-8",
-                "{\"status\":\"ok\"}");
+                "{\"success\":false,\"error\":\"Not found\"}"
+            );
 
             close(client);
             return;
         }
 
         /*
-         * ----------------------------------------------------
-         * Obfuscation API
-         * ----------------------------------------------------
+         * Extract Content-Length.
          */
+        std::size_t contentLength = 0;
 
-        if (
-            method == "POST" &&
-            path == "/api/obfuscate")
+        const std::string lengthKey =
+            "Content-Length:";
+
+        const std::size_t lengthPos =
+            headers.find(lengthKey);
+
+        if (lengthPos != std::string::npos)
         {
-            std::string source;
+            std::size_t start =
+                lengthPos + lengthKey.size();
 
-            if (!extractJsonString(
-                    body,
-                    "code",
-                    source))
+            while (
+                start < headers.size() &&
+                std::isspace(
+                    static_cast<unsigned char>(
+                        headers[start]
+                    )
+                )
+            )
             {
-                sendResponse(
-                    client,
-                    400,
-                    "application/json; charset=utf-8",
-                    "{\"success\":false,\"error\":\"Missing code field\"}");
-
-                close(client);
-                return;
+                ++start;
             }
 
-            if (source.empty())
+            std::size_t end = start;
+
+            while (
+                end < headers.size() &&
+                std::isdigit(
+                    static_cast<unsigned char>(
+                        headers[end]
+                    )
+                )
+            )
+            {
+                ++end;
+            }
+
+            if (end == start)
             {
                 sendResponse(
                     client,
                     400,
                     "application/json; charset=utf-8",
-                    "{\"success\":false,\"error\":\"Code cannot be empty\"}");
+                    "{\"success\":false,\"error\":\"Invalid Content-Length\"}"
+                );
 
                 close(client);
                 return;
@@ -725,79 +722,221 @@ namespace
 
             try
             {
-                Transformer transformer;
-
-                const std::string protectedCode =
-                    transformer.transform(source);
-
-                if (protectedCode.empty())
-                {
-                    sendResponse(
-                        client,
-                        422,
-                        "application/json; charset=utf-8",
-                        "{\"success\":false,\"error\":\"Transformation produced no output\"}");
-
-                    close(client);
-                    return;
-                }
-
-                const std::string response =
-                    "{\"success\":true,\"code\":\"" +
-                    jsonEscape(protectedCode) +
-                    "\"}";
-
-                sendResponse(
-                    client,
-                    200,
-                    "application/json; charset=utf-8",
-                    response);
-            }
-            catch (const std::exception& exception)
-            {
-                const std::string response =
-                    "{\"success\":false,\"error\":\"" +
-                    jsonEscape(exception.what()) +
-                    "\"}";
-
-                sendResponse(
-                    client,
-                    500,
-                    "application/json; charset=utf-8",
-                    response);
+                contentLength =
+                    std::stoull(
+                        headers.substr(
+                            start,
+                            end - start
+                        )
+                    );
             }
             catch (...)
             {
                 sendResponse(
                     client,
-                    500,
+                    400,
                     "application/json; charset=utf-8",
-                    "{\"success\":false,\"error\":\"Unknown obfuscation failure\"}");
+                    "{\"success\":false,\"error\":\"Invalid Content-Length\"}"
+                );
+
+                close(client);
+                return;
             }
+        }
+
+        if (
+            contentLength >
+            MAX_REQUEST_SIZE
+        )
+        {
+            sendResponse(
+                client,
+                413,
+                "application/json; charset=utf-8",
+                "{\"success\":false,\"error\":\"Payload too large\"}"
+            );
+
+            close(client);
+            return;
+        }
+
+        char buffer[16384];
+
+        while (
+            body.size() <
+            contentLength
+        )
+        {
+            const ssize_t received =
+                recv(
+                    client,
+                    buffer,
+                    sizeof(buffer),
+                    0
+                );
+
+            if (received <= 0)
+                break;
+
+            body.append(
+                buffer,
+                static_cast<std::size_t>(
+                    received
+                )
+            );
+        }
+
+        if (
+            body.size() <
+            contentLength
+        )
+        {
+            sendResponse(
+                client,
+                400,
+                "application/json; charset=utf-8",
+                "{\"success\":false,\"error\":\"Incomplete request body\"}"
+            );
 
             close(client);
             return;
         }
 
         if (
-            method != "GET" &&
-            method != "POST")
+            body.size() >
+            contentLength
+        )
+        {
+            body.resize(contentLength);
+        }
+
+        /*
+         * Extract source.
+         */
+        std::string source;
+
+        if (!extractJsonString(
+                body,
+                "code",
+                source
+            ))
         {
             sendResponse(
                 client,
-                405,
+                400,
                 "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Method not allowed\"}");
+                "{\"success\":false,\"error\":\"Missing code field\"}"
+            );
 
             close(client);
             return;
         }
 
-        sendResponse(
-            client,
-            404,
-            "application/json; charset=utf-8",
-            "{\"success\":false,\"error\":\"Not found\"}");
+        if (source.empty())
+        {
+            sendResponse(
+                client,
+                400,
+                "application/json; charset=utf-8",
+                "{\"success\":false,\"error\":\"Code cannot be empty\"}"
+            );
+
+            close(client);
+            return;
+        }
+
+        try
+        {
+            /*
+             * 1. Real Luau compiler.
+             */
+            Transformer transformer;
+
+            const std::string compiled =
+                transformer.transform(source);
+
+            /*
+             * 2. Store the binary compiler output.
+             */
+            Bytecode bytecode(compiled);
+
+            /*
+             * 3. Validate/package it.
+             */
+            VM vm;
+
+            std::string validationError;
+
+            if (
+                !vm.validate(
+                    bytecode,
+                    validationError
+                )
+            )
+            {
+                sendResponse(
+                    client,
+                    422,
+                    "application/json; charset=utf-8",
+                    "{\"success\":false,\"error\":\"" +
+                    jsonEscape(validationError) +
+                    "\"}"
+                );
+
+                close(client);
+                return;
+            }
+
+            /*
+             * 4. Base64 makes the binary safe for JSON.
+             */
+            const std::string encoded =
+                vm.package(bytecode);
+
+            const std::string response =
+                "{\"success\":true,"
+                "\"format\":\"luau-bytecode-base64\","
+                "\"code\":\"" +
+                jsonEscape(encoded) +
+                "\","
+                "\"size\":" +
+                std::to_string(bytecode.size()) +
+                "}";
+
+            sendResponse(
+                client,
+                200,
+                "application/json; charset=utf-8",
+                response
+            );
+        }
+        catch (
+            const std::exception& exception
+        )
+        {
+            const std::string response =
+                "{\"success\":false,\"error\":\"" +
+                jsonEscape(
+                    exception.what()
+                ) +
+                "\"}";
+
+            sendResponse(
+                client,
+                422,
+                "application/json; charset=utf-8",
+                response
+            );
+        }
+        catch (...)
+        {
+            sendResponse(
+                client,
+                500,
+                "application/json; charset=utf-8",
+                "{\"success\":false,\"error\":\"Unknown compiler error\"}"
+            );
+        }
 
         close(client);
     }
@@ -805,24 +944,28 @@ namespace
 
 int main()
 {
-    const char* portEnvironment =
-        std::getenv("PORT");
-
     int port = DEFAULT_PORT;
 
-    if (portEnvironment)
+    const char* environment =
+        std::getenv("PORT");
+
+    if (environment)
     {
         try
         {
             const int parsed =
-                std::stoi(portEnvironment);
+                std::stoi(environment);
 
-            if (parsed > 0 && parsed <= 65535)
+            if (
+                parsed > 0 &&
+                parsed <= 65535
+            )
+            {
                 port = parsed;
+            }
         }
         catch (...)
         {
-            port = DEFAULT_PORT;
         }
     }
 
@@ -830,13 +973,14 @@ int main()
         socket(
             AF_INET,
             SOCK_STREAM,
-            0);
+            0
+        );
 
     if (server < 0)
     {
         std::cerr
-            << "Failed to create socket: "
-            << strerror(errno)
+            << "socket() failed: "
+            << std::strerror(errno)
             << '\n';
 
         return 1;
@@ -849,38 +993,53 @@ int main()
         SOL_SOCKET,
         SO_REUSEADDR,
         &reuse,
-        sizeof(reuse));
+        sizeof(reuse)
+    );
 
     sockaddr_in address{};
 
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = htonl(INADDR_ANY);
+    address.sin_family =
+        AF_INET;
+
+    address.sin_addr.s_addr =
+        htonl(INADDR_ANY);
+
     address.sin_port =
         htons(
-            static_cast<std::uint16_t>(port));
+            static_cast<std::uint16_t>(
+                port
+            )
+        );
 
     if (
         bind(
             server,
-            reinterpret_cast<sockaddr*>(&address),
-            sizeof(address)) < 0)
+            reinterpret_cast<sockaddr*>(
+                &address
+            ),
+            sizeof(address)
+        ) < 0
+    )
     {
         std::cerr
-            << "Failed to bind port "
-            << port
-            << ": "
-            << strerror(errno)
+            << "bind() failed: "
+            << std::strerror(errno)
             << '\n';
 
         close(server);
         return 1;
     }
 
-    if (listen(server, 64) < 0)
+    if (
+        listen(
+            server,
+            64
+        ) < 0
+    )
     {
         std::cerr
-            << "Failed to listen: "
-            << strerror(errno)
+            << "listen() failed: "
+            << std::strerror(errno)
             << '\n';
 
         close(server);
@@ -895,15 +1054,17 @@ int main()
     while (true)
     {
         sockaddr_in clientAddress{};
-
         socklen_t clientLength =
             sizeof(clientAddress);
 
         const int client =
             accept(
                 server,
-                reinterpret_cast<sockaddr*>(&clientAddress),
-                &clientLength);
+                reinterpret_cast<sockaddr*>(
+                    &clientAddress
+                ),
+                &clientLength
+            );
 
         if (client < 0)
         {
@@ -912,7 +1073,7 @@ int main()
 
             std::cerr
                 << "accept() failed: "
-                << strerror(errno)
+                << std::strerror(errno)
                 << '\n';
 
             continue;
