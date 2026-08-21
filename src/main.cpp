@@ -1,5 +1,6 @@
+#include "compiler.hpp"
 #include "transformer.hpp"
-
+#include "bytecode.hpp"
 #include <arpa/inet.h>
 #include <cerrno>
 #include <csignal>
@@ -11,19 +12,21 @@
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
-
 namespace
 {
     constexpr int PORT = 10000;
     constexpr int BACKLOG = 32;
-
+    // ------------------------------------------------------------
+    // JSON
+    // ------------------------------------------------------------
     std::string jsonEscape(
         const std::string& value
     )
     {
         std::string result;
-        result.reserve(value.size() + 16);
-
+        result.reserve(
+            value.size() + 16
+        );
         for (unsigned char c : value)
         {
             switch (c)
@@ -31,24 +34,26 @@ namespace
                 case '"':
                     result += "\\\"";
                     break;
-
                 case '\\':
                     result += "\\\\";
                     break;
-
                 case '\n':
                     result += "\\n";
                     break;
-
                 case '\r':
                     result += "\\r";
                     break;
-
                 case '\t':
                     result += "\\t";
                     break;
-
+                case '\b':
+                    result += "\\b";
+                    break;
+                case '\f':
+                    result += "\\f";
+                    break;
                 default:
+                {
                     if (c < 32)
                     {
                         result += ' ';
@@ -59,12 +64,14 @@ namespace
                             static_cast<char>(c);
                     }
                     break;
+                }
             }
         }
-
         return result;
     }
-
+    // ------------------------------------------------------------
+    // HTML
+    // ------------------------------------------------------------
     std::string html()
     {
         return R"HTML(
@@ -72,15 +79,15 @@ namespace
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport"
-      content="width=device-width,initial-scale=1">
+<meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+>
 <title>LuaProtecter</title>
-
 <style>
 * {
     box-sizing: border-box;
 }
-
 body {
     margin: 0;
     min-height: 100vh;
@@ -88,40 +95,33 @@ body {
     color: #f5f7fa;
     font-family: Arial, sans-serif;
 }
-
 .container {
     width: min(1100px, 94%);
     margin: 50px auto;
 }
-
 h1 {
     margin-bottom: 8px;
 }
-
 .subtitle {
     color: #9ca3af;
     margin-bottom: 30px;
 }
-
 .editor {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 18px;
 }
-
 .panel {
     background: #12161b;
     border: 1px solid #272d35;
     border-radius: 12px;
     overflow: hidden;
 }
-
 .panel-title {
     padding: 13px 16px;
     border-bottom: 1px solid #272d35;
     color: #cbd5e1;
 }
-
 textarea {
     width: 100%;
     min-height: 500px;
@@ -134,7 +134,6 @@ textarea {
     font-family: monospace;
     font-size: 14px;
 }
-
 pre {
     margin: 0;
     min-height: 500px;
@@ -146,11 +145,9 @@ pre {
     font-family: monospace;
     font-size: 14px;
 }
-
 .controls {
     margin-top: 18px;
 }
-
 button {
     border: 0;
     border-radius: 8px;
@@ -160,134 +157,128 @@ button {
     color: white;
     font-weight: 700;
 }
-
 button:disabled {
     opacity: .5;
     cursor: wait;
 }
-
 .status {
     margin-top: 12px;
     color: #9ca3af;
 }
-
-@media (max-width: 800px) {
+@media (max-width: 800px)
+{
     .editor {
         grid-template-columns: 1fr;
     }
 }
 </style>
 </head>
-
 <body>
-
 <div class="container">
-
     <h1>LuaProtecter</h1>
-
     <div class="subtitle">
         Luau source transformer
     </div>
-
     <div class="editor">
-
         <div class="panel">
             <div class="panel-title">
                 Input
             </div>
-
-            <textarea id="source"
-                placeholder="Paste Luau here..."></textarea>
+            <textarea
+                id="source"
+                placeholder="Paste Luau here..."
+            ></textarea>
         </div>
-
         <div class="panel">
             <div class="panel-title">
                 Output
             </div>
-
             <pre id="output"></pre>
         </div>
-
     </div>
-
     <div class="controls">
-
-        <button id="protect"
-                onclick="protectSource()">
+        <button
+            id="protect"
+            onclick="protectSource()"
+        >
             Obfuscate
         </button>
-
-        <div class="status"
-             id="status">
-        </div>
-
+        <div
+            class="status"
+            id="status"
+        ></div>
     </div>
-
 </div>
-
 <script>
 async function protectSource()
 {
     const source =
-        document.getElementById("source").value;
-
+        document.getElementById(
+            "source"
+        ).value;
     const output =
-        document.getElementById("output");
-
+        document.getElementById(
+            "output"
+        );
     const status =
-        document.getElementById("status");
-
+        document.getElementById(
+            "status"
+        );
     const button =
-        document.getElementById("protect");
-
+        document.getElementById(
+            "protect"
+        );
     if (!source.trim())
     {
         status.textContent =
             "Enter Luau source first.";
-
         return;
     }
-
     button.disabled = true;
-    status.textContent = "Processing...";
+    status.textContent =
+        "Compiling and protecting...";
     output.textContent = "";
-
     try
     {
         const response =
-            await fetch("/protect", {
-                method: "POST",
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-                body: JSON.stringify({
-                    source: source
-                })
-            });
-
+            await fetch(
+                "/protect",
+                {
+                    method: "POST",
+                    headers:
+                    {
+                        "Content-Type":
+                            "application/json"
+                    },
+                    body:
+                        JSON.stringify(
+                            {
+                                source: source
+                            }
+                        )
+                }
+            );
         const data =
             await response.json();
-
-        if (!response.ok || !data.success)
+        if (
+            !response.ok ||
+            !data.success
+        )
         {
             throw new Error(
                 data.error ||
                 "Protection failed"
             );
         }
-
         output.textContent =
             data.output;
-
         status.textContent =
-            "Successfully transformed.";
+            "Successfully protected.";
     }
     catch (error)
     {
         status.textContent =
             error.message;
-
         output.textContent = "";
     }
     finally
@@ -296,12 +287,13 @@ async function protectSource()
     }
 }
 </script>
-
 </body>
 </html>
 )HTML";
     }
-
+    // ------------------------------------------------------------
+    // HTTP header helper
+    // ------------------------------------------------------------
     std::string findHeader(
         const std::string& request,
         const std::string& name
@@ -309,69 +301,87 @@ async function protectSource()
     {
         const std::string needle =
             name + ":";
-
         const std::size_t position =
-            request.find(needle);
-
-        if (position == std::string::npos)
+            request.find(
+                needle
+            );
+        if (
+            position ==
+            std::string::npos
+        )
+        {
             return {};
-
+        }
         const std::size_t start =
-            position + needle.size();
-
+            position +
+            needle.size();
         std::size_t end =
             request.find(
                 "\r\n",
                 start
             );
-
-        if (end == std::string::npos)
-            end = request.size();
-
+        if (
+            end ==
+            std::string::npos
+        )
+        {
+            end =
+                request.size();
+        }
         std::string value =
             request.substr(
                 start,
                 end - start
             );
-
-        while (!value.empty() &&
-               value.front() == ' ')
+        while (
+            !value.empty() &&
+            value.front() == ' '
+        )
         {
-            value.erase(value.begin());
+            value.erase(
+                value.begin()
+            );
         }
-
         return value;
     }
-
+    // ------------------------------------------------------------
+    // JSON source extraction
+    // ------------------------------------------------------------
     std::string extractJsonSource(
         const std::string& body
     )
     {
         const std::string key =
             "\"source\"";
-
         const std::size_t keyPos =
-            body.find(key);
-
-        if (keyPos == std::string::npos)
+            body.find(
+                key
+            );
+        if (
+            keyPos ==
+            std::string::npos
+        )
+        {
             throw std::runtime_error(
                 "Missing source field"
             );
-
+        }
         const std::size_t colon =
             body.find(
                 ':',
                 keyPos + key.size()
             );
-
-        if (colon == std::string::npos)
+        if (
+            colon ==
+            std::string::npos
+        )
+        {
             throw std::runtime_error(
                 "Invalid JSON"
             );
-
+        }
         std::size_t position =
             colon + 1;
-
         while (
             position < body.size() &&
             (
@@ -384,7 +394,6 @@ async function protectSource()
         {
             ++position;
         }
-
         if (
             position >= body.size() ||
             body[position] != '"'
@@ -394,17 +403,15 @@ async function protectSource()
                 "source must be a JSON string"
             );
         }
-
         ++position;
-
         std::string result;
         bool escaped = false;
-
-        while (position < body.size())
+        while (
+            position < body.size()
+        )
         {
             const char c =
                 body[position++];
-
             if (escaped)
             {
                 switch (c)
@@ -412,57 +419,90 @@ async function protectSource()
                     case '"':
                         result += '"';
                         break;
-
                     case '\\':
                         result += '\\';
                         break;
-
+                    case '/':
+                        result += '/';
+                        break;
                     case 'n':
                         result += '\n';
                         break;
-
                     case 'r':
                         result += '\r';
                         break;
-
                     case 't':
                         result += '\t';
                         break;
-
                     case 'b':
                         result += '\b';
                         break;
-
                     case 'f':
                         result += '\f';
                         break;
-
                     default:
                         result += c;
                         break;
                 }
-
                 escaped = false;
                 continue;
             }
-
             if (c == '\\')
             {
                 escaped = true;
                 continue;
             }
-
             if (c == '"')
+            {
                 return result;
-
+            }
             result += c;
         }
-
         throw std::runtime_error(
             "Unterminated JSON string"
         );
     }
-
+    // ------------------------------------------------------------
+    // Protected bytecode → readable-safe textual representation
+    //
+    // This is deliberately NOT Base64.
+    //
+    // It produces Lua decimal byte values:
+    //
+    // {76,80,82,...}
+    //
+    // The actual executable wrapper/decryption stage belongs in
+    // Transformer. main.cpp should not duplicate that logic.
+    // ------------------------------------------------------------
+    std::string bytesAsDecimal(
+        const Bytecode& bytecode
+    )
+    {
+        const auto& bytes =
+            bytecode.data();
+        std::ostringstream result;
+        result
+            << "{";
+        for (
+            std::size_t i = 0;
+            i < bytes.size();
+            ++i
+        )
+        {
+            if (i != 0)
+                result << ",";
+            result
+                << static_cast<unsigned int>(
+                    bytes[i]
+                );
+        }
+        result
+            << "}";
+        return result.str();
+    }
+    // ------------------------------------------------------------
+    // HTTP response
+    // ------------------------------------------------------------
     void sendResponse(
         int client,
         int status,
@@ -471,40 +511,41 @@ async function protectSource()
     )
     {
         std::ostringstream response;
-
         response
             << "HTTP/1.1 "
             << status
-            << (status == 200 ? " OK" : " Bad Request")
+            << (
+                status == 200
+                    ? " OK"
+                    : " Bad Request"
+            )
             << "\r\n";
-
         response
             << "Content-Type: "
             << contentType
             << "\r\n";
-
         response
             << "Content-Length: "
             << body.size()
             << "\r\n";
-
         response
             << "Access-Control-Allow-Origin: *\r\n";
-
+        response
+            << "Access-Control-Allow-Headers: Content-Type\r\n";
+        response
+            << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
         response
             << "Connection: close\r\n";
-
         response
             << "\r\n";
-
-        response << body;
-
+        response
+            << body;
         const std::string data =
             response.str();
-
         std::size_t sent = 0;
-
-        while (sent < data.size())
+        while (
+            sent < data.size()
+        )
         {
             const ssize_t count =
                 send(
@@ -513,26 +554,25 @@ async function protectSource()
                     data.size() - sent,
                     0
                 );
-
             if (count <= 0)
                 break;
-
             sent +=
                 static_cast<std::size_t>(
                     count
                 );
         }
     }
-
+    // ------------------------------------------------------------
+    // Client
+    // ------------------------------------------------------------
     void handleClient(
         int client,
+        const Compiler& compiler,
         const Transformer& transformer
     )
     {
         std::string request;
-
         char buffer[8192];
-
         while (true)
         {
             const ssize_t count =
@@ -542,37 +582,42 @@ async function protectSource()
                     sizeof(buffer),
                     0
                 );
-
             if (count <= 0)
                 break;
-
             request.append(
                 buffer,
                 static_cast<std::size_t>(
                     count
                 )
             );
-
-            if (request.find(
+            /*
+             * Once we have the HTTP headers we can inspect
+             * Content-Length and continue receiving the body.
+             */
+            if (
+                request.find(
                     "\r\n\r\n"
-                ) != std::string::npos)
+                ) != std::string::npos
+            )
             {
                 break;
             }
-
-            if (request.size() >
-                1024 * 1024)
+            if (
+                request.size() >
+                1024 * 1024
+            )
             {
                 break;
             }
         }
-
         const std::size_t headerEnd =
             request.find(
                 "\r\n\r\n"
             );
-
-        if (headerEnd == std::string::npos)
+        if (
+            headerEnd ==
+            std::string::npos
+        )
         {
             sendResponse(
                 client,
@@ -580,43 +625,36 @@ async function protectSource()
                 "application/json",
                 R"({"success":false,"error":"Invalid HTTP request"})"
             );
-
             return;
         }
-
         const std::string headers =
             request.substr(
                 0,
                 headerEnd
             );
-
         std::string body =
             request.substr(
                 headerEnd + 4
             );
-
         std::istringstream requestLine(
             headers
         );
-
         std::string method;
         std::string path;
         std::string version;
-
         requestLine
             >> method
             >> path
             >> version;
-
         const std::string contentLengthHeader =
             findHeader(
                 headers,
                 "Content-Length"
             );
-
         std::size_t contentLength = 0;
-
-        if (!contentLengthHeader.empty())
+        if (
+            !contentLengthHeader.empty()
+        )
         {
             try
             {
@@ -635,12 +673,31 @@ async function protectSource()
                     "application/json",
                     R"({"success":false,"error":"Invalid Content-Length"})"
                 );
-
                 return;
             }
         }
-
-        while (body.size() < contentLength)
+        /*
+         * Limit incoming request bodies.
+         */
+        constexpr std::size_t MAX_BODY =
+            4 * 1024 * 1024;
+        if (
+            contentLength >
+            MAX_BODY
+        )
+        {
+            sendResponse(
+                client,
+                400,
+                "application/json",
+                R"({"success":false,"error":"Request body too large"})"
+            );
+            return;
+        }
+        while (
+            body.size() <
+            contentLength
+        )
         {
             const ssize_t count =
                 recv(
@@ -649,10 +706,8 @@ async function protectSource()
                     sizeof(buffer),
                     0
                 );
-
             if (count <= 0)
                 break;
-
             body.append(
                 buffer,
                 static_cast<std::size_t>(
@@ -660,9 +715,13 @@ async function protectSource()
                 )
             );
         }
-
-        if (method == "GET" &&
-            path == "/")
+        // --------------------------------------------------------
+        // GET /
+        // --------------------------------------------------------
+        if (
+            method == "GET" &&
+            path == "/"
+        )
         {
             sendResponse(
                 client,
@@ -670,12 +729,15 @@ async function protectSource()
                 "text/html; charset=utf-8",
                 html()
             );
-
             return;
         }
-
-        if (method == "GET" &&
-            path == "/health")
+        // --------------------------------------------------------
+        // GET /health
+        // --------------------------------------------------------
+        if (
+            method == "GET" &&
+            path == "/health"
+        )
         {
             sendResponse(
                 client,
@@ -683,11 +745,14 @@ async function protectSource()
                 "application/json",
                 R"({"success":true,"service":"luaProtecter","luau":true})"
             );
-
             return;
         }
-
-        if (method == "OPTIONS")
+        // --------------------------------------------------------
+        // OPTIONS
+        // --------------------------------------------------------
+        if (
+            method == "OPTIONS"
+        )
         {
             sendResponse(
                 client,
@@ -695,59 +760,133 @@ async function protectSource()
                 "text/plain",
                 ""
             );
-
             return;
         }
-
-        if (method == "POST" &&
-            path == "/protect")
+        // --------------------------------------------------------
+        // POST /protect
+        // --------------------------------------------------------
+        if (
+            method == "POST" &&
+            path == "/protect"
+        )
         {
             try
             {
                 const std::string source =
-                    extractJsonSource(body);
-
+                    extractJsonSource(
+                        body
+                    );
+                if (
+                    source.empty()
+                )
+                {
+                    throw std::runtime_error(
+                        "Source cannot be empty"
+                    );
+                }
+                /*
+                 * ------------------------------------------------
+                 * STEP 1
+                 *
+                 * Compile the user's Luau using the real Luau
+                 * compiler already stored in third_party/luau.
+                 * ------------------------------------------------
+                 */
+                const Bytecode compiled =
+                    compiler.compile(
+                        source
+                    );
+                if (
+                    compiled.empty()
+                )
+                {
+                    throw std::runtime_error(
+                        "Luau compiler produced empty bytecode"
+                    );
+                }
+                /*
+                 * ------------------------------------------------
+                 * STEP 2
+                 *
+                 * Pass REAL Luau bytecode into Transformer.
+                 * ------------------------------------------------
+                 */
+                const Bytecode protectedBytecode =
+                    transformer.protect(
+                        compiled
+                    );
+                if (
+                    protectedBytecode.empty()
+                )
+                {
+                    throw std::runtime_error(
+                        "Transformer produced empty output"
+                    );
+                }
+                /*
+                 * ------------------------------------------------
+                 * STEP 3
+                 *
+                 * For now return the protected binary as decimal
+                 * byte values rather than Base64.
+                 *
+                 * IMPORTANT:
+                 *
+                 * This is a representation of the protected
+                 * package. It is not itself a valid Luau program.
+                 *
+                 * The next Transformer layer should generate the
+                 * executable Lua wrapper around these bytes.
+                 * ------------------------------------------------
+                 */
                 const std::string output =
-                    transformer.protect(source);
-
+                    bytesAsDecimal(
+                        protectedBytecode
+                    );
                 const std::string json =
                     std::string(
                         R"({"success":true,"output":")"
                     )
                     +
-                    jsonEscape(output)
+                    jsonEscape(
+                        output
+                    )
                     +
                     "\"}";
-
                 sendResponse(
                     client,
                     200,
                     "application/json",
                     json
                 );
+                return;
             }
-            catch (const std::exception& error)
+            catch (
+                const std::exception& error
+            )
             {
                 const std::string json =
                     std::string(
                         R"({"success":false,"error":")"
                     )
                     +
-                    jsonEscape(error.what())
+                    jsonEscape(
+                        error.what()
+                    )
                     +
                     "\"}";
-
                 sendResponse(
                     client,
                     400,
                     "application/json",
                     json
                 );
+                return;
             }
-
-            return;
         }
-
+        // --------------------------------------------------------
+        // 404
+        // --------------------------------------------------------
         sendResponse(
             client,
             404,
@@ -756,33 +895,32 @@ async function protectSource()
         );
     }
 }
-
+// ================================================================
+// MAIN
+// ================================================================
 int main()
 {
     std::signal(
         SIGPIPE,
         SIG_IGN
     );
-
     const int server =
         socket(
             AF_INET,
             SOCK_STREAM,
             0
         );
-
-    if (server < 0)
+    if (
+        server < 0
+    )
     {
         std::cerr
             << "socket() failed: "
             << std::strerror(errno)
             << '\n';
-
         return 1;
     }
-
     int reuse = 1;
-
     setsockopt(
         server,
         SOL_SOCKET,
@@ -790,95 +928,90 @@ int main()
         &reuse,
         sizeof(reuse)
     );
-
     sockaddr_in address{};
-
     address.sin_family =
         AF_INET;
-
     address.sin_addr.s_addr =
-        htonl(INADDR_ANY);
-
+        htonl(
+            INADDR_ANY
+        );
     address.sin_port =
-        htons(PORT);
-
-    if (bind(
+        htons(
+            PORT
+        );
+    if (
+        bind(
             server,
-            reinterpret_cast<
-                sockaddr*
-            >(&address),
+            reinterpret_cast<sockaddr*>(
+                &address
+            ),
             sizeof(address)
-        ) < 0)
+        ) < 0
+    )
     {
         std::cerr
             << "bind() failed: "
             << std::strerror(errno)
             << '\n';
-
         close(server);
-
         return 1;
     }
-
-    if (listen(
+    if (
+        listen(
             server,
             BACKLOG
-        ) < 0)
+        ) < 0
+    )
     {
         std::cerr
             << "listen() failed: "
             << std::strerror(errno)
             << '\n';
-
         close(server);
-
         return 1;
     }
-
     std::cout
         << "LuaProtecter listening on port "
         << PORT
         << '\n';
-
+    Compiler compiler;
     Transformer transformer;
-
     while (true)
     {
         sockaddr_in clientAddress{};
         socklen_t clientLength =
             sizeof(clientAddress);
-
         const int client =
             accept(
                 server,
-                reinterpret_cast<
-                    sockaddr*
-                >(&clientAddress),
+                reinterpret_cast<sockaddr*>(
+                    &clientAddress
+                ),
                 &clientLength
             );
-
-        if (client < 0)
+        if (
+            client < 0
+        )
         {
-            if (errno == EINTR)
+            if (
+                errno == EINTR
+            )
+            {
                 continue;
-
+            }
             std::cerr
                 << "accept() failed: "
                 << std::strerror(errno)
                 << '\n';
-
             continue;
         }
-
         handleClient(
             client,
+            compiler,
             transformer
         );
-
         close(client);
     }
-
     close(server);
-
     return 0;
 }
