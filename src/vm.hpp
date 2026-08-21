@@ -10,10 +10,14 @@ public:
     VM() = default;
 
     /*
-     * Execute protected Luau bytecode.
+     * Executes protected Luau bytecode.
      *
-     * The VM first restores the protected representation,
-     * then executes it through the real Luau runtime.
+     * The VM first validates and unwraps the protected
+     * package, then passes the recovered Luau bytecode
+     * to the Luau runtime.
+     *
+     * Returns true when execution succeeds.
+     * Returns false when validation/execution fails.
      */
     bool execute(
         const Bytecode& bytecode,
