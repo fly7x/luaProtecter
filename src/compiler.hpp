@@ -1,22 +1,22 @@
 #pragma once
 
-#include “bytecode.hpp”
+#include "bytecode.hpp"
 
-#include 
+#include <string>
 
 class Compiler
 {
 public:
-Compiler() = default;
+    Compiler() = default;
 
-/*
- * Compile Luau source into the custom VM instruction format.
- *
- * This is NOT Luau bytecode.
- * The resulting Bytecode is consumed by VM::execute().
- */
-Bytecode compile(
-    const std::string& source
-) const;
-
+    /*
+     * Compile supported Luau source into our custom VM
+     * instruction format.
+     *
+     * This is NOT native Luau bytecode.
+     * The resulting Bytecode is consumed by VM::execute().
+     */
+    Bytecode compile(
+        const std::string& source
+    ) const;
 };
