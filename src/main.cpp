@@ -2,12 +2,12 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
-#include <limits>
 #include <netinet/in.h>
 #include <sstream>
 #include <string>
@@ -17,36 +17,25 @@
 
 namespace
 {
-    constexpr std::size_t MAX_REQUEST_SIZE =
-        4 * 1024 * 1024;
-
+    constexpr std::size_t MAX_REQUEST_SIZE = 4 * 1024 * 1024;
     constexpr int DEFAULT_PORT = 10000;
 
-    std::string readFile(
-        const std::string& path
-    )
+    std::string readFile(const std::string& path)
     {
-        std::ifstream file(
-            path,
-            std::ios::binary
-        );
+        std::ifstream file(path, std::ios::binary);
 
         if (!file)
             return {};
 
         std::ostringstream buffer;
-
         buffer << file.rdbuf();
 
         return buffer.str();
     }
 
-    std::string jsonEscape(
-        const std::string& value
-    )
+    std::string jsonEscape(const std::string& value)
     {
         std::string result;
-
         result.reserve(value.size() + 32);
 
         for (unsigned char c : value)
@@ -85,21 +74,16 @@ namespace
                 {
                     if (c < 0x20)
                     {
-                        const char hex[] =
+                        static constexpr char hex[] =
                             "0123456789abcdef";
 
                         result += "\\u00";
-
-                        result +=
-                            hex[(c >> 4) & 0xF];
-
-                        result +=
-                            hex[c & 0xF];
+                        result += hex[(c >> 4) & 0xF];
+                        result += hex[c & 0xF];
                     }
                     else
                     {
-                        result +=
-                            static_cast<char>(c);
+                        result += static_cast<char>(c);
                     }
 
                     break;
@@ -113,11 +97,9 @@ namespace
     bool extractJsonString(
         const std::string& json,
         const std::string& key,
-        std::string& output
-    )
+        std::string& output)
     {
-        const std::string search =
-            "\"" + key + "\"";
+        const std::string search = "\"" + key + "\"";
 
         const std::size_t keyPosition =
             json.find(search);
@@ -126,33 +108,24 @@ namespace
             return false;
 
         const std::size_t colon =
-            json.find(
-                ':',
-                keyPosition + search.size()
-            );
+            json.find(':', keyPosition + search.size());
 
         if (colon == std::string::npos)
             return false;
 
-        std::size_t start =
-            colon + 1;
+        std::size_t start = colon + 1;
 
         while (
             start < json.size() &&
             std::isspace(
-                static_cast<unsigned char>(
-                    json[start]
-                )
-            )
-        )
+                static_cast<unsigned char>(json[start])))
         {
             ++start;
         }
 
         if (
             start >= json.size() ||
-            json[start] != '"'
-        )
+            json[start] != '"')
         {
             return false;
         }
@@ -160,14 +133,9 @@ namespace
         ++start;
 
         std::string result;
-
         bool escaped = false;
 
-        for (
-            std::size_t i = start;
-            i < json.size();
-            ++i
-        )
+        for (std::size_t i = start; i < json.size(); ++i)
         {
             const char c = json[i];
 
@@ -216,34 +184,21 @@ namespace
 
                         for (int j = 1; j <= 4; ++j)
                         {
-                            const char h =
-                                json[i + j];
+                            const char h = json[i + j];
 
                             value <<= 4;
 
-                            if (
-                                h >= '0' &&
-                                h <= '9'
-                            )
+                            if (h >= '0' && h <= '9')
                             {
-                                value +=
-                                    h - '0';
+                                value += h - '0';
                             }
-                            else if (
-                                h >= 'a' &&
-                                h <= 'f'
-                            )
+                            else if (h >= 'a' && h <= 'f')
                             {
-                                value +=
-                                    h - 'a' + 10;
+                                value += h - 'a' + 10;
                             }
-                            else if (
-                                h >= 'A' &&
-                                h <= 'F'
-                            )
+                            else if (h >= 'A' && h <= 'F')
                             {
-                                value +=
-                                    h - 'A' + 10;
+                                value += h - 'A' + 10;
                             }
                             else
                             {
@@ -251,50 +206,30 @@ namespace
                             }
                         }
 
-                        /*
-                            Encode BMP codepoints as UTF-8.
-                        */
                         if (value <= 0x7F)
                         {
-                            result +=
-                                static_cast<char>(
-                                    value
-                                );
+                            result += static_cast<char>(value);
                         }
                         else if (value <= 0x7FF)
                         {
-                            result +=
-                                static_cast<char>(
-                                    0xC0 |
-                                    (value >> 6)
-                                );
+                            result += static_cast<char>(
+                                0xC0 | (value >> 6));
 
-                            result +=
-                                static_cast<char>(
-                                    0x80 |
-                                    (value & 0x3F)
-                                );
+                            result += static_cast<char>(
+                                0x80 | (value & 0x3F));
                         }
                         else
                         {
-                            result +=
-                                static_cast<char>(
-                                    0xE0 |
-                                    (value >> 12)
-                                );
+                            result += static_cast<char>(
+                                0xE0 | (value >> 12));
 
-                            result +=
-                                static_cast<char>(
-                                    0x80 |
-                                    ((value >> 6) &
-                                     0x3F)
-                                );
+                            result += static_cast<char>(
+                                0x80 |
+                                ((value >> 6) & 0x3F));
 
-                            result +=
-                                static_cast<char>(
-                                    0x80 |
-                                    (value & 0x3F)
-                                );
+                            result += static_cast<char>(
+                                0x80 |
+                                (value & 0x3F));
                         }
 
                         i += 4;
@@ -302,10 +237,6 @@ namespace
                     }
 
                     default:
-                        /*
-                            Preserve unknown escapes rather
-                            than silently destroying source.
-                        */
                         result += '\\';
                         result += c;
                         break;
@@ -335,8 +266,7 @@ namespace
 
     void sendAll(
         int client,
-        const std::string& data
-    )
+        const std::string& data)
     {
         std::size_t sent = 0;
 
@@ -347,16 +277,12 @@ namespace
                     client,
                     data.data() + sent,
                     data.size() - sent,
-                    0
-                );
+                    0);
 
             if (count <= 0)
                 return;
 
-            sent +=
-                static_cast<std::size_t>(
-                    count
-                );
+            sent += static_cast<std::size_t>(count);
         }
     }
 
@@ -364,11 +290,9 @@ namespace
         int client,
         int status,
         const std::string& contentType,
-        const std::string& body
-    )
+        const std::string& body)
     {
-        const char* statusText =
-            "Unknown";
+        const char* statusText = "Unknown";
 
         switch (status)
         {
@@ -427,22 +351,15 @@ namespace
 
             << body;
 
-        sendAll(
-            client,
-            response.str()
-        );
+        sendAll(client, response.str());
     }
 
     bool parseContentLength(
         const std::string& headers,
-        std::size_t& length
-    )
+        std::size_t& length)
     {
-        const std::string key =
-            "Content-Length:";
-
-        const std::size_t position =
-            headers.find(key);
+        std::size_t position =
+            headers.find("Content-Length:");
 
         if (position == std::string::npos)
         {
@@ -450,48 +367,38 @@ namespace
             return true;
         }
 
-        std::size_t start =
-            position + key.size();
+        position +=
+            std::string("Content-Length:").size();
 
         while (
-            start < headers.size() &&
+            position < headers.size() &&
             std::isspace(
                 static_cast<unsigned char>(
-                    headers[start]
-                )
-            )
-        )
+                    headers[position])))
         {
-            ++start;
+            ++position;
         }
 
-        std::size_t end =
-            start;
+        const std::size_t start = position;
 
         while (
-            end < headers.size() &&
+            position < headers.size() &&
             std::isdigit(
                 static_cast<unsigned char>(
-                    headers[end]
-                )
-            )
-        )
+                    headers[position])))
         {
-            ++end;
+            ++position;
         }
 
-        if (end == start)
+        if (position == start)
             return false;
 
         try
         {
-            length =
-                std::stoull(
-                    headers.substr(
-                        start,
-                        end - start
-                    )
-                );
+            length = std::stoull(
+                headers.substr(
+                    start,
+                    position - start));
         }
         catch (...)
         {
@@ -503,41 +410,30 @@ namespace
 
     bool receiveRequest(
         int client,
-        std::string& request
-    )
+        std::string& request)
     {
         char buffer[16384];
 
         while (
             request.find("\r\n\r\n") ==
-            std::string::npos
-        )
+            std::string::npos)
         {
             const ssize_t received =
                 recv(
                     client,
                     buffer,
                     sizeof(buffer),
-                    0
-                );
+                    0);
 
             if (received <= 0)
                 return false;
 
             request.append(
                 buffer,
-                static_cast<std::size_t>(
-                    received
-                )
-            );
+                static_cast<std::size_t>(received));
 
-            if (
-                request.size() >
-                MAX_REQUEST_SIZE
-            )
-            {
+            if (request.size() > MAX_REQUEST_SIZE)
                 return false;
-            }
         }
 
         return true;
@@ -547,17 +443,13 @@ namespace
     {
         std::string request;
 
-        if (!receiveRequest(
-                client,
-                request
-            ))
+        if (!receiveRequest(client, request))
         {
             sendResponse(
                 client,
                 413,
                 "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Request too large\"}"
-            );
+                "{\"success\":false,\"error\":\"Request too large\"}");
 
             close(client);
             return;
@@ -572,46 +464,33 @@ namespace
                 client,
                 400,
                 "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Malformed HTTP request\"}"
-            );
+                "{\"success\":false,\"error\":\"Malformed HTTP request\"}");
 
             close(client);
             return;
         }
 
         const std::string headers =
-            request.substr(
-                0,
-                headerEnd
-            );
+            request.substr(0, headerEnd);
 
         std::string body =
-            request.substr(
-                headerEnd + 4
-            );
+            request.substr(headerEnd + 4);
 
-        std::istringstream headerStream(
-            headers
-        );
+        std::istringstream headerStream(headers);
 
         std::string method;
         std::string path;
         std::string version;
 
-        headerStream
-            >> method
-            >> path
-            >> version;
+        headerStream >> method >> path >> version;
 
-        if (method.empty() ||
-            path.empty())
+        if (method.empty() || path.empty())
         {
             sendResponse(
                 client,
                 400,
                 "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Invalid HTTP request\"}"
-            );
+                "{\"success\":false,\"error\":\"Invalid HTTP request\"}");
 
             close(client);
             return;
@@ -623,8 +502,7 @@ namespace
                 client,
                 200,
                 "text/plain; charset=utf-8",
-                ""
-            );
+                "");
 
             close(client);
             return;
@@ -634,31 +512,25 @@ namespace
 
         if (!parseContentLength(
                 headers,
-                contentLength
-            ))
+                contentLength))
         {
             sendResponse(
                 client,
                 400,
                 "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Invalid Content-Length\"}"
-            );
+                "{\"success\":false,\"error\":\"Invalid Content-Length\"}");
 
             close(client);
             return;
         }
 
-        if (
-            contentLength >
-            MAX_REQUEST_SIZE
-        )
+        if (contentLength > MAX_REQUEST_SIZE)
         {
             sendResponse(
                 client,
                 413,
                 "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Payload too large\"}"
-            );
+                "{\"success\":false,\"error\":\"Payload too large\"}");
 
             close(client);
             return;
@@ -666,40 +538,29 @@ namespace
 
         char buffer[16384];
 
-        while (
-            body.size() <
-            contentLength
-        )
+        while (body.size() < contentLength)
         {
             const ssize_t received =
                 recv(
                     client,
                     buffer,
                     sizeof(buffer),
-                    0
-                );
+                    0);
 
             if (received <= 0)
                 break;
 
             body.append(
                 buffer,
-                static_cast<std::size_t>(
-                    received
-                )
-            );
+                static_cast<std::size_t>(received));
 
-            if (
-                body.size() >
-                MAX_REQUEST_SIZE
-            )
+            if (body.size() > MAX_REQUEST_SIZE)
             {
                 sendResponse(
                     client,
                     413,
                     "application/json; charset=utf-8",
-                    "{\"success\":false,\"error\":\"Payload too large\"}"
-                );
+                    "{\"success\":false,\"error\":\"Payload too large\"}");
 
                 close(client);
                 return;
@@ -708,15 +569,13 @@ namespace
 
         if (
             contentLength > 0 &&
-            body.size() < contentLength
-        )
+            body.size() < contentLength)
         {
             sendResponse(
                 client,
                 400,
                 "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Incomplete request body\"}"
-            );
+                "{\"success\":false,\"error\":\"Incomplete request body\"}");
 
             close(client);
             return;
@@ -724,27 +583,21 @@ namespace
 
         if (
             contentLength > 0 &&
-            body.size() > contentLength
-        )
+            body.size() > contentLength)
         {
             body.resize(contentLength);
         }
 
         /*
-            ====================================================
-            Static website
-            ====================================================
-        */
+         * ----------------------------------------------------
+         * Website
+         * ----------------------------------------------------
+         */
 
-        if (
-            method == "GET" &&
-            path == "/"
-        )
+        if (method == "GET" && path == "/")
         {
             const std::string html =
-                readFile(
-                    "web/index.html"
-                );
+                readFile("web/index.html");
 
             if (html.empty())
             {
@@ -752,8 +605,7 @@ namespace
                     client,
                     500,
                     "text/plain; charset=utf-8",
-                    "web/index.html not found"
-                );
+                    "web/index.html not found");
             }
             else
             {
@@ -761,23 +613,17 @@ namespace
                     client,
                     200,
                     "text/html; charset=utf-8",
-                    html
-                );
+                    html);
             }
 
             close(client);
             return;
         }
 
-        if (
-            method == "GET" &&
-            path == "/style.css"
-        )
+        if (method == "GET" && path == "/style.css")
         {
             const std::string css =
-                readFile(
-                    "web/style.css"
-                );
+                readFile("web/style.css");
 
             if (css.empty())
             {
@@ -785,8 +631,7 @@ namespace
                     client,
                     404,
                     "text/plain; charset=utf-8",
-                    "style.css not found"
-                );
+                    "style.css not found");
             }
             else
             {
@@ -794,23 +639,17 @@ namespace
                     client,
                     200,
                     "text/css; charset=utf-8",
-                    css
-                );
+                    css);
             }
 
             close(client);
             return;
         }
 
-        if (
-            method == "GET" &&
-            path == "/app.js"
-        )
+        if (method == "GET" && path == "/app.js")
         {
             const std::string js =
-                readFile(
-                    "web/app.js"
-                );
+                readFile("web/app.js");
 
             if (js.empty())
             {
@@ -818,8 +657,7 @@ namespace
                     client,
                     404,
                     "text/plain; charset=utf-8",
-                    "app.js not found"
-                );
+                    "app.js not found");
             }
             else
             {
@@ -827,55 +665,47 @@ namespace
                     client,
                     200,
                     "application/javascript; charset=utf-8",
-                    js
-                );
+                    js);
             }
 
             close(client);
             return;
         }
 
-        if (
-            method == "GET" &&
-            path == "/health"
-        )
+        if (method == "GET" && path == "/health")
         {
             sendResponse(
                 client,
                 200,
                 "application/json; charset=utf-8",
-                "{\"status\":\"ok\"}"
-            );
+                "{\"status\":\"ok\"}");
 
             close(client);
             return;
         }
 
         /*
-            ====================================================
-            Obfuscation API
-            ====================================================
-        */
+         * ----------------------------------------------------
+         * Obfuscation API
+         * ----------------------------------------------------
+         */
 
         if (
             method == "POST" &&
-            path == "/api/obfuscate"
-        )
+            path == "/api/obfuscate")
         {
             std::string source;
 
             if (!extractJsonString(
                     body,
                     "code",
-                    source
-                ))
+                    source))
             {
                 sendResponse(
                     client,
                     400,
                     "application/json; charset=utf-8",
-                    "{\"success\":false,\"error\":\"Missing code field\"}"
-                );
+                    "{\"success\":false,\"error\":\"Missing code field\"}");
 
                 close(client);
                 return;
@@ -887,8 +717,7 @@ namespace
                     client,
                     400,
                     "application/json; charset=utf-8",
-                    "{\"success\":false,\"error\":\"Code cannot be empty\"}"
-                );
+                    "{\"success\":false,\"error\":\"Code cannot be empty\"}");
 
                 close(client);
                 return;
@@ -899,21 +728,7 @@ namespace
                 Transformer transformer;
 
                 const std::string protectedCode =
-                    transformer.transform(
-                        source
-                    );
-
-                /*
-                    THIS IS THE IMPORTANT FIX.
-
-                    The old server returned:
-                        success=true
-                        code=""
-
-                    when transformation failed.
-
-                    Now failure is an actual HTTP/API error.
-                */
+                    transformer.transform(source);
 
                 if (protectedCode.empty())
                 {
@@ -921,8 +736,7 @@ namespace
                         client,
                         422,
                         "application/json; charset=utf-8",
-                        "{\"success\":false,\"error\":\"Luau rejected the supplied source or the protected output failed validation.\"}"
-                    );
+                        "{\"success\":false,\"error\":\"Transformation produced no output\"}");
 
                     close(client);
                     return;
@@ -930,35 +744,27 @@ namespace
 
                 const std::string response =
                     "{\"success\":true,\"code\":\"" +
-                    jsonEscape(
-                        protectedCode
-                    ) +
+                    jsonEscape(protectedCode) +
                     "\"}";
 
                 sendResponse(
                     client,
                     200,
                     "application/json; charset=utf-8",
-                    response
-                );
+                    response);
             }
-            catch (
-                const std::exception& exception
-            )
+            catch (const std::exception& exception)
             {
                 const std::string response =
                     "{\"success\":false,\"error\":\"" +
-                    jsonEscape(
-                        exception.what()
-                    ) +
+                    jsonEscape(exception.what()) +
                     "\"}";
 
                 sendResponse(
                     client,
                     500,
                     "application/json; charset=utf-8",
-                    response
-                );
+                    response);
             }
             catch (...)
             {
@@ -966,29 +772,22 @@ namespace
                     client,
                     500,
                     "application/json; charset=utf-8",
-                    "{\"success\":false,\"error\":\"Unknown obfuscation failure\"}"
-                );
+                    "{\"success\":false,\"error\":\"Unknown obfuscation failure\"}");
             }
 
             close(client);
             return;
         }
 
-        /*
-            Unsupported method.
-        */
-
         if (
             method != "GET" &&
-            method != "POST"
-        )
+            method != "POST")
         {
             sendResponse(
                 client,
                 405,
                 "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Method not allowed\"}"
-            );
+                "{\"success\":false,\"error\":\"Method not allowed\"}");
 
             close(client);
             return;
@@ -998,8 +797,7 @@ namespace
             client,
             404,
             "application/json; charset=utf-8",
-            "{\"success\":false,\"error\":\"Not found\"}"
-        );
+            "{\"success\":false,\"error\":\"Not found\"}");
 
         close(client);
     }
@@ -1010,25 +808,17 @@ int main()
     const char* portEnvironment =
         std::getenv("PORT");
 
-    int port =
-        DEFAULT_PORT;
+    int port = DEFAULT_PORT;
 
     if (portEnvironment)
     {
         try
         {
             const int parsed =
-                std::stoi(
-                    portEnvironment
-                );
+                std::stoi(portEnvironment);
 
-            if (
-                parsed > 0 &&
-                parsed <= 65535
-            )
-            {
+            if (parsed > 0 && parsed <= 65535)
                 port = parsed;
-            }
         }
         catch (...)
         {
@@ -1040,8 +830,7 @@ int main()
         socket(
             AF_INET,
             SOCK_STREAM,
-            0
-        );
+            0);
 
     if (server < 0)
     {
@@ -1055,46 +844,26 @@ int main()
 
     int reuse = 1;
 
-    if (
-        setsockopt(
-            server,
-            SOL_SOCKET,
-            SO_REUSEADDR,
-            &reuse,
-            sizeof(reuse)
-        ) < 0
-    )
-    {
-        std::cerr
-            << "Warning: SO_REUSEADDR failed: "
-            << strerror(errno)
-            << '\n';
-    }
+    setsockopt(
+        server,
+        SOL_SOCKET,
+        SO_REUSEADDR,
+        &reuse,
+        sizeof(reuse));
 
     sockaddr_in address{};
 
-    address.sin_family =
-        AF_INET;
-
-    address.sin_addr.s_addr =
-        htonl(INADDR_ANY);
-
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
     address.sin_port =
         htons(
-            static_cast<std::uint16_t>(
-                port
-            )
-        );
+            static_cast<std::uint16_t>(port));
 
     if (
         bind(
             server,
-            reinterpret_cast<sockaddr*>(
-                &address
-            ),
-            sizeof(address)
-        ) < 0
-    )
+            reinterpret_cast<sockaddr*>(&address),
+            sizeof(address)) < 0)
     {
         std::cerr
             << "Failed to bind port "
@@ -1104,16 +873,10 @@ int main()
             << '\n';
 
         close(server);
-
         return 1;
     }
 
-    if (
-        listen(
-            server,
-            64
-        ) < 0
-    )
+    if (listen(server, 64) < 0)
     {
         std::cerr
             << "Failed to listen: "
@@ -1121,12 +884,11 @@ int main()
             << '\n';
 
         close(server);
-
         return 1;
     }
 
     std::cout
-        << "LuaProtecter web server listening on port "
+        << "LuaProtecter listening on port "
         << port
         << '\n';
 
@@ -1140,11 +902,8 @@ int main()
         const int client =
             accept(
                 server,
-                reinterpret_cast<sockaddr*>(
-                    &clientAddress
-                ),
-                &clientLength
-            );
+                reinterpret_cast<sockaddr*>(&clientAddress),
+                &clientLength);
 
         if (client < 0)
         {
@@ -1163,6 +922,5 @@ int main()
     }
 
     close(server);
-
     return 0;
 }
