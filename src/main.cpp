@@ -2,9 +2,12 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <netinet/in.h>
 #include <sstream>
 #include <string>
@@ -14,631 +17,1145 @@
 
 namespace
 {
-constexpr int BUFFER_SIZE = 8192;
+    constexpr std::size_t MAX_REQUEST_SIZE =
+        4 * 1024 * 1024;
 
-std::string readFile(const std::string& path)
-{
-    std::ifstream file(path, std::ios::binary);
+    constexpr int DEFAULT_PORT = 10000;
 
-    if (!file)
-        return {};
-
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-
-    return buffer.str();
-}
-
-std::string jsonEscape(const std::string& value)
-{
-    std::string result;
-
-    for (unsigned char c : value)
+    std::string readFile(
+        const std::string& path
+    )
     {
-        switch (c)
-        {
-        case '\"':
-            result += "\\\"";
-            break;
+        std::ifstream file(
+            path,
+            std::ios::binary
+        );
 
-        case '\\':
-            result += "\\\\";
-            break;
+        if (!file)
+            return {};
 
-        case '\b':
-            result += "\\b";
-            break;
+        std::ostringstream buffer;
 
-        case '\f':
-            result += "\\f";
-            break;
+        buffer << file.rdbuf();
 
-        case '\n':
-            result += "\\n";
-            break;
-
-        case '\r':
-            result += "\\r";
-            break;
-
-        case '\t':
-            result += "\\t";
-            break;
-
-        default:
-            if (c < 0x20)
-            {
-                const char hex[] = "0123456789abcdef";
-
-                result += "\\u00";
-                result += hex[(c >> 4) & 0xF];
-                result += hex[c & 0xF];
-            }
-            else
-            {
-                result += static_cast<char>(c);
-            }
-        }
+        return buffer.str();
     }
 
-    return result;
-}
-
-bool extractJsonString(
-    const std::string& json,
-    const std::string& key,
-    std::string& output)
-{
-    std::string search = "\"" + key + "\"";
-
-    size_t keyPosition = json.find(search);
-
-    if (keyPosition == std::string::npos)
-        return false;
-
-    size_t colon = json.find(':', keyPosition + search.length());
-
-    if (colon == std::string::npos)
-        return false;
-
-    size_t start = colon + 1;
-
-    while (start < json.length() &&
-           (json[start] == ' ' ||
-            json[start] == '\t' ||
-            json[start] == '\r' ||
-            json[start] == '\n'))
+    std::string jsonEscape(
+        const std::string& value
+    )
     {
-        ++start;
-    }
+        std::string result;
 
-    if (start >= json.length() || json[start] != '"')
-        return false;
+        result.reserve(value.size() + 32);
 
-    ++start;
-
-    std::string result;
-
-    bool escaped = false;
-
-    for (size_t i = start; i < json.length(); ++i)
-    {
-        char c = json[i];
-
-        if (escaped)
+        for (unsigned char c : value)
         {
             switch (c)
             {
-            case '"':
-                result += '"';
-                break;
+                case '"':
+                    result += "\\\"";
+                    break;
 
-            case '\\':
-                result += '\\';
-                break;
+                case '\\':
+                    result += "\\\\";
+                    break;
 
-            case '/':
-                result += '/';
-                break;
+                case '\b':
+                    result += "\\b";
+                    break;
 
-            case 'b':
-                result += '\b';
-                break;
+                case '\f':
+                    result += "\\f";
+                    break;
 
-            case 'f':
-                result += '\f';
-                break;
+                case '\n':
+                    result += "\\n";
+                    break;
 
-            case 'n':
-                result += '\n';
-                break;
+                case '\r':
+                    result += "\\r";
+                    break;
 
-            case 'r':
-                result += '\r';
-                break;
+                case '\t':
+                    result += "\\t";
+                    break;
 
-            case 't':
-                result += '\t';
-                break;
-
-            case 'u':
-            {
-                if (i + 4 >= json.length())
-                    return false;
-
-                unsigned int value = 0;
-
-                for (int j = 1; j <= 4; ++j)
+                default:
                 {
-                    char h = json[i + j];
+                    if (c < 0x20)
+                    {
+                        const char hex[] =
+                            "0123456789abcdef";
 
-                    value <<= 4;
+                        result += "\\u00";
 
-                    if (h >= '0' && h <= '9')
-                        value += h - '0';
-                    else if (h >= 'a' && h <= 'f')
-                        value += h - 'a' + 10;
-                    else if (h >= 'A' && h <= 'F')
-                        value += h - 'A' + 10;
+                        result +=
+                            hex[(c >> 4) & 0xF];
+
+                        result +=
+                            hex[c & 0xF];
+                    }
                     else
-                        return false;
-                }
+                    {
+                        result +=
+                            static_cast<char>(c);
+                    }
 
-                if (value <= 0x7F)
-                {
-                    result += static_cast<char>(value);
+                    break;
                 }
-                else if (value <= 0x7FF)
-                {
-                    result += static_cast<char>(0xC0 | (value >> 6));
-                    result += static_cast<char>(0x80 | (value & 0x3F));
-                }
-                else
-                {
-                    result += static_cast<char>(0xE0 | (value >> 12));
-                    result += static_cast<char>(0x80 | ((value >> 6) & 0x3F));
-                    result += static_cast<char>(0x80 | (value & 0x3F));
-                }
-
-                i += 4;
-                break;
             }
-
-            default:
-                result += c;
-                break;
-            }
-
-            escaped = false;
-            continue;
         }
 
-        if (c == '\\')
+        return result;
+    }
+
+    bool extractJsonString(
+        const std::string& json,
+        const std::string& key,
+        std::string& output
+    )
+    {
+        const std::string search =
+            "\"" + key + "\"";
+
+        const std::size_t keyPosition =
+            json.find(search);
+
+        if (keyPosition == std::string::npos)
+            return false;
+
+        const std::size_t colon =
+            json.find(
+                ':',
+                keyPosition + search.size()
+            );
+
+        if (colon == std::string::npos)
+            return false;
+
+        std::size_t start =
+            colon + 1;
+
+        while (
+            start < json.size() &&
+            std::isspace(
+                static_cast<unsigned char>(
+                    json[start]
+                )
+            )
+        )
         {
-            escaped = true;
-            continue;
+            ++start;
         }
 
-        if (c == '"')
+        if (
+            start >= json.size() ||
+            json[start] != '"'
+        )
         {
-            output = result;
+            return false;
+        }
+
+        ++start;
+
+        std::string result;
+
+        bool escaped = false;
+
+        for (
+            std::size_t i = start;
+            i < json.size();
+            ++i
+        )
+        {
+            const char c = json[i];
+
+            if (escaped)
+            {
+                switch (c)
+                {
+                    case '"':
+                        result += '"';
+                        break;
+
+                    case '\\':
+                        result += '\\';
+                        break;
+
+                    case '/':
+                        result += '/';
+                        break;
+
+                    case 'b':
+                        result += '\b';
+                        break;
+
+                    case 'f':
+                        result += '\f';
+                        break;
+
+                    case 'n':
+                        result += '\n';
+                        break;
+
+                    case 'r':
+                        result += '\r';
+                        break;
+
+                    case 't':
+                        result += '\t';
+                        break;
+
+                    case 'u':
+                    {
+                        if (i + 4 >= json.size())
+                            return false;
+
+                        unsigned int value = 0;
+
+                        for (int j = 1; j <= 4; ++j)
+                        {
+                            const char h =
+                                json[i + j];
+
+                            value <<= 4;
+
+                            if (
+                                h >= '0' &&
+                                h <= '9'
+                            )
+                            {
+                                value +=
+                                    h - '0';
+                            }
+                            else if (
+                                h >= 'a' &&
+                                h <= 'f'
+                            )
+                            {
+                                value +=
+                                    h - 'a' + 10;
+                            }
+                            else if (
+                                h >= 'A' &&
+                                h <= 'F'
+                            )
+                            {
+                                value +=
+                                    h - 'A' + 10;
+                            }
+                            else
+                            {
+                                return false;
+                            }
+                        }
+
+                        /*
+                            Encode BMP codepoints as UTF-8.
+                        */
+                        if (value <= 0x7F)
+                        {
+                            result +=
+                                static_cast<char>(
+                                    value
+                                );
+                        }
+                        else if (value <= 0x7FF)
+                        {
+                            result +=
+                                static_cast<char>(
+                                    0xC0 |
+                                    (value >> 6)
+                                );
+
+                            result +=
+                                static_cast<char>(
+                                    0x80 |
+                                    (value & 0x3F)
+                                );
+                        }
+                        else
+                        {
+                            result +=
+                                static_cast<char>(
+                                    0xE0 |
+                                    (value >> 12)
+                                );
+
+                            result +=
+                                static_cast<char>(
+                                    0x80 |
+                                    ((value >> 6) &
+                                     0x3F)
+                                );
+
+                            result +=
+                                static_cast<char>(
+                                    0x80 |
+                                    (value & 0x3F)
+                                );
+                        }
+
+                        i += 4;
+                        break;
+                    }
+
+                    default:
+                        /*
+                            Preserve unknown escapes rather
+                            than silently destroying source.
+                        */
+                        result += '\\';
+                        result += c;
+                        break;
+                }
+
+                escaped = false;
+                continue;
+            }
+
+            if (c == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                output = result;
+                return true;
+            }
+
+            result += c;
+        }
+
+        return false;
+    }
+
+    void sendAll(
+        int client,
+        const std::string& data
+    )
+    {
+        std::size_t sent = 0;
+
+        while (sent < data.size())
+        {
+            const ssize_t count =
+                send(
+                    client,
+                    data.data() + sent,
+                    data.size() - sent,
+                    0
+                );
+
+            if (count <= 0)
+                return;
+
+            sent +=
+                static_cast<std::size_t>(
+                    count
+                );
+        }
+    }
+
+    void sendResponse(
+        int client,
+        int status,
+        const std::string& contentType,
+        const std::string& body
+    )
+    {
+        const char* statusText =
+            "Unknown";
+
+        switch (status)
+        {
+            case 200:
+                statusText = "OK";
+                break;
+
+            case 400:
+                statusText = "Bad Request";
+                break;
+
+            case 404:
+                statusText = "Not Found";
+                break;
+
+            case 405:
+                statusText = "Method Not Allowed";
+                break;
+
+            case 413:
+                statusText = "Payload Too Large";
+                break;
+
+            case 422:
+                statusText = "Unprocessable Entity";
+                break;
+
+            case 500:
+                statusText = "Internal Server Error";
+                break;
+        }
+
+        std::ostringstream response;
+
+        response
+            << "HTTP/1.1 "
+            << status
+            << " "
+            << statusText
+            << "\r\n"
+
+            << "Content-Type: "
+            << contentType
+            << "\r\n"
+
+            << "Content-Length: "
+            << body.size()
+            << "\r\n"
+
+            << "Access-Control-Allow-Origin: *\r\n"
+            << "Access-Control-Allow-Headers: Content-Type\r\n"
+            << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+            << "Cache-Control: no-store\r\n"
+            << "Connection: close\r\n"
+            << "\r\n"
+
+            << body;
+
+        sendAll(
+            client,
+            response.str()
+        );
+    }
+
+    bool parseContentLength(
+        const std::string& headers,
+        std::size_t& length
+    )
+    {
+        const std::string key =
+            "Content-Length:";
+
+        const std::size_t position =
+            headers.find(key);
+
+        if (position == std::string::npos)
+        {
+            length = 0;
             return true;
         }
 
-        result += c;
-    }
+        std::size_t start =
+            position + key.size();
 
-    return false;
-}
-
-void sendResponse(
-    int client,
-    int status,
-    const std::string& contentType,
-    const std::string& body)
-{
-    std::string statusText;
-
-    switch (status)
-    {
-    case 200:
-        statusText = "OK";
-        break;
-
-    case 400:
-        statusText = "Bad Request";
-        break;
-
-    case 404:
-        statusText = "Not Found";
-        break;
-
-    case 405:
-        statusText = "Method Not Allowed";
-        break;
-
-    case 500:
-        statusText = "Internal Server Error";
-        break;
-
-    default:
-        statusText = "Unknown";
-        break;
-    }
-
-    std::ostringstream response;
-
-    response
-        << "HTTP/1.1 " << status << " " << statusText << "\r\n"
-        << "Content-Type: " << contentType << "\r\n"
-        << "Content-Length: " << body.size() << "\r\n"
-        << "Access-Control-Allow-Origin: *\r\n"
-        << "Access-Control-Allow-Headers: Content-Type\r\n"
-        << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-        << "Connection: close\r\n"
-        << "\r\n"
-        << body;
-
-    std::string data = response.str();
-
-    size_t sent = 0;
-
-    while (sent < data.size())
-    {
-        ssize_t n = send(
-            client,
-            data.data() + sent,
-            data.size() - sent,
-            0);
-
-        if (n <= 0)
-            break;
-
-        sent += static_cast<size_t>(n);
-    }
-}
-
-void handleClient(int client)
-{
-    std::string request;
-
-    char buffer[BUFFER_SIZE];
-
-    while (request.find("\r\n\r\n") == std::string::npos)
-    {
-        ssize_t received = recv(
-            client,
-            buffer,
-            sizeof(buffer),
-            0);
-
-        if (received <= 0)
+        while (
+            start < headers.size() &&
+            std::isspace(
+                static_cast<unsigned char>(
+                    headers[start]
+                )
+            )
+        )
         {
+            ++start;
+        }
+
+        std::size_t end =
+            start;
+
+        while (
+            end < headers.size() &&
+            std::isdigit(
+                static_cast<unsigned char>(
+                    headers[end]
+                )
+            )
+        )
+        {
+            ++end;
+        }
+
+        if (end == start)
+            return false;
+
+        try
+        {
+            length =
+                std::stoull(
+                    headers.substr(
+                        start,
+                        end - start
+                    )
+                );
+        }
+        catch (...)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    bool receiveRequest(
+        int client,
+        std::string& request
+    )
+    {
+        char buffer[16384];
+
+        while (
+            request.find("\r\n\r\n") ==
+            std::string::npos
+        )
+        {
+            const ssize_t received =
+                recv(
+                    client,
+                    buffer,
+                    sizeof(buffer),
+                    0
+                );
+
+            if (received <= 0)
+                return false;
+
+            request.append(
+                buffer,
+                static_cast<std::size_t>(
+                    received
+                )
+            );
+
+            if (
+                request.size() >
+                MAX_REQUEST_SIZE
+            )
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    void handleClient(int client)
+    {
+        std::string request;
+
+        if (!receiveRequest(
+                client,
+                request
+            ))
+        {
+            sendResponse(
+                client,
+                413,
+                "application/json; charset=utf-8",
+                "{\"success\":false,\"error\":\"Request too large\"}"
+            );
+
             close(client);
             return;
         }
 
-        request.append(buffer, static_cast<size_t>(received));
+        const std::size_t headerEnd =
+            request.find("\r\n\r\n");
 
-        if (request.size() > 1024 * 1024)
+        if (headerEnd == std::string::npos)
         {
             sendResponse(
                 client,
                 400,
-                "application/json",
-                "{\"error\":\"Request too large\"}");
+                "application/json; charset=utf-8",
+                "{\"success\":false,\"error\":\"Malformed HTTP request\"}"
+            );
 
             close(client);
             return;
         }
-    }
 
-    size_t headerEnd = request.find("\r\n\r\n");
+        const std::string headers =
+            request.substr(
+                0,
+                headerEnd
+            );
 
-    std::string headers = request.substr(0, headerEnd);
-    std::string body = request.substr(headerEnd + 4);
+        std::string body =
+            request.substr(
+                headerEnd + 4
+            );
 
-    std::istringstream headerStream(headers);
+        std::istringstream headerStream(
+            headers
+        );
 
-    std::string method;
-    std::string path;
-    std::string version;
+        std::string method;
+        std::string path;
+        std::string version;
 
-    headerStream >> method >> path >> version;
+        headerStream
+            >> method
+            >> path
+            >> version;
 
-    if (method == "OPTIONS")
-    {
-        sendResponse(client, 200, "text/plain", "");
-        close(client);
-        return;
-    }
-
-    size_t contentLengthPosition =
-        headers.find("Content-Length:");
-
-    if (contentLengthPosition != std::string::npos)
-    {
-        size_t valueStart =
-            contentLengthPosition + strlen("Content-Length:");
-
-        while (
-            valueStart < headers.size() &&
-            (headers[valueStart] == ' ' ||
-             headers[valueStart] == '\t'))
+        if (method.empty() ||
+            path.empty())
         {
-            ++valueStart;
+            sendResponse(
+                client,
+                400,
+                "application/json; charset=utf-8",
+                "{\"success\":false,\"error\":\"Invalid HTTP request\"}"
+            );
+
+            close(client);
+            return;
         }
 
-        size_t valueEnd =
-            headers.find("\r\n", valueStart);
-
-        std::string lengthString =
-            headers.substr(
-                valueStart,
-                valueEnd == std::string::npos
-                    ? std::string::npos
-                    : valueEnd - valueStart);
-
-        size_t contentLength =
-            std::stoull(lengthString);
-
-        while (body.size() < contentLength)
+        if (method == "OPTIONS")
         {
-            ssize_t received = recv(
+            sendResponse(
                 client,
-                buffer,
-                sizeof(buffer),
-                0);
+                200,
+                "text/plain; charset=utf-8",
+                ""
+            );
+
+            close(client);
+            return;
+        }
+
+        std::size_t contentLength = 0;
+
+        if (!parseContentLength(
+                headers,
+                contentLength
+            ))
+        {
+            sendResponse(
+                client,
+                400,
+                "application/json; charset=utf-8",
+                "{\"success\":false,\"error\":\"Invalid Content-Length\"}"
+            );
+
+            close(client);
+            return;
+        }
+
+        if (
+            contentLength >
+            MAX_REQUEST_SIZE
+        )
+        {
+            sendResponse(
+                client,
+                413,
+                "application/json; charset=utf-8",
+                "{\"success\":false,\"error\":\"Payload too large\"}"
+            );
+
+            close(client);
+            return;
+        }
+
+        char buffer[16384];
+
+        while (
+            body.size() <
+            contentLength
+        )
+        {
+            const ssize_t received =
+                recv(
+                    client,
+                    buffer,
+                    sizeof(buffer),
+                    0
+                );
 
             if (received <= 0)
                 break;
 
             body.append(
                 buffer,
-                static_cast<size_t>(received));
+                static_cast<std::size_t>(
+                    received
+                )
+            );
+
+            if (
+                body.size() >
+                MAX_REQUEST_SIZE
+            )
+            {
+                sendResponse(
+                    client,
+                    413,
+                    "application/json; charset=utf-8",
+                    "{\"success\":false,\"error\":\"Payload too large\"}"
+                );
+
+                close(client);
+                return;
+            }
         }
 
-        if (body.size() > contentLength)
+        if (
+            contentLength > 0 &&
+            body.size() < contentLength
+        )
+        {
+            sendResponse(
+                client,
+                400,
+                "application/json; charset=utf-8",
+                "{\"success\":false,\"error\":\"Incomplete request body\"}"
+            );
+
+            close(client);
+            return;
+        }
+
+        if (
+            contentLength > 0 &&
+            body.size() > contentLength
+        )
+        {
             body.resize(contentLength);
-    }
+        }
 
-    if (method == "GET" && path == "/")
-    {
-        std::string html = readFile("web/index.html");
+        /*
+            ====================================================
+            Static website
+            ====================================================
+        */
 
-        if (html.empty())
+        if (
+            method == "GET" &&
+            path == "/"
+        )
         {
-            sendResponse(
-                client,
-                500,
-                "text/plain",
-                "index.html not found");
+            const std::string html =
+                readFile(
+                    "web/index.html"
+                );
+
+            if (html.empty())
+            {
+                sendResponse(
+                    client,
+                    500,
+                    "text/plain; charset=utf-8",
+                    "web/index.html not found"
+                );
+            }
+            else
+            {
+                sendResponse(
+                    client,
+                    200,
+                    "text/html; charset=utf-8",
+                    html
+                );
+            }
 
             close(client);
             return;
         }
 
-        sendResponse(
-            client,
-            200,
-            "text/html; charset=utf-8",
-            html);
-
-        close(client);
-        return;
-    }
-
-    if (method == "GET" && path == "/style.css")
-    {
-        std::string css = readFile("web/style.css");
-
-        sendResponse(
-            client,
-            200,
-            "text/css; charset=utf-8",
-            css);
-
-        close(client);
-        return;
-    }
-
-    if (method == "GET" && path == "/app.js")
-    {
-        std::string js = readFile("web/app.js");
-
-        sendResponse(
-            client,
-            200,
-            "application/javascript; charset=utf-8",
-            js);
-
-        close(client);
-        return;
-    }
-
-    if (method == "GET" && path == "/health")
-    {
-        sendResponse(
-            client,
-            200,
-            "application/json",
-            "{\"status\":\"ok\"}");
-
-        close(client);
-        return;
-    }
-
-    if (method == "POST" && path == "/api/obfuscate")
-    {
-        std::string source;
-
-        if (!extractJsonString(body, "code", source))
+        if (
+            method == "GET" &&
+            path == "/style.css"
+        )
         {
-            sendResponse(
-                client,
-                400,
-                "application/json",
-                "{\"error\":\"Missing code field\"}");
+            const std::string css =
+                readFile(
+                    "web/style.css"
+                );
+
+            if (css.empty())
+            {
+                sendResponse(
+                    client,
+                    404,
+                    "text/plain; charset=utf-8",
+                    "style.css not found"
+                );
+            }
+            else
+            {
+                sendResponse(
+                    client,
+                    200,
+                    "text/css; charset=utf-8",
+                    css
+                );
+            }
 
             close(client);
             return;
         }
 
-        if (source.empty())
+        if (
+            method == "GET" &&
+            path == "/app.js"
+        )
         {
-            sendResponse(
-                client,
-                400,
-                "application/json",
-                "{\"error\":\"Code cannot be empty\"}");
+            const std::string js =
+                readFile(
+                    "web/app.js"
+                );
+
+            if (js.empty())
+            {
+                sendResponse(
+                    client,
+                    404,
+                    "text/plain; charset=utf-8",
+                    "app.js not found"
+                );
+            }
+            else
+            {
+                sendResponse(
+                    client,
+                    200,
+                    "application/javascript; charset=utf-8",
+                    js
+                );
+            }
 
             close(client);
             return;
         }
 
-        try
+        if (
+            method == "GET" &&
+            path == "/health"
+        )
         {
-            Transformer transformer;
-
-            std::string protectedCode =
-                transformer.transform(source);
-
-            std::string response =
-                "{\"success\":true,\"code\":\"" +
-                jsonEscape(protectedCode) +
-                "\"}";
-
             sendResponse(
                 client,
                 200,
                 "application/json; charset=utf-8",
-                response);
-        }
-        catch (const std::exception& exception)
-        {
-            std::string response =
-                "{\"success\":false,\"error\":\"" +
-                jsonEscape(exception.what()) +
-                "\"}";
+                "{\"status\":\"ok\"}"
+            );
 
-            sendResponse(
-                client,
-                500,
-                "application/json; charset=utf-8",
-                response);
+            close(client);
+            return;
         }
-        catch (...)
+
+        /*
+            ====================================================
+            Obfuscation API
+            ====================================================
+        */
+
+        if (
+            method == "POST" &&
+            path == "/api/obfuscate"
+        )
+        {
+            std::string source;
+
+            if (!extractJsonString(
+                    body,
+                    "code",
+                    source
+                ))
+            {
+                sendResponse(
+                    client,
+                    400,
+                    "application/json; charset=utf-8",
+                    "{\"success\":false,\"error\":\"Missing code field\"}"
+                );
+
+                close(client);
+                return;
+            }
+
+            if (source.empty())
+            {
+                sendResponse(
+                    client,
+                    400,
+                    "application/json; charset=utf-8",
+                    "{\"success\":false,\"error\":\"Code cannot be empty\"}"
+                );
+
+                close(client);
+                return;
+            }
+
+            try
+            {
+                Transformer transformer;
+
+                const std::string protectedCode =
+                    transformer.transform(
+                        source
+                    );
+
+                /*
+                    THIS IS THE IMPORTANT FIX.
+
+                    The old server returned:
+                        success=true
+                        code=""
+
+                    when transformation failed.
+
+                    Now failure is an actual HTTP/API error.
+                */
+
+                if (protectedCode.empty())
+                {
+                    sendResponse(
+                        client,
+                        422,
+                        "application/json; charset=utf-8",
+                        "{\"success\":false,\"error\":\"Luau rejected the supplied source or the protected output failed validation.\"}"
+                    );
+
+                    close(client);
+                    return;
+                }
+
+                const std::string response =
+                    "{\"success\":true,\"code\":\"" +
+                    jsonEscape(
+                        protectedCode
+                    ) +
+                    "\"}";
+
+                sendResponse(
+                    client,
+                    200,
+                    "application/json; charset=utf-8",
+                    response
+                );
+            }
+            catch (
+                const std::exception& exception
+            )
+            {
+                const std::string response =
+                    "{\"success\":false,\"error\":\"" +
+                    jsonEscape(
+                        exception.what()
+                    ) +
+                    "\"}";
+
+                sendResponse(
+                    client,
+                    500,
+                    "application/json; charset=utf-8",
+                    response
+                );
+            }
+            catch (...)
+            {
+                sendResponse(
+                    client,
+                    500,
+                    "application/json; charset=utf-8",
+                    "{\"success\":false,\"error\":\"Unknown obfuscation failure\"}"
+                );
+            }
+
+            close(client);
+            return;
+        }
+
+        /*
+            Unsupported method.
+        */
+
+        if (
+            method != "GET" &&
+            method != "POST"
+        )
         {
             sendResponse(
                 client,
-                500,
+                405,
                 "application/json; charset=utf-8",
-                "{\"success\":false,\"error\":\"Obfuscation failed\"}");
+                "{\"success\":false,\"error\":\"Method not allowed\"}"
+            );
+
+            close(client);
+            return;
         }
+
+        sendResponse(
+            client,
+            404,
+            "application/json; charset=utf-8",
+            "{\"success\":false,\"error\":\"Not found\"}"
+        );
 
         close(client);
-        return;
     }
-
-    sendResponse(
-        client,
-        404,
-        "application/json",
-        "{\"error\":\"Not found\"}");
-
-    close(client);
 }
-
-} // namespace
 
 int main()
 {
     const char* portEnvironment =
         std::getenv("PORT");
 
-    int port = 10000;
+    int port =
+        DEFAULT_PORT;
 
     if (portEnvironment)
     {
         try
         {
-            port = std::stoi(portEnvironment);
+            const int parsed =
+                std::stoi(
+                    portEnvironment
+                );
+
+            if (
+                parsed > 0 &&
+                parsed <= 65535
+            )
+            {
+                port = parsed;
+            }
         }
         catch (...)
         {
-            port = 10000;
+            port = DEFAULT_PORT;
         }
     }
 
-    int server =
-        socket(AF_INET, SOCK_STREAM, 0);
+    const int server =
+        socket(
+            AF_INET,
+            SOCK_STREAM,
+            0
+        );
 
     if (server < 0)
     {
-        std::cerr << "Failed to create socket\n";
+        std::cerr
+            << "Failed to create socket: "
+            << strerror(errno)
+            << '\n';
+
         return 1;
     }
 
     int reuse = 1;
 
-    setsockopt(
-        server,
-        SOL_SOCKET,
-        SO_REUSEADDR,
-        &reuse,
-        sizeof(reuse));
+    if (
+        setsockopt(
+            server,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            &reuse,
+            sizeof(reuse)
+        ) < 0
+    )
+    {
+        std::cerr
+            << "Warning: SO_REUSEADDR failed: "
+            << strerror(errno)
+            << '\n';
+    }
 
     sockaddr_in address{};
 
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(
-        static_cast<uint16_t>(port));
+    address.sin_family =
+        AF_INET;
 
-    if (bind(
+    address.sin_addr.s_addr =
+        htonl(INADDR_ANY);
+
+    address.sin_port =
+        htons(
+            static_cast<std::uint16_t>(
+                port
+            )
+        );
+
+    if (
+        bind(
             server,
-            reinterpret_cast<sockaddr*>(&address),
-            sizeof(address)) < 0)
+            reinterpret_cast<sockaddr*>(
+                &address
+            ),
+            sizeof(address)
+        ) < 0
+    )
     {
-        std::cerr << "Failed to bind port "
-                  << port
-                  << ": "
-                  << strerror(errno)
-                  << "\n";
+        std::cerr
+            << "Failed to bind port "
+            << port
+            << ": "
+            << strerror(errno)
+            << '\n';
 
         close(server);
+
         return 1;
     }
 
-    if (listen(server, 32) < 0)
+    if (
+        listen(
+            server,
+            64
+        ) < 0
+    )
     {
-        std::cerr << "Failed to listen\n";
+        std::cerr
+            << "Failed to listen: "
+            << strerror(errno)
+            << '\n';
+
         close(server);
+
         return 1;
     }
 
     std::cout
         << "LuaProtecter web server listening on port "
         << port
-        << "\n";
+        << '\n';
 
     while (true)
     {
         sockaddr_in clientAddress{};
+
         socklen_t clientLength =
             sizeof(clientAddress);
 
-        int client = accept(
-            server,
-            reinterpret_cast<sockaddr*>(&clientAddress),
-            &clientLength);
+        const int client =
+            accept(
+                server,
+                reinterpret_cast<sockaddr*>(
+                    &clientAddress
+                ),
+                &clientLength
+            );
 
         if (client < 0)
         {
             if (errno == EINTR)
                 continue;
 
-            std::cerr << "accept() failed\n";
+            std::cerr
+                << "accept() failed: "
+                << strerror(errno)
+                << '\n';
+
             continue;
         }
 
