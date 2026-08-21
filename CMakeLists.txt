@@ -7,32 +7,27 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # ============================================================
-# Download Luau automatically
+# Luau
 # ============================================================
 #
-# This means you DO NOT need to manually put a "luau" folder
-# into your repository.
+# Your repository stores Luau here:
 #
-# CMake will download the official Luau source during configure.
+#     third_party/luau/
 #
+# NOT:
+#
+#     luau/
+#
+# ============================================================
 
-include(FetchContent)
+set(LUAU_BUILD_CLI OFF CACHE BOOL "Build Luau CLI tools" FORCE)
+set(LUAU_BUILD_TESTS OFF CACHE BOOL "Build Luau tests" FORCE)
+set(LUAU_BUILD_WEB OFF CACHE BOOL "Build Luau web module" FORCE)
+set(LUAU_BUILD_SHARED OFF CACHE BOOL "Build Luau shared libraries" FORCE)
 
-FetchContent_Declare(
-    Luau
-    GIT_REPOSITORY https://github.com/luau-lang/luau.git
-    GIT_TAG master
-    GIT_SHALLOW TRUE
+add_subdirectory(
+    third_party/luau
 )
-
-# We don't need Luau's command-line tools/tests.
-set(LUAU_BUILD_CLI OFF CACHE BOOL "" FORCE)
-set(LUAU_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(LUAU_BUILD_WEB OFF CACHE BOOL "" FORCE)
-set(LUAU_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-
-FetchContent_MakeAvailable(Luau)
-
 
 # ============================================================
 # LuaProtecter
@@ -52,7 +47,6 @@ add_executable(luaProtecter
     src/vm.hpp
 )
 
-
 # ============================================================
 # Include directories
 # ============================================================
@@ -63,24 +57,27 @@ target_include_directories(luaProtecter
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/VM/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Compiler/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Bytecode/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Ast/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Common/include
 )
 
-
 # ============================================================
-# Luau libraries
+# Link against the REAL Luau compiler + VM
 # ============================================================
 #
-# Luau's own CMake project creates these targets:
-#
-#   Luau.Compiler
-#   Luau.VM
+# Luau itself defines these targets in its CMake project.
 #
 # Compiler:
-#   source -> Luau bytecode
+#   Luau.Compiler
 #
-# VM:
-#   executes Luau bytecode
+# Runtime VM:
+#   Luau.VM
 #
+# ============================================================
 
 target_link_libraries(luaProtecter
     PRIVATE
@@ -89,64 +86,53 @@ target_link_libraries(luaProtecter
     Luau.VM
 )
 
-
 # ============================================================
 # Compiler warnings
 # ============================================================
 
 if(MSVC)
 
-    target_compile_options(luaProtecter
+    target_compile_options(
+        luaProtecter
         PRIVATE
         /W4
     )
 
 else()
 
-    target_compile_options(luaProtecter
+    target_compile_options(
+        luaProtecter
         PRIVATE
 
         -Wall
         -Wextra
         -Wpedantic
-
-        # Luau and some system headers can trigger these
-        # without representing an actual problem in our code.
-        -Wno-unused-parameter
     )
 
 endif()
 
-
 # ============================================================
-# Release optimization
+# Linux / Unix
 # ============================================================
 
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING
-        "Build type" FORCE)
-endif()
+if(UNIX AND NOT APPLE)
 
-
-if(NOT MSVC)
-
-    target_compile_options(luaProtecter
+    target_link_libraries(
+        luaProtecter
         PRIVATE
-
-        $<$<CONFIG:Release>:-O2>
-        $<$<CONFIG:RelWithDebInfo>:-O2>
+        pthread
     )
 
 endif()
-
 
 # ============================================================
 # Output
 # ============================================================
 
-set_target_properties(luaProtecter
+set_target_properties(
+    luaProtecter
     PROPERTIES
 
     RUNTIME_OUTPUT_DIRECTORY
-        ${CMAKE_BINARY_DIR}/bin
+    ${CMAKE_BINARY_DIR}/bin
 )
