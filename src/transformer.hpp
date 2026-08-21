@@ -5,5 +5,10 @@
 class Transformer
 {
 public:
-    std::string transform(const std::string& source);
+    Transformer() = default;
+
+    // Takes compiled Luau bytecode and returns the protected package.
+    std::string protect(
+        const std::string& bytecode
+    );
 };
