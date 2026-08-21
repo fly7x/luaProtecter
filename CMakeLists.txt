@@ -10,79 +10,40 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Luau
 # ------------------------------------------------------------
 
-set(LUAU_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(LUAU_BUILD_CLI OFF CACHE BOOL "" FORCE)
-set(LUAU_BUILD_WEB OFF CACHE BOOL "" FORCE)
-
 add_subdirectory(luau)
 
 # ------------------------------------------------------------
-# luaProtecter
+# LuaProtecter
 # ------------------------------------------------------------
 
 add_executable(luaProtecter
-
     src/main.cpp
-
     src/transformer.cpp
-    src/transformer.hpp
-
     src/bytecode.cpp
-    src/bytecode.hpp
-
     src/vm.cpp
-    src/vm.hpp
 )
-
-# ------------------------------------------------------------
-# Include directories
-# ------------------------------------------------------------
 
 target_include_directories(luaProtecter
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/luau/VM/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/luau/Compiler/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/luau/Common/include
 )
-
-# ------------------------------------------------------------
-# Luau libraries
-# ------------------------------------------------------------
 
 target_link_libraries(luaProtecter
     PRIVATE
-        Luau.VM
         Luau.Compiler
-        Luau.Ast
+        Luau.VM
 )
-
-# ------------------------------------------------------------
-# Compiler warnings
-# ------------------------------------------------------------
 
 if (MSVC)
-
-    target_compile_options(luaProtecter
-        PRIVATE
-            /W4
-    )
-
+    target_compile_options(luaProtecter PRIVATE /W4)
 else()
-
-    target_compile_options(luaProtecter
-        PRIVATE
-            -Wall
-            -Wextra
-            -Wpedantic
+    target_compile_options(luaProtecter PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
     )
-
 endif()
-
-# ------------------------------------------------------------
-# Runtime output
-# ------------------------------------------------------------
-
-set_target_properties(luaProtecter
-    PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY
-        ${CMAKE_BINARY_DIR}/bin
-)
