@@ -1,6 +1,6 @@
 #pragma once
 
-#include <string>
+#include "bytecode.hpp"
 
 class Transformer
 {
@@ -8,16 +8,15 @@ public:
     Transformer() = default;
 
     /*
-     * Takes REAL Luau bytecode and packages it for
-     * the custom VM/protection layer.
+     * Protect custom VM bytecode.
      *
      * Input:
-     *     Luau bytecode
+     *     LVM1 custom bytecode
      *
      * Output:
-     *     Protected custom VM package
+     *     LPRO protected package
      */
-    std::string protect(
-        const std::string& bytecode
+    Bytecode protect(
+        const Bytecode& bytecode
     );
 };
