@@ -1,9 +1,9 @@
 #include "transformer.hpp"
 
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <stdexcept>
-#include <string>
 #include <vector>
 
 namespace
@@ -11,32 +11,23 @@ namespace
     constexpr std::uint32_t MAGIC =
         0x4C50524Fu; // LPRO
 
-    constexpr std::uint8_t VERSION =
-        1;
+    constexpr std::uint8_t VERSION = 1;
 
-    constexpr std::size_t HEADER_SIZE =
-        20;
+    constexpr std::size_t HEADER_SIZE = 20;
 
     std::uint32_t random32()
     {
-        static std::random_device device;
+        static std::random_device rd;
 
         const std::uint32_t a =
-            static_cast<std::uint32_t>(
-                device()
-            );
+            static_cast<std::uint32_t>(rd());
 
         const std::uint32_t b =
-            static_cast<std::uint32_t>(
-                device()
-            );
+            static_cast<std::uint32_t>(rd());
 
         std::uint32_t value =
             a ^
-            (
-                b *
-                0x9E3779B9u
-            );
+            (b * 0x9E3779B9u);
 
         if (value == 0)
             value = 0xA341316Cu;
@@ -45,29 +36,29 @@ namespace
     }
 
     void writeU32(
-        std::vector<std::uint8_t>& output,
+        std::vector<std::uint8_t>& out,
         std::uint32_t value
     )
     {
-        output.push_back(
+        out.push_back(
             static_cast<std::uint8_t>(
                 value & 0xFFu
             )
         );
 
-        output.push_back(
+        out.push_back(
             static_cast<std::uint8_t>(
                 (value >> 8) & 0xFFu
             )
         );
 
-        output.push_back(
+        out.push_back(
             static_cast<std::uint8_t>(
                 (value >> 16) & 0xFFu
             )
         );
 
-        output.push_back(
+        out.push_back(
             static_cast<std::uint8_t>(
                 (value >> 24) & 0xFFu
             )
@@ -95,17 +86,19 @@ Bytecode Transformer::protect(
     const Bytecode& bytecode
 ) const
 {
-    if (bytecode.empty())
-        return {};
-
     const auto& input =
         bytecode.data();
 
+    if (input.empty())
+    {
+        throw std::runtime_error(
+            "Cannot protect empty bytecode"
+        );
+    }
+
     if (
         input.size() >
-        static_cast<std::size_t>(
-            UINT32_MAX
-        )
+        std::numeric_limits<std::uint32_t>::max()
     )
     {
         throw std::runtime_error(
@@ -124,20 +117,19 @@ Bytecode Transformer::protect(
     std::vector<std::uint8_t> output;
 
     output.reserve(
-        HEADER_SIZE +
-        input.size()
+        HEADER_SIZE + input.size()
     );
 
     /*
-     * Header
+     * Header:
      *
-     * 00: MAGIC
-     * 04: VERSION
-     * 05: KEY
-     * 06: RESERVED
-     * 08: SEED
-     * 0C: ORIGINAL SIZE
-     * 10: HASH
+     * 4  bytes MAGIC
+     * 1  byte  VERSION
+     * 1  byte  KEY
+     * 2  bytes RESERVED
+     * 4  bytes SEED
+     * 4  bytes SIZE
+     * 4  bytes HASH
      */
 
     writeU32(
@@ -174,7 +166,7 @@ Bytecode Transformer::protect(
     );
 
     /*
-     * Protected payload.
+     * Protected Luau bytecode.
      */
     for (
         std::size_t i = 0;
@@ -183,9 +175,7 @@ Bytecode Transformer::protect(
     )
     {
         const std::uint32_t position =
-            static_cast<std::uint32_t>(
-                i
-            );
+            static_cast<std::uint32_t>(i);
 
         const std::uint8_t mix =
             static_cast<std::uint8_t>(
