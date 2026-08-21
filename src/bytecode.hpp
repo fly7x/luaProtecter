@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 class Bytecode
@@ -11,8 +12,16 @@ public:
     explicit Bytecode(
         std::vector<std::uint8_t> data
     )
+        : data_(std::move(data))
+    {
+    }
+
+    explicit Bytecode(
+        const std::string& data
+    )
         : data_(
-            std::move(data)
+            data.begin(),
+            data.end()
         )
     {
     }
@@ -35,6 +44,16 @@ public:
     std::size_t size() const
     {
         return data_.size();
+    }
+
+    std::string toString() const
+    {
+        return std::string(
+            reinterpret_cast<const char*>(
+                data_.data()
+            ),
+            data_.size()
+        );
     }
 
 private:
