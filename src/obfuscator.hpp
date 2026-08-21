@@ -1,22 +1,38 @@
 #pragma once
 
-#include <string>
+#include "bytecode.hpp"
+
+#include <cstdint>
+#include <vector>
 
 class Obfuscator
 {
 public:
-    Obfuscator() = default;
 
-    std::string transform(
-        const std::string& source
+    Obfuscator();
+
+    /*
+     * Transform Luau bytecode while preserving the
+     * bytecode's original semantics.
+     *
+     * This layer intentionally operates on bytes instead
+     * of trying to reimplement the Luau compiler.
+     */
+    Bytecode transform(
+        const Bytecode& input
     ) const;
 
 private:
-    std::string obfuscateStrings(
-        const std::string& source
-    ) const;
 
-    std::string minify(
-        const std::string& source
-    ) const;
+    std::uint32_t seed_;
+
+    static std::uint32_t mix32(
+        std::uint32_t value
+    );
+
+    static std::uint8_t transformByte(
+        std::uint8_t value,
+        std::size_t index,
+        std::uint32_t seed
+    );
 };
