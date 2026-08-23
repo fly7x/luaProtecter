@@ -1,606 +1,303 @@
 #include "virtualizer.hpp"
 
 #include <algorithm>
-#include <cctype>
+#include <array>
 #include <iomanip>
 #include <random>
 #include <sstream>
 #include <stdexcept>
-#include <unordered_set>
 
-namespace
+namespace Protect
 {
-    bool isIdentifierStart(char c)
+    namespace
     {
-        return
-            std::isalpha(
-                static_cast<unsigned char>(c)
-            ) ||
-            c == '_';
-    }
+        constexpr std::uint64_t MASK =
+            0x9e3779b97f4a7c15ULL;
 
-    bool isIdentifierPart(char c)
-    {
-        return
-            std::isalnum(
-                static_cast<unsigned char>(c)
-            ) ||
-            c == '_';
-    }
+        constexpr std::uint32_t MAGIC =
+            0x56584c50; // PLXV
 
-    bool isKeyword(const std::string& s)
-    {
-        static const std::unordered_set<std::string>
-            keywords =
+        std::uint32_t rotl(
+            std::uint32_t x,
+            unsigned r
+        )
         {
-            "and",
-            "break",
-            "do",
-            "else",
-            "elseif",
-            "end",
-            "false",
-            "for",
-            "function",
-            "if",
-            "in",
-            "local",
-            "nil",
-            "not",
-            "or",
-            "repeat",
-            "return",
-            "then",
-            "true",
-            "until",
-            "while",
-            "continue",
+            r &= 31;
 
-            "type",
-            "export",
-            "typeof"
-        };
+            if (r == 0)
+                return x;
 
-        return keywords.count(s) != 0;
+            return
+                (x << r) |
+                (x >> (32 - r));
+        }
+
+        std::uint32_t avalanche(
+            std::uint32_t x
+        )
+        {
+            x ^= x >> 16;
+            x *= 0x7feb352dU;
+            x ^= x >> 15;
+            x *= 0x846ca68bU;
+            x ^= x >> 16;
+
+            return x;
+        }
     }
 
-    std::string escapeLuauString(
-        const std::string& input
+    Virtualizer::Virtualizer(
+        std::uint64_t seed
+    )
+        : seed_(seed)
+    {
+        if (seed_ == 0)
+            seed_ = MASK;
+    }
+
+    std::uint32_t Virtualizer::readU32(
+        const std::string& data,
+        std::size_t& offset
     )
     {
-        std::string out;
-
-        for (unsigned char c : input)
+        if (
+            offset + 4 >
+            data.size()
+        )
         {
-            switch (c)
-            {
-                case '\\':
-                    out += "\\\\";
-                    break;
-
-                case '"':
-                    out += "\\\"";
-                    break;
-
-                case '\n':
-                    out += "\\n";
-                    break;
-
-                case '\r':
-                    out += "\\r";
-                    break;
-
-                case '\t':
-                    out += "\\t";
-                    break;
-
-                default:
-                    out += static_cast<char>(c);
-                    break;
-            }
+            throw std::runtime_error(
+                "Truncated Luau bytecode"
+            );
         }
 
-        return out;
+        const auto* p =
+            reinterpret_cast<
+                const unsigned char*
+            >(
+                data.data() + offset
+            );
+
+        const std::uint32_t result =
+            static_cast<std::uint32_t>(p[0]) |
+            (static_cast<std::uint32_t>(p[1]) << 8) |
+            (static_cast<std::uint32_t>(p[2]) << 16) |
+            (static_cast<std::uint32_t>(p[3]) << 24);
+
+        offset += 4;
+
+        return result;
     }
-}
 
-Virtualizer::Virtualizer(
-    std::uint64_t seedValue
-)
-    : seed(seedValue)
-{
-}
-
-std::uint64_t Virtualizer::nextRandom()
-{
-    /*
-     * xorshift64*
-     *
-     * Fast deterministic PRNG used only to make
-     * generated identifiers/opcodes differ between builds.
-     */
-    std::uint64_t x = seed;
-
-    x ^= x >> 12;
-    x ^= x << 25;
-    x ^= x >> 27;
-
-    seed = x;
-
-    return x * 2685821657736338717ULL;
-}
-
-std::string Virtualizer::identifier()
-{
-    static constexpr char alphabet[] =
-        "abcdefghijklmnopqrstuvwxyz"
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
-    const std::size_t length =
-        7 +
-        static_cast<std::size_t>(
-            nextRandom() % 7
+    std::uint8_t Virtualizer::opcode(
+        std::uint32_t instruction
+    )
+    {
+        return static_cast<std::uint8_t>(
+            instruction & 0xff
         );
-
-    std::string result;
-
-    result.reserve(length);
-
-    result +=
-        alphabet[
-            nextRandom() %
-            (sizeof(alphabet) - 1)
-        ];
-
-    for (std::size_t i = 1; i < length; ++i)
-    {
-        result +=
-            alphabet[
-                nextRandom() %
-                (sizeof(alphabet) - 1)
-            ];
     }
 
-    if (isKeyword(result))
-        return identifier();
-
-    return result;
-}
-
-std::string Virtualizer::encodeString(
-    const std::string& value
-)
-{
-    /*
-     * Store the characters as arithmetic expressions
-     * rather than leaving the original literal visible.
-     *
-     * Example:
-     *
-     * "abc"
-     *
-     * becomes something conceptually equivalent to:
-     *
-     * string.char(...)
-     */
-    std::ostringstream out;
-
-    out << "string.char(";
-
-    for (std::size_t i = 0;
-         i < value.size();
-         ++i)
+    std::uint8_t Virtualizer::A(
+        std::uint32_t instruction
+    )
     {
-        if (i != 0)
-            out << ",";
-
-        const unsigned int character =
-            static_cast<unsigned int>(
-                static_cast<unsigned char>(
-                    value[i]
-                )
-            );
-
-        const unsigned int mask =
-            1 +
-            static_cast<unsigned int>(
-                nextRandom() % 251
-            );
-
-        const unsigned int encoded =
-            character ^ mask;
-
-        out
-            << "("
-            << encoded
-            << "^"
-            << mask
-            << ")";
+        return static_cast<std::uint8_t>(
+            (instruction >> 8) & 0xff
+        );
     }
 
-    out << ")";
+    std::uint8_t Virtualizer::B(
+        std::uint32_t instruction
+    )
+    {
+        return static_cast<std::uint8_t>(
+            (instruction >> 16) & 0xff
+        );
+    }
 
-    return out.str();
-}
+    std::uint8_t Virtualizer::C(
+        std::uint32_t instruction
+    )
+    {
+        return static_cast<std::uint8_t>(
+            (instruction >> 24) & 0xff
+        );
+    }
 
-std::string Virtualizer::encodeNumber(
-    const std::string& value
-)
-{
-    /*
-     * Only transform plain integer literals.
-     */
-    if (value.empty())
+    std::int16_t Virtualizer::D(
+        std::uint32_t instruction
+    )
+    {
+        return static_cast<std::int16_t>(
+            (instruction >> 16) & 0xffff
+        );
+    }
+
+    std::int32_t Virtualizer::E(
+        std::uint32_t instruction
+    )
+    {
+        std::uint32_t value =
+            (instruction >> 8) & 0x00ffffff;
+
+        if (value & 0x00800000)
+            value |= 0xff000000;
+
+        return static_cast<std::int32_t>(
+            value
+        );
+    }
+
+    std::uint64_t Virtualizer::nextKey(
+        std::uint64_t value
+    ) const
+    {
+        value +=
+            0x9e3779b97f4a7c15ULL;
+
+        value ^= value >> 30;
+        value *= 0xbf58476d1ce4e5b9ULL;
+
+        value ^= value >> 27;
+        value *= 0x94d049bb133111ebULL;
+
+        value ^= value >> 31;
+
         return value;
+    }
 
-    for (char c : value)
+    std::uint32_t Virtualizer::mix(
+        std::uint32_t value,
+        std::uint64_t key
+    ) const
     {
-        if (!std::isdigit(
-                static_cast<unsigned char>(c)
-            ))
+        std::uint32_t k =
+            static_cast<std::uint32_t>(
+                key
+            ) ^
+            static_cast<std::uint32_t>(
+                key >> 32
+            );
+
+        value ^= k;
+        value = rotl(value, k & 31);
+        value += 0x6d2b79f5U;
+
+        return avalanche(value);
+    }
+
+    VirtualProgram Virtualizer::virtualize(
+        const std::string& bytecode,
+        const Options& options
+    ) const
+    {
+        if (bytecode.empty())
         {
-            return value;
-        }
-    }
-
-    try
-    {
-        const long long original =
-            std::stoll(value);
-
-        const long long mask =
-            3 +
-            static_cast<long long>(
-                nextRandom() % 997
+            throw std::runtime_error(
+                "Empty Luau bytecode"
             );
+        }
 
-        const long long encoded =
-            original + mask;
+        VirtualProgram program;
 
-        return
-            "(" +
-            std::to_string(encoded) +
-            "-" +
-            std::to_string(mask) +
-            ")";
-    }
-    catch (...)
-    {
-        return value;
-    }
-}
-
-std::vector<std::string>
-Virtualizer::buildInstructions(
-    const std::string& source
-)
-{
-    /*
-     * This stage deliberately keeps the original
-     * semantics intact.
-     *
-     * Each source fragment becomes a VM instruction.
-     *
-     * The generated dispatcher later executes these
-     * fragments in sequence.
-     */
-
-    std::vector<std::string> instructions;
-
-    std::string current;
-
-    char quote = 0;
-    bool escaped = false;
-
-    int depth = 0;
-
-    for (std::size_t i = 0;
-         i < source.size();
-         ++i)
-    {
-        const char c = source[i];
+        program.version = 1;
+        program.key = seed_;
 
         /*
-         * Preserve strings as atomic fragments.
+         * The first four bytes of serialized Luau bytecode
+         * are the bytecode magic.
+         *
+         * Do not silently interpret an arbitrary string as
+         * Luau bytecode.
          */
-        if (quote != 0)
+        if (bytecode.size() < 4)
         {
-            current += c;
-
-            if (escaped)
-            {
-                escaped = false;
-                continue;
-            }
-
-            if (c == '\\')
-            {
-                escaped = true;
-                continue;
-            }
-
-            if (c == quote)
-                quote = 0;
-
-            continue;
+            throw std::runtime_error(
+                "Invalid Luau bytecode"
+            );
         }
 
-        if (c == '"' || c == '\'')
-        {
-            quote = c;
-            current += c;
-            continue;
-        }
+        std::size_t offset = 0;
 
-        if (c == '(' ||
-            c == '{' ||
-            c == '[')
-        {
-            ++depth;
-            current += c;
-            continue;
-        }
+        const std::uint32_t magic =
+            readU32(
+                bytecode,
+                offset
+            );
 
-        if (c == ')' ||
-            c == '}' ||
-            c == ']')
+        /*
+         * Luau's serialized bytecode starts with
+         * "\x1bLua" in the current format.
+         */
+        if (magic != 0x61754c1b)
         {
-            if (depth > 0)
-                --depth;
-
-            current += c;
-            continue;
+            throw std::runtime_error(
+                "Input is not serialized Luau bytecode"
+            );
         }
 
         /*
-         * Split on statement boundaries only when we're
-         * not inside an expression.
+         * The complete serialized Luau format contains
+         * proto metadata and multiple variable-size
+         * sections. It must be decoded according to the
+         * exact Luau checkout being used.
+         *
+         * We deliberately do not pretend that the rest of
+         * the blob is a flat instruction array.
          */
-        if (
-            c == '\n' &&
-            depth == 0
-        )
+        (void)offset;
+
+        /*
+         * This backend therefore refuses to generate a
+         * corrupted pseudo-program until the exact Luau
+         * bytecode version/parser is wired in.
+         */
+        if (options.encodeInstructions)
         {
-            if (!current.empty())
-            {
-                instructions.push_back(
-                    current
-                );
-
-                current.clear();
-            }
-
-            continue;
+            throw std::runtime_error(
+                "Luau bytecode decoder must be bound to the "
+                "exact third_party/luau bytecode version"
+            );
         }
 
-        current += c;
+        return program;
     }
 
-    if (!current.empty())
-        instructions.push_back(current);
-
-    /*
-     * Remove completely empty instructions.
-     */
-    instructions.erase(
-        std::remove_if(
-            instructions.begin(),
-            instructions.end(),
-            [](const std::string& value)
-            {
-                return std::all_of(
-                    value.begin(),
-                    value.end(),
-                    [](char c)
-                    {
-                        return std::isspace(
-                            static_cast<unsigned char>(
-                                c
-                            )
-                        );
-                    }
-                );
-            }
-        ),
-        instructions.end()
-    );
-
-    return instructions;
-}
-
-std::string Virtualizer::generateDispatcher(
-    const std::vector<std::string>& instructions
-)
-{
-    const std::string vm =
-        identifier();
-
-    const std::string state =
-        identifier();
-
-    const std::string table =
-        identifier();
-
-    const std::string handler =
-        identifier();
-
-    const std::string dispatch =
-        identifier();
-
-    const std::string value =
-        identifier();
-
-    std::ostringstream out;
-
-    /*
-     * Generated VM state.
-     */
-    out
-        << "local "
-        << vm
-        << "={}\n";
-
-    /*
-     * Instruction table.
-     *
-     * Each entry contains a state and a function.
-     */
-    out
-        << "local "
-        << table
-        << "={}\n";
-
-    /*
-     * Randomized state IDs.
-     */
-    std::vector<std::uint64_t> states;
-
-    states.reserve(
-        instructions.size()
-    );
-
-    for (std::size_t i = 0;
-         i < instructions.size();
-         ++i)
+    std::string Virtualizer::emitLuau(
+        const VirtualProgram& program
+    ) const
     {
-        std::uint64_t id =
-            nextRandom();
+        std::ostringstream out;
 
-        id =
-            (id % 900000) +
-            100000;
+        out <<
+            "-- generated LuaProtecter runtime\n"
+            "local __k=" <<
+            program.key <<
+            "\n";
 
-        states.push_back(id);
+        out <<
+            "local function __mix(x,k)\n"
+            "    x=x~k\n"
+            "    x=((x<<((k%31)+1))|(x>>"
+            "(32-((k%31)+1))))\n"
+            "    return x\n"
+            "end\n";
+
+        out <<
+            "local function __run(p)\n"
+            "    local pc=1\n"
+            "    while true do\n"
+            "        local i=p[pc]\n"
+            "        if not i then error('VM bounds') end\n"
+            "        local op=i[1]\n"
+            "        if op==0 then return end\n"
+            "        pc=pc+1\n"
+            "    end\n"
+            "end\n";
+
+        out <<
+            "return __run({})\n";
+
+        return out.str();
     }
-
-    /*
-     * Generate handlers.
-     */
-    for (std::size_t i = 0;
-         i < instructions.size();
-         ++i)
-    {
-        const std::string handlerName =
-            identifier();
-
-        out
-            << "local "
-            << handlerName
-            << "=function()\n";
-
-        out
-            << instructions[i]
-            << "\n";
-
-        if (
-            i + 1 <
-            instructions.size()
-        )
-        {
-            out
-                << vm
-                << "."
-                << state
-                << "="
-                << states[i + 1]
-                << "\n";
-        }
-        else
-        {
-            out
-                << vm
-                << "."
-                << state
-                << "=nil\n";
-        }
-
-        out
-            << "end\n";
-
-        out
-            << table
-            << "["
-            << states[i]
-            << "]="
-            << handlerName
-            << "\n";
-    }
-
-    if (instructions.empty())
-    {
-        return {};
-    }
-
-    /*
-     * Initial state.
-     */
-    out
-        << vm
-        << "."
-        << state
-        << "="
-        << states.front()
-        << "\n";
-
-    /*
-     * Dispatcher.
-     */
-    out
-        << "while "
-        << vm
-        << "."
-        << state
-        << "~=nil do\n";
-
-    out
-        << "local "
-        << handler
-        << "="
-        << table
-        << "["
-        << vm
-        << "."
-        << state
-        << "]\n";
-
-    out
-        << "if "
-        << handler
-        << "==nil then break end\n";
-
-    out
-        << handler
-        << "()\n";
-
-    out
-        << "end\n";
-
-    return out.str();
-}
-
-std::string Virtualizer::generate(
-    const std::string& source,
-    const Options& options
-)
-{
-    if (source.empty())
-        throw std::runtime_error(
-            "Cannot virtualize empty source"
-        );
-
-    /*
-     * Build the VM instruction representation.
-     */
-    const std::vector<std::string> instructions =
-        buildInstructions(source);
-
-    if (!options.virtualize)
-        return source;
-
-    /*
-     * Emit the generated Luau dispatcher.
-     */
-    return generateDispatcher(
-        instructions
-    );
 }
