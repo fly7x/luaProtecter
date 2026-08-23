@@ -8,16 +8,23 @@ class VM
 {
 public:
     VM() = default;
+    ~VM() = default;
+
+    VM(const VM&) = delete;
+    VM& operator=(const VM&) = delete;
+
+    VM(VM&&) = default;
+    VM& operator=(VM&&) = default;
 
     /*
-     * Executes protected Luau bytecode.
+     * Executes REAL Luau bytecode using the Luau VM
+     * provided by third_party/luau.
      *
-     * The VM first validates and unwraps the protected
-     * package, then passes the recovered Luau bytecode
-     * to the Luau runtime.
+     * Returns:
+     *   true  = execution succeeded
+     *   false = load/runtime failure
      *
-     * Returns true when execution succeeds.
-     * Returns false when validation/execution fails.
+     * output contains the error when false.
      */
     bool execute(
         const Bytecode& bytecode,
