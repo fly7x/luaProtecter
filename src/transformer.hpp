@@ -1,6 +1,6 @@
 #pragma once
 
-#include "bytecode.hpp"
+#include <string>
 
 class Transformer
 {
@@ -8,11 +8,11 @@ public:
     Transformer() = default;
 
     /*
-     * Compile/protect the supplied Luau source.
+     * Transform Luau source into valid, obfuscated Luau source.
      *
-     * Returns the final protected representation.
+     * The returned value is SOURCE CODE, not binary bytecode.
      */
-    Bytecode protect(
-        const Bytecode& bytecode
+    std::string protect(
+        const std::string& source
     ) const;
 };
