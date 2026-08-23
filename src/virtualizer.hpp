@@ -4,62 +4,94 @@
 #include <string>
 #include <vector>
 
-class Virtualizer
+namespace Protect
 {
-public:
-    struct Options
+    struct VirtualInstruction
     {
-        bool renameIdentifiers = true;
-        bool encodeStrings = true;
-        bool encodeNumbers = true;
-        bool removeComments = true;
-
-        /*
-         * Generate a Luau dispatcher around the protected
-         * representation.
-         */
-        bool virtualize = true;
-
-        /*
-         * Randomize the generated VM every build.
-         */
-        bool polymorphic = true;
-
-        /*
-         * Add harmless decoy VM instructions.
-         */
-        bool decoys = true;
+        std::uint8_t opcode = 0;
+        std::uint8_t a = 0;
+        std::uint8_t b = 0;
+        std::uint8_t c = 0;
+        std::int32_t d = 0;
+        std::int32_t e = 0;
+        std::uint32_t aux = 0;
+        bool hasAux = false;
     };
 
-    explicit Virtualizer(
-        std::uint64_t seed
-    );
+    struct VirtualProgram
+    {
+        std::uint32_t version = 1;
+        std::uint64_t key = 0;
 
-    std::string generate(
-        const std::string& source,
-        const Options& options = {}
-    );
+        std::vector<VirtualInstruction> instructions;
+        std::vector<std::string> strings;
+        std::vector<double> numbers;
+    };
 
-private:
-    std::uint64_t seed;
+    class Virtualizer
+    {
+    public:
+        struct Options
+        {
+            bool encryptConstants = true;
+            bool shuffleOpcodes = true;
+            bool remapRegisters = true;
+            bool encodeInstructions = true;
+            bool polymorphic = true;
+        };
 
-    std::uint64_t nextRandom();
+        explicit Virtualizer(
+            std::uint64_t seed
+        );
 
-    std::string identifier();
+        VirtualProgram virtualize(
+            const std::string& luauBytecode,
+            const Options& options
+        ) const;
 
-    std::string encodeString(
-        const std::string& value
-    );
+        std::string emitLuau(
+            const VirtualProgram& program
+        ) const;
 
-    std::string encodeNumber(
-        const std::string& value
-    );
+    private:
+        std::uint64_t seed_;
 
-    std::string generateDispatcher(
-        const std::vector<std::string>& instructions
-    );
+        static std::uint32_t readU32(
+            const std::string& data,
+            std::size_t& offset
+        );
 
-    std::vector<std::string> buildInstructions(
-        const std::string& source
-    );
-};
+        static std::uint8_t opcode(
+            std::uint32_t instruction
+        );
+
+        static std::uint8_t A(
+            std::uint32_t instruction
+        );
+
+        static std::uint8_t B(
+            std::uint32_t instruction
+        );
+
+        static std::uint8_t C(
+            std::uint32_t instruction
+        );
+
+        static std::int16_t D(
+            std::uint32_t instruction
+        );
+
+        static std::int32_t E(
+            std::uint32_t instruction
+        );
+
+        std::uint64_t nextKey(
+            std::uint64_t value
+        ) const;
+
+        std::uint32_t mix(
+            std::uint32_t value,
+            std::uint64_t key
+        ) const;
+    };
+}
