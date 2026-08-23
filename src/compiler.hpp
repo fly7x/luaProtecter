@@ -1,17 +1,28 @@
 #pragma once
 
-#include "bytecode.hpp"
-
+#include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 class Compiler
 {
 public:
+    struct Result
+    {
+        bool success = false;
+        std::vector<std::uint8_t> bytecode;
+        std::string error;
+    };
+
     Compiler() = default;
 
-    // Compile Luau source using the Luau compiler
-    // already present in third_party/luau.
-    Bytecode compile(
+    Result compile(
         const std::string& source
     ) const;
+
+private:
+    static std::string decodeCompileError(
+        const std::vector<std::uint8_t>& bytecode
+    );
 };
