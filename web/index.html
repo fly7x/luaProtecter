@@ -1,222 +1,38 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
     <title>LuaProtecter</title>
-
     <link rel="stylesheet" href="/style.css">
 </head>
-
 <body>
-
-<div class="background"></div>
-
-<header class="navbar">
-    <div class="brand">
-        <div class="brand-icon">LP</div>
-
-        <div>
-            <div class="brand-name">LuaProtecter</div>
-            <div class="brand-subtitle">
-                Luau code protection
-            </div>
-        </div>
-    </div>
-
-    <div class="status">
-        <span class="status-dot"></span>
-        <span>Online</span>
-    </div>
-</header>
-
-<main class="container">
-
-    <section class="hero">
-        <div class="badge">
-            PRIVATE OBFUSCATOR
-        </div>
-
-        <h1>
-            Protect your Luau.
-        </h1>
-
-        <p>
-            Transform Luau source into a harder-to-read
-            protected representation while keeping the
-            original workflow simple.
-        </p>
-    </section>
-
-    <section class="workspace">
-
-        <div class="panel">
-
-            <div class="panel-header">
-                <div>
-                    <h2>Source</h2>
-                    <span>Paste your Luau script</span>
-                </div>
-
-                <button
-                    id="clearButton"
-                    class="secondary-button"
-                >
-                    Clear
-                </button>
-            </div>
-
-            <textarea
-                id="source"
-                spellcheck="false"
-                placeholder="-- Paste your Luau code here
-
-local function hello(name)
-    print('Hello ' .. name)
+    <h1>🔒 LuaProtecter</h1>
+    <p>Protect your Luau scripts with a custom VM and bytecode encryption</p>
+    
+    <div class="row">
+        <div class="col">
+            <h3>Input</h3>
+            <textarea id="source" rows="12" placeholder="Paste your Luau source...">local function greet(name)
+    print("Hello, " .. name .. "!")
 end
-
-hello('World')"
-            ></textarea>
-
+greet("World")</textarea>
         </div>
-
-        <div class="options">
-
-            <div class="option-title">
-                Protection
-            </div>
-
-            <label class="option">
-                <input
-                    id="rename"
-                    type="checkbox"
-                    checked
-                >
-
-                <span>
-                    <strong>Identifier protection</strong>
-                    <small>Rename local identifiers</small>
-                </span>
-            </label>
-
-            <label class="option">
-                <input
-                    id="strings"
-                    type="checkbox"
-                    checked
-                >
-
-                <span>
-                    <strong>String protection</strong>
-                    <small>Transform string constants</small>
-                </span>
-            </label>
-
-            <label class="option">
-                <input
-                    id="constants"
-                    type="checkbox"
-                    checked
-                >
-
-                <span>
-                    <strong>Constant protection</strong>
-                    <small>Transform constant values</small>
-                </span>
-            </label>
-
-            <label class="option">
-                <input
-                    id="controlFlow"
-                    type="checkbox"
-                    checked
-                >
-
-                <span>
-                    <strong>Control-flow protection</strong>
-                    <small>Increase structural complexity</small>
-                </span>
-            </label>
-
-            <label class="option">
-                <input
-                    id="deadCode"
-                    type="checkbox"
-                    checked
-                >
-
-                <span>
-                    <strong>Dead-code protection</strong>
-                    <small>Add analysis noise where supported</small>
-                </span>
-            </label>
-
-            <div class="option-title vm-title">
-                Virtualization
-            </div>
-
-            <select id="vmMode">
-                <option value="none">
-                    Direct protected output
-                </option>
-
-                <option value="vm">
-                    Custom VM
-                </option>
-            </select>
-
-            <button
-                id="protectButton"
-                class="protect-button"
-            >
-                <span id="buttonText">
-                    Protect Script
-                </span>
-
-                <span
-                    id="spinner"
-                    class="spinner hidden"
-                ></span>
-            </button>
-
+        <div class="col">
+            <h3>Output</h3>
+            <textarea id="output" rows="12" readonly placeholder="Protected script will appear here..."></textarea>
         </div>
-
-        <div class="panel output-panel">
-
-            <div class="panel-header">
-                <div>
-                    <h2>Protected output</h2>
-                    <span id="outputStatus">
-                        Nothing generated yet
-                    </span>
-                </div>
-
-                <button
-                    id="copyButton"
-                    class="secondary-button"
-                >
-                    Copy
-                </button>
-            </div>
-
-            <textarea
-                id="output"
-                spellcheck="false"
-                readonly
-                placeholder="Your protected Luau will appear here..."
-            ></textarea>
-
-        </div>
-
-    </section>
-
-</main>
-
-<script src="/app.js"></script>
-
+    </div>
+    
+    <div class="controls">
+        <label><input type="checkbox" id="vmMode" checked> VM Mode</label>
+        <label><input type="checkbox" id="polymorphic" checked> Polymorphic</label>
+    </div>
+    
+    <div class="flex">
+        <button id="protectButton"><span id="buttonText">⚡ Protect</span><span id="spinner" class="hidden">⏳</span></button>
+        <button id="clearButton" class="secondary">Clear</button>
+        <button id="copyButton" class="secondary">Copy</button>
+        <span id="status">Ready</span>
+    </div>
+    <script src="/app.js"></script>
 </body>
 </html>
