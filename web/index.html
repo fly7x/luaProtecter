@@ -1,38 +1,45 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LuaProtecter</title>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <h1>🔒 LuaProtecter</h1>
-    <p>Protect your Luau scripts with a custom VM and bytecode encryption</p>
-    
-    <div class="row">
-        <div class="col">
-            <h3>Input</h3>
-            <textarea id="source" rows="12" placeholder="Paste your Luau source...">local function greet(name)
+    <header>
+        <h1>🔒 LuaProtecter</h1>
+        <p>Protect your Luau scripts with a custom VM &amp; bytecode encryption</p>
+    </header>
+
+    <main>
+        <div class="row">
+            <div class="col">
+                <h3>📝 Input</h3>
+                <textarea id="source" rows="12" placeholder="Paste your Luau source here...">local function greet(name)
     print("Hello, " .. name .. "!")
 end
 greet("World")</textarea>
+            </div>
+            <div class="col">
+                <h3>🛡️ Output</h3>
+                <textarea id="output" rows="12" readonly placeholder="Protected script will appear here..."></textarea>
+            </div>
         </div>
-        <div class="col">
-            <h3>Output</h3>
-            <textarea id="output" rows="12" readonly placeholder="Protected script will appear here..."></textarea>
+
+        <div class="controls">
+            <label><input type="checkbox" id="vmMode" checked> VM Mode</label>
+            <label><input type="checkbox" id="polymorphic" checked> Polymorphic</label>
         </div>
-    </div>
-    
-    <div class="controls">
-        <label><input type="checkbox" id="vmMode" checked> VM Mode</label>
-        <label><input type="checkbox" id="polymorphic" checked> Polymorphic</label>
-    </div>
-    
-    <div class="flex">
-        <button id="protectButton"><span id="buttonText">⚡ Protect</span><span id="spinner" class="hidden">⏳</span></button>
-        <button id="clearButton" class="secondary">Clear</button>
-        <button id="copyButton" class="secondary">Copy</button>
-        <span id="status">Ready</span>
-    </div>
+
+        <div class="actions">
+            <button id="protectButton"><span id="buttonText">⚡ Protect</span><span id="spinner" class="hidden">⏳</span></button>
+            <button id="clearButton" class="secondary">Clear</button>
+            <button id="copyButton" class="secondary">Copy</button>
+            <span id="status">Ready</span>
+        </div>
+    </main>
+
     <script src="/app.js"></script>
 </body>
 </html>
