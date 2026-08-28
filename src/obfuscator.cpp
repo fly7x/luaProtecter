@@ -1,4 +1,6 @@
 #include "obfuscator.hpp"
+#include <random>
+#include <chrono>
 #include <cstring>
 #include <limits>
 
@@ -10,9 +12,7 @@ namespace {
         std::random_device rd;
         uint32_t a = static_cast<uint32_t>(rd());
         uint32_t b = static_cast<uint32_t>(rd());
-        auto now = std::chrono::high_resolution_clock::now()
-            .time_since_epoch()
-            .count();
+        auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
         uint64_t ts = static_cast<uint64_t>(now);
         uint32_t seed = a ^ (b * 0x9E3779B9u) ^ static_cast<uint32_t>(ts) ^ static_cast<uint32_t>(ts >> 32);
         if (seed == 0) seed = 0xA341316Cu;
