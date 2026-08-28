@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <sstream>
 #include <filesystem>
+#include <cctype>
 
 namespace fs = std::filesystem;
 
@@ -15,7 +16,7 @@ constexpr int PORT = 10000;
 constexpr int BACKLOG = 32;
 const std::string WEB_ROOT = "web/";
 
-// Helper to check suffix (C++17 compatible)
+// ---------- Helpers ----------
 static bool hasSuffix(const std::string& str, const std::string& suffix) {
     if (str.size() < suffix.size()) return false;
     return str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
@@ -53,6 +54,47 @@ std::string jsonEscape(const std::string& s) {
     return out;
 }
 
+// ---------- JSON parser (simple, extracts string value for a key) ----------
+static std::string extractJsonString(const std::string& json, const std::string& key) {
+    std::string search = "\"" + key + "\"";
+    size_t keyPos = json.find(search);
+    if (keyPos == std::string::npos) return "";
+
+    size_t colon = json.find(':', keyPos + search.size());
+    if (colon == std::string::npos) return "";
+
+    size_t start = colon + 1;
+    while (start < json.size() && std::isspace(json[start])) start++;
+    if (start >= json.size() || json[start] != '"') return "";
+
+    start++; // skip opening quote
+    std::string result;
+    bool escaped = false;
+    for (size_t i = start; i < json.size(); ++i) {
+        char c = json[i];
+        if (escaped) {
+            switch (c) {
+                case 'n': result += '\n'; break;
+                case 'r': result += '\r'; break;
+                case 't': result += '\t'; break;
+                case '\\': result += '\\'; break;
+                case '"': result += '"'; break;
+                default: result += c; break;
+            }
+            escaped = false;
+            continue;
+        }
+        if (c == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (c == '"') break; // end of string
+        result += c;
+    }
+    return result;
+}
+
+// ---------- Request handler ----------
 void handleClient(int clientFd) {
     char buffer[65536];
     ssize_t n = read(clientFd, buffer, sizeof(buffer) - 1);
@@ -89,40 +131,28 @@ void handleClient(int clientFd) {
             if (bodyStart == std::string::npos) throw std::runtime_error("Malformed request");
             std::string body = request.substr(bodyStart + 4);
 
-            // Extract JSON source
-            std::string key = "\"code\"";
-            size_t keyPos = body.find(key);
-            if (keyPos == std::string::npos) throw std::runtime_error("Missing 'code' field");
-            size_t colon = body.find(':', keyPos + key.size());
-            if (colon == std::string::npos) throw std::runtime_error("Invalid JSON");
-            size_t start = colon + 1;
-            while (start < body.size() && (body[start] == ' ' || body[start] == '\t' || body[start] == '\r' || body[start] == '\n')) start++;
-            if (start >= body.size() || body[start] != '"') throw std::runtime_error("Code must be a string");
-            start++;
-            std::string code;
-            bool escaped = false;
-            while (start < body.size()) {
-                char c = body[start++];
-                if (escaped) {
-                    if (c == 'n') code += '\n';
-                    else if (c == 'r') code += '\r';
-                    else if (c == 't') code += '\t';
-                    else if (c == '\\') code += '\\';
-                    else if (c == '"') code += '"';
-                    else code += c;
-                    escaped = false;
-                    continue;
-                }
-                if (c == '\\') { escaped = true; continue; }
-                if (c == '"') break;
-                code += c;
-            }
+            // Extract "code" field
+            std::string code = extractJsonString(body, "code");
+            if (code.empty()) throw std::runtime_error("Missing or empty 'code' field");
 
-            // Obfuscate
+            // Extract options if present (optional)
+            bool vmMode = true;
+            bool polymorphic = true;
+            std::string vmStr = extractJsonString(body, "vm");
+            if (vmStr == "false") vmMode = false;
+            std::string polyStr = extractJsonString(body, "polymorphic");
+            if (polyStr == "false") polymorphic = false;
+
             Transformer transformer;
             Transformer::Options opts;
-            opts.virtualize = true;
-            opts.polymorphic = true;
+            opts.virtualize = vmMode;
+            opts.polymorphic = polymorphic;
+            opts.renameIdentifiers = true;
+            opts.encodeStrings = true;
+            opts.encodeNumbers = true;
+            opts.removeComments = true;
+            opts.decoys = true;
+
             std::string protectedCode = transformer.protect(code, opts);
 
             std::stringstream ss;
@@ -167,7 +197,10 @@ int main(int argc, char* argv[]) {
         in.close();
         try {
             Transformer transformer;
-            std::string protectedCode = transformer.protect(source);
+            Transformer::Options opts;
+            opts.virtualize = true;
+            opts.polymorphic = true;
+            std::string protectedCode = transformer.protect(source, opts);
             std::ofstream out(outputFile);
             if (!out.is_open()) {
                 std::cerr << "Cannot write output: " << outputFile << std::endl;
