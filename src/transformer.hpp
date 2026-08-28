@@ -1,6 +1,5 @@
 #pragma once
 
-#include "virtualizer.hpp"
 #include <string>
 #include <cstdint>
 
@@ -11,16 +10,16 @@ public:
         bool encodeStrings = true;
         bool encodeNumbers = true;
         bool removeComments = true;
-        bool virtualize = true;
+        bool virtualize = true;       // Use VM
         bool polymorphic = true;
         bool decoys = true;
-        uint64_t seed = 0;  // 0 means generate fresh
+        uint64_t seed = 0;
     };
     
     Transformer();
     explicit Transformer(uint64_t seed);
     
-    // Transform valid Luau source into protected Roblox-compatible Luau source
+    // Main entry: protects a Luau source string
     std::string protect(const std::string& source) const;
     std::string protect(const std::string& source, const Options& options) const;
     
@@ -28,7 +27,4 @@ private:
     uint64_t seed_;
     
     uint64_t generateSeed() const;
-    std::string validateLuau(const std::string& source) const;
-    std::string normalize(const std::string& source) const;
-    std::string transform(const std::string& source, const Options& options) const;
 };
