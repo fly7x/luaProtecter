@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bytecode.hpp"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -7,22 +8,11 @@
 namespace Protect {
 
 struct VirtualInstruction {
-    uint8_t opcode = 0;
-    uint8_t a = 0;
-    uint8_t b = 0;
-    uint8_t c = 0;
-    int32_t d = 0;
-    int32_t e = 0;
-    uint32_t aux = 0;
-    bool hasAux = false;
-};
-
-struct VirtualProgram {
-    uint32_t version = 1;
-    uint64_t key = 0;
-    std::vector<VirtualInstruction> instructions;
-    std::vector<std::string> strings;
-    std::vector<double> numbers;
+    uint8_t opcode;
+    uint8_t a, b, c;
+    int32_t d;
+    uint32_t aux;
+    bool hasAux;
 };
 
 class Virtualizer {
@@ -37,22 +27,19 @@ public:
     
     explicit Virtualizer(uint64_t seed);
     
-    VirtualProgram virtualize(const std::string& luauBytecode, const Options& options) const;
-    std::string emitLuau(const VirtualProgram& program) const;
+    // Generate a Luau script that contains the VM and the encrypted bytecode
+    // The VM will decrypt and execute the bytecode at runtime.
+    std::string emitVirtualizedScript(const Bytecode& obfuscatedBytecode, 
+                                      const Options& options) const;
     
 private:
     uint64_t seed_;
     
-    static uint32_t readU32(const std::string& data, size_t& offset);
-    static uint8_t opcode(uint32_t instruction);
-    static uint8_t A(uint32_t instruction);
-    static uint8_t B(uint32_t instruction);
-    static uint8_t C(uint32_t instruction);
-    static int16_t D(uint32_t instruction);
-    static int32_t E(uint32_t instruction);
+    // Helper to generate a random-looking key from seed
+    uint64_t nextKey() const;
     
-    uint64_t nextKey(uint64_t value) const;
-    uint32_t mix(uint32_t value, uint64_t key) const;
+    // Convert bytecode to a Lua string literal (hex or escaped)
+    std::string bytecodeToLuaString(const std::vector<uint8_t>& data) const;
 };
 
 } // namespace Protect
