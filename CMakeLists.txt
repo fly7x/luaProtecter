@@ -22,6 +22,8 @@ add_executable(luaProtecter
     src/bytecode.hpp
     src/virtualizer.cpp
     src/virtualizer.hpp
+    src/vm.cpp
+    src/vm.hpp
 )
 
 target_include_directories(luaProtecter PRIVATE
