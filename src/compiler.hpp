@@ -1,28 +1,20 @@
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
-#include <string>
 #include <vector>
+#include <string>
+#include <cstdint>
 
-class Compiler
-{
+class Compiler {
 public:
-    struct Result
-    {
+    struct Result {
         bool success = false;
-        std::vector<std::uint8_t> bytecode;
+        std::vector<uint8_t> bytecode;
         std::string error;
     };
-
+    
     Compiler() = default;
-
-    Result compile(
-        const std::string& source
-    ) const;
-
+    Result compile(const std::string& source) const;
+    
 private:
-    static std::string decodeCompileError(
-        const std::vector<std::uint8_t>& bytecode
-    );
+    static std::string decodeCompileError(const std::vector<uint8_t>& bytecode);
 };
