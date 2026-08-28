@@ -10,7 +10,11 @@ public:
     Obfuscator();
     explicit Obfuscator(uint32_t seed);
     
-    Bytecode transform(const Bytecode& input) const;
+    // Encrypts bytecode with XOR and applies simple scrambling
+    Bytecode obfuscate(const Bytecode& input) const;
+    
+    // Returns the seed used
+    uint32_t seed() const { return seed_; }
     
 private:
     uint32_t seed_;
