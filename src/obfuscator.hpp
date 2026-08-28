@@ -2,8 +2,6 @@
 
 #include "bytecode.hpp"
 #include <cstdint>
-#include <random>
-#include <chrono>
 
 class Obfuscator {
 public:
@@ -13,7 +11,6 @@ public:
     // Encrypts bytecode with XOR and applies simple scrambling
     Bytecode obfuscate(const Bytecode& input) const;
     
-    // Returns the seed used
     uint32_t seed() const { return seed_; }
     
 private:
