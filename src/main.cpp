@@ -15,37 +15,39 @@ constexpr int PORT = 10000;
 constexpr int BACKLOG = 32;
 const std::string WEB_ROOT = "web/";
 
-// Helper to read a file into a string
+// Helper to check suffix (C++17 compatible)
+static bool hasSuffix(const std::string& str, const std::string& suffix) {
+    if (str.size() < suffix.size()) return false;
+    return str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
 std::string readFile(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) return "";
-    std::string content((std::istreambuf_iterator<char>(file)),
-                         std::istreambuf_iterator<char>());
-    return content;
+    return std::string((std::istreambuf_iterator<char>(file)),
+                       std::istreambuf_iterator<char>());
 }
 
-// MIME type from extension
 std::string mimeType(const std::string& path) {
-    if (path.ends_with(".html")) return "text/html";
-    if (path.ends_with(".css")) return "text/css";
-    if (path.ends_with(".js")) return "application/javascript";
-    if (path.ends_with(".png")) return "image/png";
-    if (path.ends_with(".svg")) return "image/svg+xml";
+    if (hasSuffix(path, ".html")) return "text/html";
+    if (hasSuffix(path, ".css"))  return "text/css";
+    if (hasSuffix(path, ".js"))   return "application/javascript";
+    if (hasSuffix(path, ".png"))  return "image/png";
+    if (hasSuffix(path, ".svg"))  return "image/svg+xml";
     return "text/plain";
 }
 
-// JSON escape
 std::string jsonEscape(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 16);
     for (char c : s) {
         switch (c) {
-            case '"': out += "\\\""; break;
+            case '"':  out += "\\\""; break;
             case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default: out += c; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:   out += c;      break;
         }
     }
     return out;
@@ -56,22 +58,27 @@ void handleClient(int clientFd) {
     ssize_t n = read(clientFd, buffer, sizeof(buffer) - 1);
     if (n <= 0) { close(clientFd); return; }
     buffer[n] = '\0';
-    
+
     std::string request(buffer);
     std::string method = request.substr(0, request.find(' '));
     std::string path = request.substr(request.find(' ') + 1);
     path = path.substr(0, path.find(' '));
-    
+
     std::string response;
     int status = 200;
     std::string contentType = "text/html";
-    
+
     try {
         if (path == "/" || path == "/index.html") {
             std::string content = readFile(WEB_ROOT + "index.html");
             if (content.empty()) throw std::runtime_error("index.html not found");
             response = content;
             contentType = "text/html";
+        } else if (path == "/style.css") {
+            std::string content = readFile(WEB_ROOT + "style.css");
+            if (content.empty()) throw std::runtime_error("style.css not found");
+            response = content;
+            contentType = "text/css";
         } else if (path == "/app.js") {
             std::string content = readFile(WEB_ROOT + "app.js");
             if (content.empty()) throw std::runtime_error("app.js not found");
@@ -81,7 +88,7 @@ void handleClient(int clientFd) {
             size_t bodyStart = request.find("\r\n\r\n");
             if (bodyStart == std::string::npos) throw std::runtime_error("Malformed request");
             std::string body = request.substr(bodyStart + 4);
-            
+
             // Extract JSON source
             std::string key = "\"code\"";
             size_t keyPos = body.find(key);
@@ -110,14 +117,14 @@ void handleClient(int clientFd) {
                 if (c == '"') break;
                 code += c;
             }
-            
+
             // Obfuscate
             Transformer transformer;
             Transformer::Options opts;
             opts.virtualize = true;
             opts.polymorphic = true;
             std::string protectedCode = transformer.protect(code, opts);
-            
+
             std::stringstream ss;
             ss << "{\"success\":true,\"code\":\"" << jsonEscape(protectedCode) << "\"}";
             response = ss.str();
@@ -134,7 +141,7 @@ void handleClient(int clientFd) {
         response = ss.str();
         contentType = "application/json";
     }
-    
+
     std::stringstream resp;
     resp << "HTTP/1.1 " << status << " OK\r\n";
     resp << "Content-Type: " << contentType << "\r\n";
@@ -147,7 +154,6 @@ void handleClient(int clientFd) {
 }
 
 int main(int argc, char* argv[]) {
-    // If command line arguments, process file
     if (argc >= 2) {
         std::string inputFile = argv[1];
         std::string outputFile = (argc >= 3) ? argv[2] : "output/protected.lua";
@@ -178,12 +184,12 @@ int main(int argc, char* argv[]) {
         }
         return 0;
     }
-    
+
     // Serve web interface
     std::cout << "🔒 LuaProtecter Server starting on port " << PORT << std::endl;
     std::cout << "   Web root: " << WEB_ROOT << std::endl;
     std::cout << "   Open http://localhost:" << PORT << std::endl;
-    
+
     int serverFd = socket(AF_INET, SOCK_STREAM, 0);
     if (serverFd < 0) { std::cerr << "Socket error\n"; return 1; }
     int opt = 1;
@@ -198,7 +204,7 @@ int main(int argc, char* argv[]) {
     if (listen(serverFd, BACKLOG) < 0) {
         std::cerr << "Listen failed\n"; close(serverFd); return 1;
     }
-    
+
     while (true) {
         struct sockaddr_in clientAddr;
         socklen_t len = sizeof(clientAddr);
