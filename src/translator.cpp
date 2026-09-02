@@ -1,35 +1,25 @@
 #include "translator.hpp"
 #include "Luau/Bytecode.h"
+
+#include "lua.h"
+#include "lualib.h"
+#include "luacode.h"
+
+#define LUA_CORE
+#include "lobject.h"
+#include "lstate.h"
+
 #include <cstring>
+#include <cstdio>
+#include <sstream>
 
 Translator::Translator(uint32_t seed)
     : seed_(seed ? seed : 0xA341316Cu), map_(makeOpcodeMap(seed_)) {}
 
-uint8_t Translator::Reader::u8() {
-    if (!ok || p >= end) { ok = false; return 0; }
-    return *p++;
-}
-uint32_t Translator::Reader::u32() {
-    uint32_t a = u8(), b = u8(), c = u8(), d = u8();
-    return a | (b << 8) | (c << 16) | (d << 24);
-}
-uint32_t Translator::Reader::varint() {
-    uint32_t result = 0, shift = 0;
-    for (;;) {
-        uint8_t b = u8();
-        if (!ok) return 0;
-        result |= uint32_t(b & 0x7F) << shift;
-        if ((b & 0x80) == 0) return result;
-        shift += 7;
-        if (shift > 28) { ok = false; return 0; }
-    }
-}
-std::string Translator::Reader::bytes(uint32_t n) {
-    if (!ok || p + n > end) { ok = false; return {}; }
-    std::string s(reinterpret_cast<const char*>(p), n);
-    p += n;
-    return s;
-}
+uint8_t Translator::Reader::u8() { return 0; }
+uint32_t Translator::Reader::u32() { return 0; }
+uint32_t Translator::Reader::varint() { return 0; }
+std::string Translator::Reader::bytes(uint32_t) { return {}; }
 
 static int luauInsnLength(uint8_t op) {
     switch (op) {
@@ -57,166 +47,40 @@ static int luauInsnLength(uint8_t op) {
     }
 }
 
-Translator::Result Translator::translate(const Bytecode& luauBlob) const {
-    Result r;
-    if (luauBlob.empty()) {
-        r.error = "empty luau bytecode";
-        return r;
+static std::string hexHead(const std::vector<uint8_t>& data) {
+    std::stringstream ss;
+    ss << std::hex;
+    size_t n = data.size() < 24 ? data.size() : 24;
+    for (size_t i = 0; i < n; ++i) {
+        if (i) ss << ' ';
+        ss.width(2);
+        ss.fill('0');
+        ss << int(data[i]);
     }
-    if (!parseLuau(luauBlob.data(), r.protos, r.mainId, r.error))
-        return r;
-    r.encoded = encodeCustom(r.protos, r.mainId);
-    r.success = true;
-    return r;
+    ss << " (size=" << std::dec << data.size() << ")";
+    return ss.str();
 }
 
-bool Translator::parseLuau(const std::vector<uint8_t>& data,
-                           std::vector<Proto>& out,
-                           uint32_t& mainId,
-                           std::string& err) const {
-    Reader rd;
-    rd.p = data.data();
-    rd.end = data.data() + data.size();
-
-    uint8_t version = rd.u8();
-    uint8_t typesVersion = 0;
-    if (version >= 4)
-        typesVersion = rd.u8();
-    if (!rd.ok) {
-        err = "truncated header";
-        return false;
+static Constant convertConst(const TValue* o) {
+    Constant c;
+    if (ttisnil(o)) {
+        c.type = Constant::NIL;
+    } else if (ttisboolean(o)) {
+        c.type = Constant::BOOL;
+        c.b = bvalue(o) != 0;
+    } else if (ttisnumber(o)) {
+        c.type = Constant::NUMBER;
+        c.n = nvalue(o);
+    } else if (ttisstring(o)) {
+        c.type = Constant::STRING;
+        TString* ts = tsvalue(o);
+        const char* s = getstr(ts);
+        unsigned int len = ts->len;
+        c.s.assign(s, s + len);
+    } else {
+        c.type = Constant::NIL;
     }
-
-    uint32_t nstrings = rd.varint();
-    if (!rd.ok || nstrings > 100000) {
-        err = "bad string table";
-        return false;
-    }
-    std::vector<std::string> strings;
-    strings.reserve(nstrings);
-    for (uint32_t i = 0; i < nstrings && rd.ok; ++i) {
-        uint32_t len = rd.varint();
-        if (len > 1u << 20) { err = "string too large"; return false; }
-        strings.push_back(rd.bytes(len));
-    }
-    if (!rd.ok) { err = "string table truncated"; return false; }
-
-    auto intern = [&](uint32_t idx) -> std::string {
-        if (idx == 0 || idx > strings.size()) return {};
-        return strings[idx - 1];
-    };
-
-    // Newer Luau: userdata-type remap after strings, 0-terminated
-    if (typesVersion >= 1) {
-        for (int guard = 0; guard < 256 && rd.ok; ++guard) {
-            uint8_t idx = rd.u8();
-            if (idx == 0) break;
-            (void)rd.varint();
-        }
-        if (!rd.ok) { err = "userdata map truncated"; return false; }
-    }
-
-    uint32_t nfuncs = rd.varint();
-    if (!rd.ok) { err = "truncated function count"; return false; }
-    if (nfuncs == 0 || nfuncs > 10000) {
-        err = "no functions";
-        return false;
-    }
-    out.assign(nfuncs, Proto{});
-
-    for (uint32_t f = 0; f < nfuncs; ++f) {
-        Proto proto;
-        proto.maxstack  = rd.u8();
-        proto.numparams = rd.u8();
-        proto.nups      = rd.u8();
-        proto.isvararg  = rd.u8();
-        (void)rd.u8(); // flags
-
-        uint32_t typeSize = rd.varint();
-        if (typeSize > 1u << 20) { err = "bad typeinfo"; return false; }
-        (void)rd.bytes(typeSize);
-
-        uint32_t ncode = rd.varint();
-        if (!rd.ok || ncode > 500000) { err = "bad code size"; return false; }
-        std::vector<uint32_t> luauCode;
-        luauCode.reserve(ncode);
-        for (uint32_t i = 0; i < ncode && rd.ok; ++i)
-            luauCode.push_back(rd.u32());
-
-        uint32_t nk = rd.varint();
-        if (!rd.ok || nk > 100000) { err = "bad const count"; return false; }
-        proto.constants.reserve(nk);
-        for (uint32_t i = 0; i < nk && rd.ok; ++i) {
-            uint8_t tag = rd.u8();
-            Constant c;
-            switch (tag) {
-            case 0: c.type = Constant::NIL; break;
-            case 1: c.type = Constant::BOOL; c.b = rd.u8() != 0; break;
-            case 2: {
-                c.type = Constant::NUMBER;
-                uint64_t bits = 0;
-                for (int b = 0; b < 8; ++b) bits |= uint64_t(rd.u8()) << (8 * b);
-                std::memcpy(&c.n, &bits, 8);
-                break;
-            }
-            case 3:
-                c.type = Constant::STRING;
-                c.s = intern(rd.varint());
-                break;
-            case 4:
-                (void)rd.u32();
-                break;
-            case 5: {
-                uint32_t len = rd.varint();
-                for (uint32_t k = 0; k < len; ++k) (void)rd.varint();
-                break;
-            }
-            case 6:
-                (void)rd.varint();
-                break;
-            default:
-                for (int k = 0; k < 16 && rd.ok; ++k) (void)rd.u8();
-                break;
-            }
-            proto.constants.push_back(std::move(c));
-        }
-
-        uint32_t np = rd.varint();
-        for (uint32_t i = 0; i < np && rd.ok; ++i)
-            proto.childProtos.push_back(rd.varint());
-
-        uint8_t lineGapLog2 = rd.u8();
-        if (lineGapLog2) {
-            for (uint32_t i = 0; i < ncode && rd.ok; ++i) (void)rd.u8();
-            uint32_t intervals = ncode ? ((ncode - 1) >> lineGapLog2) + 1 : 0;
-            for (uint32_t i = 0; i < intervals && rd.ok; ++i) (void)rd.u32();
-        }
-        (void)rd.varint();
-        uint32_t locvars = rd.varint();
-        for (uint32_t i = 0; i < locvars && rd.ok; ++i) {
-            (void)rd.varint(); (void)rd.varint(); (void)rd.varint(); (void)rd.u8();
-        }
-        uint32_t upvalNames = rd.varint();
-        for (uint32_t i = 0; i < upvalNames && rd.ok; ++i) (void)rd.varint();
-
-        if (!rd.ok) {
-            err = "function blob truncated at proto " + std::to_string(f);
-            return false;
-        }
-
-        std::string remapErr;
-        if (!remapFunction(luauCode, proto, remapErr)) {
-            err = remapErr.empty() ? "remap failed" : remapErr;
-            return false;
-        }
-        out[f] = std::move(proto);
-    }
-
-    mainId = rd.varint();
-    if (!rd.ok || mainId >= out.size()) {
-        mainId = 0;
-    }
-    return true;
+    return c;
 }
 
 bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
@@ -264,10 +128,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::LOADK, A, 0, 0);
             proto.code.push_back(uint32_t(int32_t(D)));
             break;
-        case LOP_LOADK:
-            emitABC(Op::LOADK, A, 0, 0);
-            emitK(uint32_t(D));
-            break;
+        case LOP_LOADK: emitABC(Op::LOADK, A, 0, 0); emitK(uint32_t(D)); break;
         case LOP_MOVE: emitABC(Op::MOVE, A, B, 0); break;
         case LOP_GETGLOBAL: emitABC(Op::GETGLOBAL, A, 0, 0); emitK(aux); break;
         case LOP_SETGLOBAL: emitABC(Op::SETGLOBAL, A, 0, 0); emitK(aux); break;
@@ -326,14 +187,137 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
     return true;
 }
 
+static uint32_t convertProto(Translator* self,
+                             ::Proto* p,
+                             std::vector<::Proto>& /*unused*/,
+                             std::vector<Proto>& out,
+                             std::string& err) {
+    std::vector<uint32_t> kids;
+    kids.reserve(size_t(p->sizep));
+    for (int i = 0; i < p->sizep; ++i) {
+        uint32_t id = convertProto(self, p->p[i], out, out, err);
+        if (!err.empty()) return 0;
+        kids.push_back(id);
+    }
+
+    Proto dst;
+    dst.maxstack = p->maxstacksize;
+    dst.numparams = p->numparams;
+    dst.nups = p->nups;
+    dst.isvararg = p->is_vararg;
+    dst.childProtos = kids;
+
+    for (int i = 0; i < p->sizek; ++i)
+        dst.constants.push_back(convertConst(&p->k[i]));
+
+    std::vector<uint32_t> code;
+    code.reserve(size_t(p->sizecode));
+    for (int i = 0; i < p->sizecode; ++i)
+        code.push_back(uint32_t(p->code[i]));
+
+    if (!self->remapPublic(code, dst, err))
+        return 0;
+
+    uint32_t id = uint32_t(out.size());
+    out.push_back(std::move(dst));
+    return id;
+}
+
+// tiny adapter so convertProto can call remap
+bool Translator::remapPublic(const std::vector<uint32_t>& code, Proto& proto, std::string& err) const {
+    return remapFunction(code, proto, err);
+}
+
+bool Translator::parseLuau(const std::vector<uint8_t>& data,
+                           std::vector<Proto>& out,
+                           uint32_t& mainId,
+                           std::string& err) const {
+    if (data.empty()) {
+        err = "empty bytecode";
+        return false;
+    }
+
+    lua_State* L = luaL_newstate();
+    if (!L) {
+        err = "luaL_newstate failed";
+        return false;
+    }
+    luaL_openlibs(L);
+
+    int st = luau_load(
+        L,
+        "=fly",
+        reinterpret_cast<const char*>(data.data()),
+        data.size(),
+        0
+    );
+    if (st != 0) {
+        const char* msg = lua_tostring(L, -1);
+        err = std::string("luau_load failed: ") + (msg ? msg : "?") +
+              " | head " + hexHead(data);
+        lua_close(L);
+        return false;
+    }
+
+    const TValue* fo = L->top - 1;
+    if (!ttisfunction(fo)) {
+        err = "loaded value is not a function | head " + hexHead(data);
+        lua_close(L);
+        return false;
+    }
+    Closure* cl = clvalue(fo);
+    if (cl->isC || !cl->l.p) {
+        err = "loaded closure has no proto | head " + hexHead(data);
+        lua_close(L);
+        return false;
+    }
+
+    ::Proto* root = cl->l.p;
+    std::fprintf(stderr,
+        "[FLY debug] load ok version_head=%u size=%zu sizecode=%d sizek=%d sizep=%d\n",
+        unsigned(data[0]), data.size(), root->sizecode, root->sizek, root->sizep);
+
+    std::string remapErr;
+    mainId = convertProto(const_cast<Translator*>(this), root, out, out, remapErr);
+    if (!remapErr.empty()) {
+        err = remapErr;
+        lua_close(L);
+        return false;
+    }
+    if (out.empty()) {
+        err = "no protos after load | head " + hexHead(data);
+        lua_close(L);
+        return false;
+    }
+
+    std::fprintf(stderr, "[FLY debug] translated protos=%zu mainId=%u maincode=%zu maink=%zu\n",
+        out.size(), mainId, out[mainId].code.size(), out[mainId].constants.size());
+
+    lua_close(L);
+    return true;
+}
+
+Translator::Result Translator::translate(const Bytecode& luauBlob) const {
+    Result r;
+    if (luauBlob.empty()) {
+        r.error = "empty luau bytecode";
+        return r;
+    }
+    if (!parseLuau(luauBlob.data(), r.protos, r.mainId, r.error))
+        return r;
+    r.encoded = encodeCustom(r.protos, r.mainId);
+    r.success = true;
+    return r;
+}
+
 Bytecode Translator::encodeCustom(const std::vector<Proto>& protos, uint32_t mainId) const {
-    std::vector<uint8_t> out;
-    auto w8 = [&](uint8_t v) { out.push_back(v); };
+    std::vector<uint8_t> blob;
+    auto w8 = [&](uint8_t v) { blob.push_back(v); };
     auto w32 = [&](uint32_t v) {
-        out.push_back(uint8_t(v));
-        out.push_back(uint8_t(v >> 8));
-        out.push_back(uint8_t(v >> 16));
-        out.push_back(uint8_t(v >> 24));
+        blob.push_back(uint8_t(v));
+        blob.push_back(uint8_t(v >> 8));
+        blob.push_back(uint8_t(v >> 16));
+        blob.push_back(uint8_t(v >> 24));
     };
     w32(0x3252504C);
     w32(seed_);
@@ -360,5 +344,5 @@ Bytecode Translator::encodeCustom(const std::vector<Proto>& protos, uint32_t mai
         w32(uint32_t(p.childProtos.size()));
         for (uint32_t id : p.childProtos) w32(id);
     }
-    return Bytecode(std::move(out));
+    return Bytecode(std::move(blob));
 }
