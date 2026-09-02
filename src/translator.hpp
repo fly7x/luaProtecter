@@ -1,0 +1,65 @@
+#pragma once
+#include "bytecode.hpp"
+#include "isa.hpp"
+#include <cstdint>
+#include <string>
+#include <vector>
+
+struct Constant {
+    enum Type { NIL, BOOL, NUMBER, STRING } type = NIL;
+    bool b = false;
+    double n = 0.0;
+    std::string s;
+};
+
+struct Proto {
+    uint8_t maxstack = 0;
+    uint8_t numparams = 0;
+    uint8_t nups = 0;
+    uint8_t isvararg = 0;
+    std::vector<uint32_t> code;      // already remapped to your ISA
+    std::vector<Constant> constants;
+    std::vector<uint32_t> childProtos;
+};
+
+class Translator {
+public:
+    struct Result {
+        bool success = false;
+        std::string error;
+        std::vector<Proto> protos;
+        uint32_t mainId = 0;
+        Bytecode encoded;            // custom packed format, not encrypted yet
+    };
+
+    explicit Translator(uint32_t seed);
+
+    // input = raw luau_compile() blob
+    Result translate(const Bytecode& luauBlob) const;
+
+private:
+    uint32_t seed_;
+    std::array<uint8_t, static_cast<size_t>(Op::COUNT)> map_;
+
+    struct Reader {
+        const uint8_t* p;
+        const uint8_t* end;
+        bool ok = true;
+        uint8_t  u8();
+        uint32_t u32();
+        uint32_t varint();
+        std::string str(uint32_t n);
+    };
+
+    bool parseLuau(const std::vector<uint8_t>& data,
+                   std::vector<Proto>& out,
+                   uint32_t& mainId,
+                   std::string& err) const;
+
+    bool remapFunction(const std::vector<uint32_t>& luauCode,
+                       Proto& proto,
+                       const std::vector<Constant>& k,
+                       std::string& err) const;
+
+    Bytecode encodeCustom(const std::vector<Proto>& protos, uint32_t mainId) const;
+};
