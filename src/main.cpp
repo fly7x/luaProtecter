@@ -16,7 +16,6 @@ constexpr int PORT = 10000;
 constexpr int BACKLOG = 32;
 const std::string WEB_ROOT = "web/";
 
-// ---------- Helpers ----------
 static bool hasSuffix(const std::string& str, const std::string& suffix) {
     if (str.size() < suffix.size()) return false;
     return str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
@@ -54,7 +53,6 @@ std::string jsonEscape(const std::string& s) {
     return out;
 }
 
-// ---------- JSON parser (simple, extracts string value for a key) ----------
 static std::string extractJsonString(const std::string& json, const std::string& key) {
     std::string search = "\"" + key + "\"";
     size_t keyPos = json.find(search);
@@ -67,7 +65,7 @@ static std::string extractJsonString(const std::string& json, const std::string&
     while (start < json.size() && std::isspace(json[start])) start++;
     if (start >= json.size() || json[start] != '"') return "";
 
-    start++; // skip opening quote
+    start++;
     std::string result;
     bool escaped = false;
     for (size_t i = start; i < json.size(); ++i) {
@@ -88,13 +86,12 @@ static std::string extractJsonString(const std::string& json, const std::string&
             escaped = true;
             continue;
         }
-        if (c == '"') break; // end of string
+        if (c == '"') break;
         result += c;
     }
     return result;
 }
 
-// ---------- Request handler ----------
 void handleClient(int clientFd) {
     char buffer[65536];
     ssize_t n = read(clientFd, buffer, sizeof(buffer) - 1);
@@ -134,7 +131,6 @@ void handleClient(int clientFd) {
             std::string code = extractJsonString(body, "code");
             if (code.empty()) throw std::runtime_error("Missing or empty 'code' field");
 
-            // Options (simple)
             bool vmMode = true, polymorphic = true;
             std::string vmStr = extractJsonString(body, "vm");
             if (vmStr == "false") vmMode = false;
@@ -217,7 +213,6 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Serve web interface
     std::cout << "🔒 LuaProtecter Server starting on port " << PORT << std::endl;
     std::cout << "   Web root: " << WEB_ROOT << std::endl;
     std::cout << "   Open http://localhost:" << PORT << std::endl;
