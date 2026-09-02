@@ -48,17 +48,12 @@ static int luauInsnLength(uint8_t op) {
     case LOP_FASTCALL1:
     case LOP_FASTCALL2:
     case LOP_FASTCALL2K:
-    case LOP_FASTCALL3:
     case LOP_JUMPIFEQ:
     case LOP_JUMPIFLE:
     case LOP_JUMPIFLT:
     case LOP_JUMPIFNOTEQ:
     case LOP_JUMPIFNOTLE:
     case LOP_JUMPIFNOTLT:
-    case LOP_JUMPXEQKNIL:
-    case LOP_JUMPXEQKB:
-    case LOP_JUMPXEQKN:
-    case LOP_JUMPXEQKS:
         return 2;
     default:
         return 1;
@@ -87,12 +82,12 @@ bool Translator::parseLuau(const std::vector<uint8_t>& data,
     rd.end = data.data() + data.size();
 
     uint8_t version = rd.u8();
-    if (!rd.ok || version < LBC_VERSION_MIN) {
+    if (!rd.ok || version < 3) {
         err = "unsupported luau bytecode version";
         return false;
     }
     if (version >= 4)
-        (void)rd.u8(); // types version
+        (void)rd.u8();
 
     uint32_t nstrings = rd.varint();
     std::vector<std::string> strings;
@@ -118,7 +113,7 @@ bool Translator::parseLuau(const std::vector<uint8_t>& data,
         proto.numparams = rd.u8();
         proto.nups      = rd.u8();
         proto.isvararg  = rd.u8();
-        (void)rd.u8(); // flags
+        (void)rd.u8();
 
         uint32_t typeSize = rd.varint();
         (void)rd.bytes(typeSize);
@@ -135,53 +130,43 @@ bool Translator::parseLuau(const std::vector<uint8_t>& data,
             uint8_t tag = rd.u8();
             Constant c;
             switch (tag) {
-            case LBC_CONSTANT_NIL:
+            case 0:
                 c.type = Constant::NIL;
                 break;
-            case LBC_CONSTANT_BOOLEAN:
+            case 1:
                 c.type = Constant::BOOL;
                 c.b = rd.u8() != 0;
                 break;
-            case LBC_CONSTANT_NUMBER: {
+            case 2: {
                 c.type = Constant::NUMBER;
                 uint64_t bits = 0;
                 for (int b = 0; b < 8; ++b) bits |= uint64_t(rd.u8()) << (8 * b);
                 std::memcpy(&c.n, &bits, 8);
                 break;
             }
-            case LBC_CONSTANT_STRING: {
+            case 3: {
                 c.type = Constant::STRING;
                 c.s = intern(rd.varint());
                 break;
             }
-            case LBC_CONSTANT_IMPORT:
+            case 4:
                 (void)rd.u32();
                 c.type = Constant::NIL;
                 break;
-            case LBC_CONSTANT_TABLE: {
+            case 5: {
                 uint32_t len = rd.varint();
                 for (uint32_t k = 0; k < len; ++k) (void)rd.varint();
                 c.type = Constant::NIL;
                 break;
             }
-            case LBC_CONSTANT_CLOSURE:
+            case 6:
                 (void)rd.varint();
                 c.type = Constant::NIL;
                 break;
-            case LBC_CONSTANT_VECTOR:
-            case LBC_CONSTANT_VECTORD:
-                for (int k = 0; k < 16; ++k) (void)rd.u8();
+            default:
+                for (int k = 0; k < 16 && rd.ok; ++k) (void)rd.u8();
                 c.type = Constant::NIL;
                 break;
-            case LBC_CONSTANT_INTEGER: {
-                c.type = Constant::NUMBER;
-                int32_t v = int32_t(rd.u32());
-                c.n = double(v);
-                break;
-            }
-            default:
-                err = "unknown constant tag " + std::to_string(tag);
-                return false;
             }
             proto.constants.push_back(std::move(c));
         }
@@ -190,7 +175,6 @@ bool Translator::parseLuau(const std::vector<uint8_t>& data,
         for (uint32_t i = 0; i < np && rd.ok; ++i)
             proto.childProtos.push_back(rd.varint());
 
-        // debug / lineinfo: consume remaining as best-effort
         uint8_t lineGapLog2 = rd.u8();
         if (lineGapLog2) {
             for (uint32_t i = 0; i < ncode && rd.ok; ++i) (void)rd.u8();
@@ -198,8 +182,7 @@ bool Translator::parseLuau(const std::vector<uint8_t>& data,
             for (uint32_t i = 0; i < intervals && rd.ok; ++i) (void)rd.u32();
         }
 
-        uint32_t debugName = rd.varint();
-        (void)debugName;
+        (void)rd.varint();
         uint32_t locvars = rd.varint();
         for (uint32_t i = 0; i < locvars && rd.ok; ++i) {
             (void)rd.varint();
@@ -332,7 +315,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitConstIndex(aux);
             break;
         case LOP_SETTABLEKS:
-            emitABC(Op::SETTABLE, A, B, 0);
             emitABC(Op::LOADK, 255, 0, 0);
             emitConstIndex(aux);
             emitABC(Op::SETTABLE, A, B, 255);
@@ -364,13 +346,13 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_POWK:
             emitABC(Op::POW, A, B, C);
             break;
-        case LOP_UNM:
-            emitABC(Op::UNM, A, B, 0);
-            break;
         case LOP_NOT:
             emitABC(Op::NOT, A, B, 0);
             break;
-        case LOP_LEN:
+        case LOP_MINUS:
+            emitABC(Op::UNM, A, B, 0);
+            break;
+        case LOP_LENGTH:
             emitABC(Op::LEN, A, B, 0);
             break;
         case LOP_CONCAT:
@@ -378,7 +360,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             break;
         case LOP_JUMP:
         case LOP_JUMPBACK:
-        case LOP_JUMPX:
             emitJump(Op::JMP, 0, nextOld + D);
             break;
         case LOP_JUMPIF:
@@ -429,12 +410,8 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         if (rel < -32768) rel = -32768;
         if (rel > 32767) rel = 32767;
         uint32_t word = proto.code[j.patchIndex];
-        uint8_t opb = insnOp(word);
-        uint8_t a = insnA(word);
-        proto.code[j.patchIndex] = packAD(opb, a, int16_t(rel));
+        proto.code[j.patchIndex] = packAD(insnOp(word), insnA(word), int16_t(rel));
     }
-
-    (void)err;
     return true;
 }
 
@@ -448,7 +425,7 @@ Bytecode Translator::encodeCustom(const std::vector<Proto>& protos, uint32_t mai
         out.push_back(uint8_t(v >> 24));
     };
 
-    w32(0x3252504C); // LPR2
+    w32(0x3252504C);
     w32(seed_);
     w8(1);
     w32(uint32_t(protos.size()));
