@@ -5,7 +5,6 @@
 #include <regex>
 #include <sstream>
 #include <chrono>
-#include <random>
 #include <stdexcept>
 
 Transformer::Transformer() : seed_(generateSeed()) {}
@@ -16,11 +15,8 @@ uint64_t Transformer::generateSeed() const {
     return static_cast<uint64_t>(now) ^ 0x9E3779B97F4A7C15ULL;
 }
 
-// ----- Source-level obfuscations (simple) -----
-
+// ---------- Source-level obfuscations (simple) ----------
 std::string Transformer::renameLocals(const std::string& source) const {
-    // Very basic: rename local variables (this is just a demo; a real impl would parse)
-    // For this example, we'll just replace 'local function' patterns
     std::string result = source;
     std::regex localDecl("local%s+([%a_][%w_]*)");
     std::smatch match;
@@ -38,7 +34,6 @@ std::string Transformer::renameLocals(const std::string& source) const {
         start = match.suffix().first;
     }
     for (const auto& [orig, ren] : replacements) {
-        // Replace whole word only
         std::regex wordPattern("\\b" + orig + "\\b");
         result = std::regex_replace(result, wordPattern, ren);
     }
@@ -46,20 +41,12 @@ std::string Transformer::renameLocals(const std::string& source) const {
 }
 
 std::string Transformer::encodeStringLiterals(const std::string& source) const {
-    // Encode all string literals with a simple XOR + base64-like transform
-    // For simplicity, we'll just encode with a static key (but in production use seed)
-    std::string result = source;
-    // This is a placeholder – we'll rely on the VM encryption for strings.
-    // We'll just do a simple substitution for demo.
-    std::regex stringPattern(R"("([^"]*)")");
-    result = std::regex_replace(result, stringPattern, R"("obfuscated")");
-    return result;
+    // Placeholder – we rely on VM encryption
+    return source;
 }
 
 std::string Transformer::encodeNumberLiterals(const std::string& source) const {
-    // Similar placeholder
-    std::regex numberPattern(R"(\b(\d+)\b)");
-    return std::regex_replace(source, numberPattern, "0");
+    return source;
 }
 
 std::string Transformer::removeComments(const std::string& source) const {
@@ -68,13 +55,11 @@ std::string Transformer::removeComments(const std::string& source) const {
 }
 
 std::string Transformer::injectDecoys(const std::string& source) const {
-    // Insert junk code (e.g., useless variable assignments)
     std::string junk = "local _junk = 42; _junk = _junk + 1;\n";
     return junk + source + "\n" + junk;
 }
 
-// ----- Main protect -----
-
+// ---------- Main protect ----------
 std::string Transformer::protect(const std::string& source) const {
     Options defaultOpts;
     return protect(source, defaultOpts);
@@ -83,43 +68,21 @@ std::string Transformer::protect(const std::string& source) const {
 std::string Transformer::protect(const std::string& source, const Options& options) const {
     std::string processed = source;
 
-    // 1. Remove comments
-    if (options.removeComments) {
-        processed = removeComments(processed);
-    }
+    if (options.removeComments) processed = removeComments(processed);
+    if (options.renameIdentifiers) processed = renameLocals(processed);
+    if (options.encodeStrings) processed = encodeStringLiterals(processed);
+    if (options.encodeNumbers) processed = encodeNumberLiterals(processed);
+    if (options.decoys) processed = injectDecoys(processed);
 
-    // 2. Rename locals
-    if (options.renameIdentifiers) {
-        processed = renameLocals(processed);
-    }
-
-    // 3. Encode strings (source-level)
-    if (options.encodeStrings) {
-        processed = encodeStringLiterals(processed);
-    }
-
-    // 4. Encode numbers
-    if (options.encodeNumbers) {
-        processed = encodeNumberLiterals(processed);
-    }
-
-    // 5. Inject decoys
-    if (options.decoys) {
-        processed = injectDecoys(processed);
-    }
-
-    // 6. Compile to bytecode
     Compiler compiler;
     auto compileResult = compiler.compile(processed);
     if (!compileResult.success) {
         throw std::runtime_error("Compilation failed: " + compileResult.error);
     }
 
-    // 7. Obfuscate bytecode (encrypt)
     Obfuscator obfuscator(static_cast<uint32_t>(options.seed));
     Bytecode encrypted = obfuscator.obfuscate(compileResult.bytecode);
 
-    // 8. Virtualize – generate VM loader
     Protect::Virtualizer virtualizer(options.seed);
     Protect::Virtualizer::Options vmOpts;
     vmOpts.encryptConstants = true;
@@ -127,9 +90,8 @@ std::string Transformer::protect(const std::string& source, const Options& optio
     vmOpts.remapRegisters = true;
     vmOpts.polymorphic = options.polymorphic;
     vmOpts.antiDebug = options.antiDebug;
-    vmOpts.controlFlowFlatten = true; // always flatten for better protection
+    vmOpts.controlFlowFlatten = true;
 
     std::string virtualizedScript = virtualizer.emitVirtualizedScript(encrypted, vmOpts);
-
     return virtualizedScript;
 }
