@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docs · ƒŁ¥</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="nav">
+        <a class="brand" href="/home">ƒŁ¥</a>
+        <nav>
+            <a href="/home">Home</a>
+            <a href="/obfuscator">Obfuscator</a>
+            <a class="active" href="/docs">Docs</a>
+            <a href="/pricing">Pricing</a>
+        </nav>
+    </header>
+    <main class="wrap">
+        <p class="kicker">Docs</p>
+        <h2>How to use it</h2>
+        <div class="card" style="margin-top:20px">
+            <ol style="padding-left:18px;line-height:1.9">
+                <li>Open <a href="/obfuscator">/obfuscator</a>.</li>
+                <li>Paste Luau. Start with <code>print("hi")</code>.</li>
+                <li>Protect, copy the output, put it in a Script or LocalScript.</li>
+                <li>Do not wrap the output in another obfuscator until this one is stable.</li>
+            </ol>
+        </div>
+        <div class="card" style="margin-top:16px">
+            <h3>What it emits</h3>
+            <p>A Luau file. No native binaries. Uses bit32, string, table, and a generated VM. Compatible with Roblox and luau.org Run.</p>
+        </div>
+        <div class="card" style="margin-top:16px">
+            <h3>Honesty</h3>
+            <p>No public VM is undecompilable. ƒŁ¥ raises time-to-recover. It is not Luraph and will not become Luraph by stacking fake layer counts.</p>
+        </div>
+    </main>
+    <footer>ƒŁ¥ docs</footer>
+</body>
+</html>
