@@ -7,10 +7,8 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <sstream>
-#include <filesystem>
+#include <algorithm>
 #include <cctype>
-
-namespace fs = std::filesystem;
 
 constexpr int PORT = 10000;
 constexpr int BACKLOG = 32;
@@ -32,41 +30,89 @@ std::string mimeType(const std::string& path) {
     if (hasSuffix(path, ".html")) return "text/html";
     if (hasSuffix(path, ".css"))  return "text/css";
     if (hasSuffix(path, ".js"))   return "application/javascript";
-    if (hasSuffix(path, ".png"))  return "image/png";
-    if (hasSuffix(path, ".svg"))  return "image/svg+xml";
     return "text/plain";
 }
 
 std::string jsonEscape(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 16);
-    for (char c : s) {
+    for (unsigned char c : s) {
         switch (c) {
             case '"':  out += "\\\""; break;
             case '\\': out += "\\\\"; break;
             case '\n': out += "\\n";  break;
             case '\r': out += "\\r";  break;
             case '\t': out += "\\t";  break;
-            default:   out += c;      break;
+            default:
+                if (c < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    out += buf;
+                } else {
+                    out += char(c);
+                }
         }
     }
     return out;
 }
 
-// ---------- Robust JSON string extractor ----------
+static std::string toLower(std::string s) {
+    for (char& c : s) c = char(std::tolower((unsigned char)c));
+    return s;
+}
+
+static size_t headerEnd(const std::string& req) {
+    size_t p = req.find("\r\n\r\n");
+    if (p != std::string::npos) return p;
+    return req.find("\n\n");
+}
+
+static int contentLengthOf(const std::string& headers) {
+    std::string h = toLower(headers);
+    size_t p = h.find("content-length:");
+    if (p == std::string::npos) return 0;
+    p += 15;
+    while (p < h.size() && (h[p] == ' ' || h[p] == '\t')) ++p;
+    return std::atoi(h.c_str() + p);
+}
+
+static std::string readRequest(int fd) {
+    std::string req;
+    char buf[4096];
+    while (headerEnd(req) == std::string::npos) {
+        ssize_t n = ::read(fd, buf, sizeof(buf));
+        if (n <= 0) break;
+        req.append(buf, size_t(n));
+        if (req.size() > 8 * 1024 * 1024) break;
+    }
+    size_t he = headerEnd(req);
+    if (he == std::string::npos) return req;
+
+    std::string sep = (req.find("\r\n\r\n") != std::string::npos) ? "\r\n\r\n" : "\n\n";
+    std::string headers = req.substr(0, he);
+    int need = contentLengthOf(headers);
+    size_t bodyStart = he + sep.size();
+    int have = int(req.size() - bodyStart);
+    while (have < need) {
+        ssize_t n = ::read(fd, buf, sizeof(buf));
+        if (n <= 0) break;
+        req.append(buf, size_t(n));
+        have += int(n);
+        if (req.size() > 8 * 1024 * 1024) break;
+    }
+    return req;
+}
+
 static std::string extractJsonString(const std::string& json, const std::string& key) {
     std::string search = "\"" + key + "\"";
     size_t keyPos = json.find(search);
     if (keyPos == std::string::npos) return "";
-
     size_t colon = json.find(':', keyPos + search.size());
     if (colon == std::string::npos) return "";
-
     size_t start = colon + 1;
-    while (start < json.size() && std::isspace(json[start])) start++;
+    while (start < json.size() && std::isspace((unsigned char)json[start])) start++;
     if (start >= json.size() || json[start] != '"') return "";
-
-    start++; // skip opening quote
+    start++;
     std::string result;
     bool escaped = false;
     for (size_t i = start; i < json.size(); ++i) {
@@ -76,33 +122,63 @@ static std::string extractJsonString(const std::string& json, const std::string&
                 case 'n': result += '\n'; break;
                 case 'r': result += '\r'; break;
                 case 't': result += '\t'; break;
-                case '\\': result += '\\'; break;
                 case '"': result += '"'; break;
+                case '\\': result += '\\'; break;
+                case '/': result += '/'; break;
+                case 'u': {
+                    if (i + 4 < json.size()) i += 4;
+                    result += '?';
+                    break;
+                }
                 default: result += c; break;
             }
             escaped = false;
             continue;
         }
-        if (c == '\\') {
-            escaped = true;
-            continue;
-        }
-        if (c == '"') break; // end of string
+        if (c == '\\') { escaped = true; continue; }
+        if (c == '"') break;
         result += c;
     }
     return result;
 }
 
-void handleClient(int clientFd) {
-    char buffer[65536];
-    ssize_t n = read(clientFd, buffer, sizeof(buffer) - 1);
-    if (n <= 0) { close(clientFd); return; }
-    buffer[n] = '\0';
+static std::string extractCode(const std::string& body) {
+    std::string code = extractJsonString(body, "code");
+    if (code.empty()) code = extractJsonString(body, "source");
+    if (code.empty()) code = extractJsonString(body, "script");
+    if (code.empty()) {
+        std::string t = body;
+        while (!t.empty() && std::isspace((unsigned char)t.front())) t.erase(t.begin());
+        if (!t.empty() && t.front() != '{' && t.front() != '[')
+            code = t;
+    }
+    return code;
+}
 
-    std::string request(buffer);
+void sendAll(int fd, const std::string& s) {
+    const char* p = s.data();
+    size_t left = s.size();
+    while (left) {
+        ssize_t n = ::write(fd, p, left);
+        if (n <= 0) break;
+        p += n;
+        left -= size_t(n);
+    }
+}
+
+void handleClient(int clientFd) {
+    std::string request = readRequest(clientFd);
+    if (request.empty()) { close(clientFd); return; }
+
     std::string method = request.substr(0, request.find(' '));
-    std::string path = request.substr(request.find(' ') + 1);
-    path = path.substr(0, path.find(' '));
+    std::string path;
+    size_t sp1 = request.find(' ');
+    if (sp1 != std::string::npos) {
+        size_t sp2 = request.find(' ', sp1 + 1);
+        path = request.substr(sp1 + 1, sp2 - sp1 - 1);
+    }
+    size_t q = path.find('?');
+    if (q != std::string::npos) path = path.substr(0, q);
 
     std::string response;
     int status = 200;
@@ -110,34 +186,28 @@ void handleClient(int clientFd) {
 
     try {
         if (path == "/" || path == "/index.html") {
-            std::string content = readFile(WEB_ROOT + "index.html");
-            if (content.empty()) throw std::runtime_error("index.html not found");
-            response = content;
-            contentType = "text/html";
+            response = readFile(WEB_ROOT + "index.html");
+            if (response.empty()) throw std::runtime_error("index.html not found");
         } else if (path == "/style.css") {
-            std::string content = readFile(WEB_ROOT + "style.css");
-            if (content.empty()) throw std::runtime_error("style.css not found");
-            response = content;
+            response = readFile(WEB_ROOT + "style.css");
             contentType = "text/css";
         } else if (path == "/app.js") {
-            std::string content = readFile(WEB_ROOT + "app.js");
-            if (content.empty()) throw std::runtime_error("app.js not found");
-            response = content;
+            response = readFile(WEB_ROOT + "app.js");
             contentType = "application/javascript";
-        } else if (path == "/api/obfuscate" && method == "POST") {
-            size_t bodyStart = request.find("\r\n\r\n");
-            if (bodyStart == std::string::npos) throw std::runtime_error("Malformed request");
-            std::string body = request.substr(bodyStart + 4);
+        } else if (path == "/api/obfuscate" && (method == "POST" || method == "post")) {
+            size_t he = headerEnd(request);
+            std::string sep = (request.find("\r\n\r\n") != std::string::npos) ? "\r\n\r\n" : "\n\n";
+            std::string body = (he == std::string::npos) ? "" : request.substr(he + sep.size());
 
-            std::string code = extractJsonString(body, "code");
-            if (code.empty()) throw std::runtime_error("Missing or empty 'code' field");
+            std::string code = extractCode(body);
+            if (code.empty())
+                throw std::runtime_error("Missing or empty 'code' field");
 
-            // Options
             bool vmMode = true, polymorphic = true;
             std::string vmStr = extractJsonString(body, "vm");
-            if (vmStr == "false") vmMode = false;
+            if (vmStr == "false" || vmStr == "0") vmMode = false;
             std::string polyStr = extractJsonString(body, "polymorphic");
-            if (polyStr == "false") polymorphic = false;
+            if (polyStr == "false" || polyStr == "0") polymorphic = false;
 
             Transformer transformer;
             Transformer::Options opts;
@@ -147,15 +217,15 @@ void handleClient(int clientFd) {
             opts.encodeStrings = true;
             opts.encodeNumbers = true;
             opts.removeComments = true;
-            opts.decoys = true;
-            opts.antiDebug = true;
+            opts.decoys = false;
+            opts.antiDebug = false;
 
             std::string protectedCode = transformer.protect(code, opts);
-
-            std::stringstream ss;
-            ss << "{\"success\":true,\"code\":\"" << jsonEscape(protectedCode) << "\"}";
-            response = ss.str();
+            response = std::string("{\"success\":true,\"code\":\"") + jsonEscape(protectedCode) + "\"}";
             contentType = "application/json";
+        } else if (method == "OPTIONS" || method == "options") {
+            response = "";
+            contentType = "text/plain";
         } else {
             status = 404;
             response = "404 Not Found";
@@ -163,20 +233,20 @@ void handleClient(int clientFd) {
         }
     } catch (const std::exception& e) {
         status = 500;
-        std::stringstream ss;
-        ss << "{\"success\":false,\"error\":\"" << jsonEscape(e.what()) << "\"}";
-        response = ss.str();
+        response = std::string("{\"success\":false,\"error\":\"") + jsonEscape(e.what()) + "\"}";
         contentType = "application/json";
     }
 
     std::stringstream resp;
-    resp << "HTTP/1.1 " << status << " OK\r\n";
+    resp << "HTTP/1.1 " << status << (status == 200 ? " OK" : " Error") << "\r\n";
     resp << "Content-Type: " << contentType << "\r\n";
     resp << "Content-Length: " << response.size() << "\r\n";
+    resp << "Access-Control-Allow-Origin: *\r\n";
+    resp << "Access-Control-Allow-Headers: Content-Type\r\n";
+    resp << "Access-Control-Allow-Methods: POST, GET, OPTIONS\r\n";
     resp << "Connection: close\r\n\r\n";
     resp << response;
-    std::string full = resp.str();
-    write(clientFd, full.c_str(), full.size());
+    sendAll(clientFd, resp.str());
     close(clientFd);
 }
 
@@ -191,56 +261,39 @@ int main(int argc, char* argv[]) {
         }
         std::string source((std::istreambuf_iterator<char>(in)),
                            std::istreambuf_iterator<char>());
-        in.close();
         try {
             Transformer transformer;
             Transformer::Options opts;
             opts.virtualize = true;
             opts.polymorphic = true;
+            opts.antiDebug = false;
             std::string protectedCode = transformer.protect(source, opts);
             std::ofstream out(outputFile);
-            if (!out.is_open()) {
-                std::cerr << "Cannot write output: " << outputFile << std::endl;
-                return 1;
-            }
             out << protectedCode;
-            out.close();
-            std::cout << "✅ Protected: " << inputFile << " → " << outputFile << std::endl;
-            std::cout << "   Original: " << source.size() << " bytes" << std::endl;
-            std::cout << "   Protected: " << protectedCode.size() << " bytes" << std::endl;
+            std::cout << "Protected: " << inputFile << " -> " << outputFile << std::endl;
         } catch (const std::exception& e) {
-            std::cerr << "❌ Error: " << e.what() << std::endl;
+            std::cerr << "Error: " << e.what() << std::endl;
             return 1;
         }
         return 0;
     }
 
-    std::cout << "🔒 LuaProtecter Server starting on port " << PORT << std::endl;
-    std::cout << "   Web root: " << WEB_ROOT << std::endl;
-    std::cout << "   Open http://localhost:" << PORT << std::endl;
-
+    std::cout << "FLY Obfuscator on port " << PORT << std::endl;
     int serverFd = socket(AF_INET, SOCK_STREAM, 0);
-    if (serverFd < 0) { std::cerr << "Socket error\n"; return 1; }
+    if (serverFd < 0) return 1;
     int opt = 1;
     setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    struct sockaddr_in addr;
+    sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(PORT);
-    if (bind(serverFd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        std::cerr << "Bind failed\n"; close(serverFd); return 1;
-    }
-    if (listen(serverFd, BACKLOG) < 0) {
-        std::cerr << "Listen failed\n"; close(serverFd); return 1;
-    }
-
-    while (true) {
-        struct sockaddr_in clientAddr;
+    if (bind(serverFd, (sockaddr*)&addr, sizeof(addr)) < 0) { close(serverFd); return 1; }
+    if (listen(serverFd, BACKLOG) < 0) { close(serverFd); return 1; }
+    for (;;) {
+        sockaddr_in clientAddr{};
         socklen_t len = sizeof(clientAddr);
-        int clientFd = accept(serverFd, (struct sockaddr*)&clientAddr, &len);
+        int clientFd = accept(serverFd, (sockaddr*)&clientAddr, &len);
         if (clientFd < 0) continue;
         handleClient(clientFd);
     }
-    close(serverFd);
-    return 0;
 }
