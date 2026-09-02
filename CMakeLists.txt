@@ -13,17 +13,11 @@ add_subdirectory(third_party/luau)
 add_executable(luaProtecter
     src/main.cpp
     src/compiler.cpp
-    src/compiler.hpp
     src/transformer.cpp
-    src/transformer.hpp
     src/obfuscator.cpp
-    src/obfuscator.hpp
     src/bytecode.cpp
-    src/bytecode.hpp
     src/virtualizer.cpp
-    src/virtualizer.hpp
     src/vm.cpp
-    src/vm.hpp
 )
 
 target_include_directories(luaProtecter PRIVATE
