@@ -3,105 +3,36 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FŁÝ Obfuscator</title>
+    <title>ƒŁ¥</title>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <header>
-        <a class="logo" href="#top">FŁÝ</a>
+    <header class="nav">
+        <a class="brand" href="/home">ƒŁ¥</a>
         <nav>
-            <a href="#app">Obfuscator</a>
-            <a href="#docs">Docs</a>
-            <a href="#faq">FAQ</a>
-            <a href="#pricing">Pricing</a>
+            <a class="active" href="/home">Home</a>
+            <a href="/obfuscator">Obfuscator</a>
+            <a href="/docs">Docs</a>
+            <a href="/pricing">Pricing</a>
         </nav>
     </header>
-
-    <section class="hero" id="top">
-        <p class="eyebrow">Lua / Luau protection</p>
-        <h1>FŁÝ</h1>
-        <p class="lead">Custom VM output that stays valid Luau, including Roblox.</p>
-        <a class="btn" href="#app">Open obfuscator</a>
-    </section>
-
-    <section id="app">
-        <h2>Obfuscator</h2>
+    <main class="wrap hero">
+        <p class="kicker">Luau protection</p>
+        <h1>ƒŁ¥</h1>
+        <p class="lead">Custom VM output for Roblox and Luau. Built to raise the cost of recovery, not to look like a landing-page clone.</p>
+        <div class="row">
+            <a class="btn" href="/obfuscator">Open obfuscator</a>
+            <a class="btn ghost" href="/docs">Read docs</a>
+        </div>
+    </main>
+    <section class="wrap">
         <div class="grid">
-            <div>
-                <label>Source</label>
-                <textarea id="source">print("Hello from FLY")</textarea>
-            </div>
-            <div>
-                <label>Protected Luau</label>
-                <textarea id="output" readonly></textarea>
-            </div>
-        </div>
-        <div class="bar">
-            <button id="protectButton" class="btn">Protect</button>
-            <button id="copyButton" class="btn dim">Copy</button>
-            <button id="clearButton" class="btn dim">Clear</button>
-            <span id="status">Ready</span>
+            <article class="card"><h3>Virtualize</h3><p>Source is compiled, remapped onto a private ISA, then run by a generated interpreter.</p></article>
+            <article class="card"><h3>Mutate</h3><p>Opcode map, names, and keys change per build so two outputs are not the same file.</p></article>
+            <article class="card"><h3>Lock constants</h3><p>Strings leave the blob encoded. The VM reconstructs them only while executing.</p></article>
+            <article class="card"><h3>Integrity</h3><p>Payload checksum plus a small anti-debug probe before dispatch starts.</p></article>
         </div>
     </section>
-
-    <section id="docs">
-        <h2>Docs</h2>
-        <ol class="steps">
-            <li>Paste Luau or Lua compatible with Roblox.</li>
-            <li>Click Protect. The server compiles, remaps opcodes, encrypts the blob, then emits a Luau VM.</li>
-            <li>Paste the output into a Script / LocalScript / ModuleScript.</li>
-            <li>Keep the file as <code>.lua</code>. Do not wrap it in another obfuscator yet.</li>
-        </ol>
-        <p class="note">First target that must work: <code>print("hi")</code> in Roblox Studio.</p>
-    </section>
-
-    <section id="faq">
-        <h2>FAQ</h2>
-        <details open>
-            <summary>Why did I get “Missing or empty code field”?</summary>
-            <p>The old server read one network packet and dropped the JSON body. That parser is replaced. Redeploy this build before testing again.</p>
-        </details>
-        <details>
-            <summary>Will this run in Roblox?</summary>
-            <p>The emitted file is Luau. It uses <code>bit32</code>, <code>_ENV</code>, and <code>table.unpack</code> only. No <code>getfenv</code>, no <code>os</code>, no <code>debug</code>.</p>
-        </details>
-        <details>
-            <summary>Is this Luraph-level?</summary>
-            <p>No. This is a working custom VM pipeline. Strength comes after the output actually executes.</p>
-        </details>
-        <details>
-            <summary>Free vs premium?</summary>
-            <p>Not enforced yet. The cards are placeholders until the VM is stable.</p>
-        </details>
-    </section>
-
-    <section id="pricing">
-        <h2>Pricing</h2>
-        <div class="cards">
-            <article>
-                <h3>Free</h3>
-                <p class="price">$0</p>
-                <ul>
-                    <li>Public obfuscator</li>
-                    <li>VM output for Roblox</li>
-                    <li>Limits later</li>
-                </ul>
-                <a class="btn" href="#app">Use free</a>
-            </article>
-            <article class="soon">
-                <h3>Premium</h3>
-                <p class="price">Soon</p>
-                <ul>
-                    <li>Higher limits</li>
-                    <li>Stronger VM variants</li>
-                    <li>Not enabled yet</li>
-                </ul>
-                <button class="btn dim" disabled>Coming later</button>
-            </article>
-        </div>
-    </section>
-
-    <footer>FŁÝ Obfuscator</footer>
-    <script src="/app.js"></script>
+    <footer>ƒŁ¥ · custom VM pipeline</footer>
 </body>
 </html>
