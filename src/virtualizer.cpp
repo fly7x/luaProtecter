@@ -32,36 +32,29 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     auto n = [&](Op o) { return int(map[size_t(o)]); };
 
     std::stringstream s;
+    s << "--!nocheck\n";
     s << "-- FLY obfuscator | Roblox Luau VM\n";
     s << "local bit32 = bit32\n";
     s << "local unpack = table.unpack\n";
-    s << "local ENV = _G\n";
-    s << "pcall(function()\n";
-    s << "	if getfenv then ENV = getfenv(1) or ENV end\n";
-    s << "end)\n";
+    s << "local ENV = {}\n";
+    s << "ENV.print = print\n";
+    s << "ENV.warn = warn\n";
+    s << "ENV.pairs = pairs\n";
+    s << "ENV.ipairs = ipairs\n";
+    s << "ENV.type = type\n";
+    s << "ENV.tostring = tostring\n";
+    s << "ENV.tonumber = tonumber\n";
+    s << "ENV.pcall = pcall\n";
+    s << "ENV.error = error\n";
+    s << "ENV.select = select\n";
+    s << "ENV.table = table\n";
+    s << "ENV.string = string\n";
+    s << "ENV.math = math\n";
+    s << "ENV.bit32 = bit32\n";
+    s << "setmetatable(ENV, {__index = function(_, k) return rawget(_G, k) end})\n";
     s << "local B = " << bytesToLuaTable(encrypted.data()) << "\n";
 
     s << R"LUAU(
-local function umul32(a, b)
-	a = bit32.band(a, 4294967295)
-	b = bit32.band(b, 4294967295)
-	local a_lo = bit32.band(a, 65535)
-	local a_hi = bit32.rshift(a, 16)
-	local b_lo = bit32.band(b, 65535)
-	local b_hi = bit32.rshift(b, 16)
-	local low = a_lo * b_lo
-	local mid = a_lo * b_hi + a_hi * b_lo
-	return bit32.band(low + mid * 65536, 4294967295)
-end
-local function mix(x)
-	x = bit32.band(x, 4294967295)
-	x = bit32.bxor(x, bit32.rshift(x, 16))
-	x = umul32(x, 2146178349)
-	x = bit32.bxor(x, bit32.rshift(x, 15))
-	x = umul32(x, 2221721227)
-	x = bit32.bxor(x, bit32.rshift(x, 16))
-	return x
-end
 local function dec(buf)
 	local function u8(i) return buf[i] or 0 end
 	local function u32(i)
@@ -69,12 +62,9 @@ local function dec(buf)
 	end
 	local seed = u32(9)
 	local size = u32(13)
-	local out = table.create(size)
-	local state = seed
+	local out = {}
 	for i = 1, size do
-		state = mix(state + 2654435769)
-		local k = mix(bit32.bxor(state, umul32(i - 1, 2246781559)))
-		out[i] = bit32.band(bit32.bxor(u8(16 + i), k, bit32.rshift(k, 8), bit32.rshift(k, 16)), 255)
+		out[i] = bit32.band(bit32.bxor(u8(16 + i), bit32.band(seed + (i - 1), 255)), 255)
 	end
 	return out
 end
@@ -88,14 +78,15 @@ end
 local function ru32()
 	return ru8() + ru8()*256 + ru8()*65536 + ru8()*16777216
 end
-if ru32() ~= 0x3252504C then
-	error("bad blob")
+local magic = ru32()
+if magic ~= 0x3252504C then
+	error("bad blob " .. tostring(magic))
 end
 ru32()
 ru8()
 local nprotos = ru32()
 local mainId = ru32()
-local protos = table.create(nprotos)
+local protos = {}
 for i = 1, nprotos do
 	local p = {code = {}, k = {}, child = {}}
 	p.maxstack, p.nparams, p.nups, p.isvararg = ru8(), ru8(), ru8(), ru8()
@@ -113,7 +104,7 @@ for i = 1, nprotos do
 			p.k[j] = string.unpack("<d", bytes)
 		elseif tag == 3 then
 			local n = ru32()
-			local t = table.create(n)
+			local t = {}
 			for z = 1, n do
 				t[z] = string.char(ru8())
 			end
@@ -132,9 +123,6 @@ local function kn(p, word)
 	if word >= 2147483648 then
 		return p.k[(word - 2147483648) + 1]
 	end
-	if word >= 2147483648 then
-		return word - 4294967296
-	end
 	return word
 end
 local function exec(pid, args)
@@ -142,7 +130,7 @@ local function exec(pid, args)
 	if not p then
 		error("bad proto")
 	end
-	local reg = table.create(p.maxstack or 8)
+	local reg = {}
 	if args then
 		for i = 1, #args do
 			reg[i] = args[i]
@@ -192,7 +180,7 @@ local function exec(pid, args)
     s << "		elseif op == " << n(Op::CALL) << " then\n";
     s << "			local narg = if B == 0 then (#reg - A) else (B - 1)\n";
     s << "			local fn = reg[Ra]\n";
-    s << "			local argv = table.create(math.max(narg, 0))\n";
+    s << "			local argv = {}\n";
     s << "			for i = 1, math.max(narg, 0) do argv[i] = reg[Ra + i] end\n";
     s << "			local ret = {fn(unpack(argv, 1, math.max(narg, 0)))}\n";
     s << "			if C ~= 1 then\n";
@@ -201,7 +189,7 @@ local function exec(pid, args)
     s << "			end\n";
     s << "		elseif op == " << n(Op::RETURN) << " then\n";
     s << "			local nret = if B == 0 then (#reg - A) else (B - 1)\n";
-    s << "			local out = table.create(math.max(nret, 0))\n";
+    s << "			local out = {}\n";
     s << "			for i = 1, math.max(nret, 0) do out[i] = reg[Ra + i - 1] end\n";
     s << "			return unpack(out, 1, math.max(nret, 0))\n";
     s << "		elseif op == " << n(Op::FORPREP) << " then\n";
