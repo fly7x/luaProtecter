@@ -1,47 +1,40 @@
 const source = document.getElementById("source");
 const output = document.getElementById("output");
 const status = document.getElementById("status");
-const protectButton = document.getElementById("protectButton");
-const copyButton = document.getElementById("copyButton");
-const clearButton = document.getElementById("clearButton");
 
-protectButton.addEventListener("click", async () => {
+document.getElementById("protectButton").onclick = async () => {
     const code = source.value;
     if (!code.trim()) {
-        status.textContent = "paste a script first";
+        status.textContent = "Paste source first";
         return;
     }
-    status.textContent = "protecting...";
-    protectButton.disabled = true;
+    status.textContent = "Protecting...";
     try {
         const res = await fetch("/api/obfuscate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                code,
-                vm: document.getElementById("vmMode").checked ? "true" : "false",
-                polymorphic: document.getElementById("polymorphic").checked ? "true" : "false"
-            })
+            body: JSON.stringify({ code: code, vm: "true", polymorphic: "true" })
         });
-        const data = await res.json();
-        if (!data.success) throw new Error(data.error || "protect failed");
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); }
+        catch { throw new Error(text.slice(0, 180) || "Bad server response"); }
+        if (!data.success) throw new Error(data.error || "Protect failed");
         output.value = data.code;
-        status.textContent = "done · " + data.code.length + " bytes";
-    } catch (err) {
-        status.textContent = String(err.message || err);
-    } finally {
-        protectButton.disabled = false;
+        status.textContent = "Done (" + data.code.length + " bytes)";
+    } catch (e) {
+        status.textContent = String(e.message || e);
     }
-});
+};
 
-copyButton.addEventListener("click", async () => {
+document.getElementById("copyButton").onclick = async () => {
     if (!output.value) return;
     await navigator.clipboard.writeText(output.value);
-    status.textContent = "copied";
-});
+    status.textContent = "Copied";
+};
 
-clearButton.addEventListener("click", () => {
+document.getElementById("clearButton").onclick = () => {
     source.value = "";
     output.value = "";
-    status.textContent = "ready";
-});
+    status.textContent = "Ready";
+};
