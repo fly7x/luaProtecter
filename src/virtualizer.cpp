@@ -1,6 +1,5 @@
 #include "virtualizer.hpp"
 #include <sstream>
-#include <iomanip>
 
 namespace Protect {
 
@@ -27,7 +26,7 @@ std::string Virtualizer::bytesToLuaTable(const std::vector<uint8_t>& data) const
 std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
                                                const Options&) const {
     if (encrypted.empty())
-        return "-- empty\nreturn nil\n";
+        return "return nil\n";
 
     auto map = makeOpcodeMap(seed32());
     auto n = [&](Op o) { return int(map[size_t(o)]); };
@@ -35,17 +34,31 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     std::stringstream s;
     s << "-- FLY obfuscator | Roblox Luau VM\n";
     s << "local bit32 = bit32\n";
-    s << "local ENV = _ENV\n";
     s << "local unpack = table.unpack\n";
+    s << "local ENV = _G\n";
+    s << "pcall(function()\n";
+    s << "	if getfenv then ENV = getfenv(1) or ENV end\n";
+    s << "end)\n";
     s << "local B = " << bytesToLuaTable(encrypted.data()) << "\n";
 
-    s <<
-R"(local function mix(x)
-	x = x % 4294967296
+    s << R"LUAU(
+local function umul32(a, b)
+	a = bit32.band(a, 4294967295)
+	b = bit32.band(b, 4294967295)
+	local a_lo = bit32.band(a, 65535)
+	local a_hi = bit32.rshift(a, 16)
+	local b_lo = bit32.band(b, 65535)
+	local b_hi = bit32.rshift(b, 16)
+	local low = a_lo * b_lo
+	local mid = a_lo * b_hi + a_hi * b_lo
+	return bit32.band(low + mid * 65536, 4294967295)
+end
+local function mix(x)
+	x = bit32.band(x, 4294967295)
 	x = bit32.bxor(x, bit32.rshift(x, 16))
-	x = (x * 2146178349) % 4294967296
+	x = umul32(x, 2146178349)
 	x = bit32.bxor(x, bit32.rshift(x, 15))
-	x = (x * 2221721227) % 4294967296
+	x = umul32(x, 2221721227)
 	x = bit32.bxor(x, bit32.rshift(x, 16))
 	return x
 end
@@ -60,8 +73,8 @@ local function dec(buf)
 	local state = seed
 	for i = 1, size do
 		state = mix(state + 2654435769)
-		local k = mix(bit32.bxor(state, ((i-1) * 2246781559) % 4294967296))
-		out[i] = bit32.band(bit32.bxor(u8(16+i), k, bit32.rshift(k,8), bit32.rshift(k,16)), 255)
+		local k = mix(bit32.bxor(state, umul32(i - 1, 2246781559)))
+		out[i] = bit32.band(bit32.bxor(u8(16 + i), k, bit32.rshift(k, 8), bit32.rshift(k, 16)), 255)
 	end
 	return out
 end
@@ -75,35 +88,44 @@ end
 local function ru32()
 	return ru8() + ru8()*256 + ru8()*65536 + ru8()*16777216
 end
-if ru32() ~= 844715340 then error("bad blob") end
-ru32() ru8()
+if ru32() ~= 0x3252504C then
+	error("bad blob")
+end
+ru32()
+ru8()
 local nprotos = ru32()
 local mainId = ru32()
 local protos = table.create(nprotos)
 for i = 1, nprotos do
-	local p = {code={}, k={}, child={}}
+	local p = {code = {}, k = {}, child = {}}
 	p.maxstack, p.nparams, p.nups, p.isvararg = ru8(), ru8(), ru8(), ru8()
 	local ncode = ru32()
-	for j = 1, ncode do p.code[j] = ru32() end
+	for j = 1, ncode do
+		p.code[j] = ru32()
+	end
 	local nk = ru32()
 	for j = 1, nk do
 		local tag = ru8()
 		if tag == 1 then
 			p.k[j] = ru8() ~= 0
 		elseif tag == 2 then
-			local bytes = string.char(ru8(),ru8(),ru8(),ru8(),ru8(),ru8(),ru8(),ru8())
+			local bytes = string.char(ru8(), ru8(), ru8(), ru8(), ru8(), ru8(), ru8(), ru8())
 			p.k[j] = string.unpack("<d", bytes)
 		elseif tag == 3 then
 			local n = ru32()
 			local t = table.create(n)
-			for z = 1, n do t[z] = string.char(ru8()) end
+			for z = 1, n do
+				t[z] = string.char(ru8())
+			end
 			p.k[j] = table.concat(t)
 		else
 			p.k[j] = nil
 		end
 	end
 	local nc = ru32()
-	for j = 1, nc do p.child[j] = ru32() end
+	for j = 1, nc do
+		p.child[j] = ru32()
+	end
 	protos[i] = p
 end
 local function kn(p, word)
@@ -117,9 +139,14 @@ local function kn(p, word)
 end
 local function exec(pid, args)
 	local p = protos[pid + 1]
+	if not p then
+		error("bad proto")
+	end
 	local reg = table.create(p.maxstack or 8)
 	if args then
-		for i = 1, #args do reg[i] = args[i] end
+		for i = 1, #args do
+			reg[i] = args[i]
+		end
 	end
 	local pc = 1
 	local code = p.code
@@ -130,9 +157,11 @@ local function exec(pid, args)
 		local B = bit32.band(bit32.rshift(inst, 16), 255)
 		local C = bit32.band(bit32.rshift(inst, 24), 255)
 		local D = bit32.band(bit32.rshift(inst, 16), 65535)
-		if D >= 32768 then D -= 65536 end
+		if D >= 32768 then
+			D -= 65536
+		end
 		local Ra, Rb, Rc = A + 1, B + 1, C + 1
-)";
+)LUAU";
 
     s << "		if op == " << n(Op::MOVE) << " then reg[Ra] = reg[Rb]\n";
     s << "		elseif op == " << n(Op::LOADNIL) << " then reg[Ra] = nil\n";
