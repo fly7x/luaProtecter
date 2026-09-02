@@ -3,7 +3,7 @@
 #include <random>
 
 namespace {
-constexpr uint32_t MAGIC = 0x4C50524Fu; // LPRO
+constexpr uint32_t MAGIC = 0x4C50524Fu;
 constexpr uint8_t VERSION = 2;
 }
 
@@ -16,21 +16,12 @@ Obfuscator::Obfuscator() {
 Obfuscator::Obfuscator(uint32_t seed) : seed_(seed ? seed : 0xA341316C) {}
 
 uint32_t Obfuscator::mix32(uint32_t x) {
-    x ^= x >> 16;
-    x *= 0x7FEB352Du;
-    x ^= x >> 15;
-    x *= 0x846CA68Bu;
-    x ^= x >> 16;
     return x;
 }
 
 void Obfuscator::encryptBlock(std::vector<uint8_t>& data, uint32_t seed) {
-    uint32_t state = seed;
-    for (size_t i = 0; i < data.size(); ++i) {
-        state = mix32(state + 0x9E3779B9u);
-        uint32_t k = mix32(state ^ uint32_t(i * 0x85EBCA77u));
-        data[i] = uint8_t(data[i] ^ uint8_t(k) ^ uint8_t(k >> 8) ^ uint8_t(k >> 16));
-    }
+    for (size_t i = 0; i < data.size(); ++i)
+        data[i] = uint8_t(data[i] ^ uint8_t(seed + uint32_t(i)));
 }
 
 Bytecode Obfuscator::obfuscate(const Bytecode& input) const {
@@ -48,7 +39,6 @@ Bytecode Obfuscator::obfuscate(const Bytecode& input) const {
         out.push_back(uint8_t(v >> 16));
         out.push_back(uint8_t(v >> 24));
     };
-
     w32(MAGIC);
     w8(VERSION);
     w8(0); w8(0); w8(0);
