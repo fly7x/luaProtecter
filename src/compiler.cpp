@@ -25,14 +25,11 @@ Compiler::Result Compiler::compile(const std::string& source) const {
         return result;
     }
     
-    // Check for error marker (Luau returns bytecode with error string if compilation fails)
     if (bytecodeSize >= 4 && 
         compiled[0] == 'L' && compiled[1] == 'B' && compiled[2] == 'C') {
-        // Valid bytecode header
         result.bytecode = Bytecode(std::vector<uint8_t>(compiled, compiled + bytecodeSize));
         result.success = true;
     } else {
-        // Error message encoded as string
         std::string errorMsg(compiled, bytecodeSize);
         result.error = errorMsg;
     }
