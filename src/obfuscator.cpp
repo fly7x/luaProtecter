@@ -2,62 +2,82 @@
 #include <random>
 #include <chrono>
 #include <cstring>
-#include <limits>
 
 namespace {
-    constexpr uint32_t MAGIC = 0x31564D4Cu;
-    constexpr uint8_t VERSION = 1;
-    uint32_t generateSeed() {
-        std::random_device rd;
-        uint32_t a = static_cast<uint32_t>(rd());
-        uint32_t b = static_cast<uint32_t>(rd());
-        auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-        uint64_t ts = static_cast<uint64_t>(now);
-        uint32_t seed = a ^ (b * 0x9E3779B9u) ^ static_cast<uint32_t>(ts) ^ static_cast<uint32_t>(ts >> 32);
-        if (seed == 0) seed = 0xA341316Cu;
-        return seed;
+    constexpr uint32_t MAGIC = 0x4C50524Fu; // "LPRO"
+    constexpr uint8_t  VERSION = 2;
+}
+
+Obfuscator::Obfuscator() : seed_(0) {
+    std::random_device rd;
+    seed_ = rd() ^ static_cast<uint32_t>(
+        std::chrono::high_resolution_clock::now().time_since_epoch().count());
+    if (seed_ == 0) seed_ = 0xA341316C;
+}
+
+Obfuscator::Obfuscator(uint32_t seed) : seed_(seed ? seed : 0xA341316C) {}
+
+uint32_t Obfuscator::mix32(uint32_t x) {
+    x ^= x >> 16;
+    x *= 0x7FEB352D;
+    x ^= x >> 15;
+    x *= 0x846CA68B;
+    x ^= x >> 16;
+    return x;
+}
+
+uint32_t Obfuscator::nextKey(uint32_t& state) {
+    state = mix32(state + 0x9E3779B9u);
+    return state;
+}
+
+void Obfuscator::encryptBlock(std::vector<uint8_t>& data, uint32_t seed) {
+    uint32_t state = seed;
+    for (size_t i = 0; i < data.size(); ++i) {
+        uint32_t k = nextKey(state);
+        // Extra mixing based on position
+        k ^= static_cast<uint32_t>(i * 0x85EBCA77u);
+        k = mix32(k);
+        data[i] ^= static_cast<uint8_t>(k);
+        data[i] ^= static_cast<uint8_t>(k >> 8);
+        data[i] ^= static_cast<uint8_t>(k >> 16);
     }
 }
 
-Obfuscator::Obfuscator() : seed_(generateSeed()) {}
-Obfuscator::Obfuscator(uint32_t seed) : seed_(seed) { if (seed_ == 0) seed_ = generateSeed(); }
+std::vector<uint8_t> Obfuscator::packHeader(uint32_t seed, uint32_t originalSize) {
+    std::vector<uint8_t> header;
+    header.reserve(16);
 
-uint32_t Obfuscator::mix32(uint32_t value) {
-    value ^= value >> 16;
-    value *= 0x7FEB352Du;
-    value ^= value >> 15;
-    value *= 0x846CA68Bu;
-    value ^= value >> 16;
-    return value;
+    auto writeU32 = [&](uint32_t v) {
+        header.push_back(v & 0xFF);
+        header.push_back((v >> 8) & 0xFF);
+        header.push_back((v >> 16) & 0xFF);
+        header.push_back((v >> 24) & 0xFF);
+    };
+
+    writeU32(MAGIC);
+    header.push_back(VERSION);
+    header.push_back(0); // reserved
+    header.push_back(0);
+    header.push_back(0);
+    writeU32(seed);
+    writeU32(originalSize);
+
+    return header;
 }
 
-uint8_t Obfuscator::keyByte(uint32_t seed, size_t position) {
-    uint32_t index = static_cast<uint32_t>(position);
-    uint32_t state = seed ^ (index * 0x9E3779B9u);
-    state = mix32(state);
-    return static_cast<uint8_t>(state & 0xFFu);
-}
-
-void Obfuscator::writeU32(std::vector<uint8_t>& output, uint32_t value) {
-    output.push_back(static_cast<uint8_t>(value));
-    output.push_back(static_cast<uint8_t>(value >> 8));
-    output.push_back(static_cast<uint8_t>(value >> 16));
-    output.push_back(static_cast<uint8_t>(value >> 24));
-}
-
-Bytecode Obfuscator::obfuscate(const Bytecode& input) const {
+Bytecode Obfuscator::obfuscate(const Bytecode& input, const Options& opts) const {
     if (input.empty()) return Bytecode();
-    const auto& src = input.data();
-    std::vector<uint8_t> result;
-    result.reserve(13 + src.size());
-    writeU32(result, MAGIC);
-    result.push_back(VERSION);
-    writeU32(result, seed_);
-    if (src.size() > static_cast<size_t>(UINT32_MAX)) return Bytecode();
-    writeU32(result, static_cast<uint32_t>(src.size()));
-    for (size_t i = 0; i < src.size(); ++i) {
-        uint8_t encrypted = static_cast<uint8_t>(src[i] ^ keyByte(seed_, i));
-        result.push_back(encrypted);
-    }
-    return Bytecode(std::move(result));
+
+    std::vector<uint8_t> data = input.data();
+    uint32_t originalSize = static_cast<uint32_t>(data.size());
+
+    // Strong encryption
+    encryptBlock(data, seed_);
+
+    // Pack header + encrypted payload
+    auto header = packHeader(seed_, originalSize);
+    header.insert(header.end(), data.begin(), data.end());
+
+    return Bytecode(std::move(header));
 }
