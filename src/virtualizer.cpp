@@ -1,245 +1,219 @@
 #include "virtualizer.hpp"
 #include <sstream>
 #include <iomanip>
-#include <random>
-#include <chrono>
 
 namespace Protect {
 
-Virtualizer::Virtualizer(uint64_t seed) : seed_(seed) {
-    if (seed_ == 0) seed_ = 0x9E3779B97F4A7C15ULL;
+Virtualizer::Virtualizer(uint64_t seed) : seed_(seed ? seed : 0x9E3779B97F4A7C15ULL),
+                                          rng_(static_cast<uint32_t>(seed_ ^ (seed_ >> 32))) {}
+
+uint32_t Virtualizer::nextU32() const {
+    return rng_();
+}
+
+std::string Virtualizer::ident(const char* prefix) const {
+    std::stringstream ss;
+    ss << prefix << "_" << std::hex << (nextU32() & 0xFFFFF);
+    return ss.str();
+}
+
+std::array<uint8_t, static_cast<size_t>(Op::COUNT)> Virtualizer::buildOpcodeMap() const {
+    std::array<uint8_t, static_cast<size_t>(Op::COUNT)> map{};
+    std::vector<uint8_t> ids;
+    for (int i = 1; i <= 240; ++i) ids.push_back(static_cast<uint8_t>(i));
+    std::shuffle(ids.begin(), ids.end(), rng_);
+    for (size_t i = 0; i < map.size(); ++i) map[i] = ids[i];
+    return map;
 }
 
 std::string Virtualizer::bytecodeToLuaTable(const std::vector<uint8_t>& data) const {
     std::stringstream ss;
     ss << "{";
     for (size_t i = 0; i < data.size(); ++i) {
-        if (i > 0) ss << ",";
+        if (i) ss << ",";
+        if ((i % 24) == 0) ss << "\n";
         ss << static_cast<int>(data[i]);
     }
     ss << "}";
     return ss.str();
 }
 
-std::string Virtualizer::generateVMName() const {
-    uint64_t r = seed_ ^ 0x9e3779b97f4a7c15ULL;
-    r ^= r >> 30;
-    r *= 0xbf58476d1ce4e5b9ULL;
-    r ^= r >> 27;
-    r *= 0x94d049bb133111ebULL;
-    r ^= r >> 31;
-    std::stringstream ss;
-    ss << "_vm" << std::hex << (r & 0xFFFFFFFF);
-    return ss.str();
+std::string Virtualizer::generateDecryptor(const std::string& fnName) const {
+    return
+        "local function " + fnName + "(data, seed)\n"
+        "  local out = {}\n"
+        "  local state = seed\n"
+        "  local function mix(x)\n"
+        "    x = x ~ (x >> 16)\n"
+        "    x = (x * 0x7FEB352D) % 4294967296\n"
+        "    x = x ~ (x >> 15)\n"
+        "    x = (x * 0x846CA68B) % 4294967296\n"
+        "    return x ~ (x >> 16)\n"
+        "  end\n"
+        "  for i = 1, #data do\n"
+        "    state = mix(state + 0x9E3779B9)\n"
+        "    local k = mix(state ~ ((i-1) * 0x85EBCA77))\n"
+        "    out[i] = data[i] ~ (k & 255) ~ ((k >> 8) & 255) ~ ((k >> 16) & 255)\n"
+        "  end\n"
+        "  return out\n"
+        "end\n";
 }
 
-std::string Virtualizer::generateAntiDebug() const {
-    return R"(
-local function _antiDebug()
-    if debug and debug.getinfo then
-        local info = debug.getinfo(2)
-        if info and info.name == 'debug' then
-            error('Debugger detected', 2)
-        end
-    end
-    local t1 = os.clock()
-    local t2 = os.clock()
-    if (t2 - t1) > 0.001 then
-        error('Timing anomaly')
-    end
-end
-)";
+std::string Virtualizer::generateAntiDebug(const std::string& fnName) const {
+    return
+        "local function " + fnName + "()\n"
+        "  if debug and type(debug.getinfo) == 'function' then\n"
+        "    local ok, info = pcall(debug.getinfo, 2, 'Snl')\n"
+        "    if ok and info and (info.what == 'C' or info.namewhat == 'hook') then\n"
+        "      error('protected', 0)\n"
+        "    end\n"
+        "  end\n"
+        "  local a = os.clock()\n"
+        "  local s = 0\n"
+        "  for i = 1, 64 do s = s + i end\n"
+        "  local b = os.clock()\n"
+        "  if (b - a) > 0.05 then error('protected', 0) end\n"
+        "end\n";
 }
 
-std::string Virtualizer::generateDecryptor() const {
-    return R"(
-local function _decrypt(data, seed)
-    local result = {}
-    for i = 1, #data do
-        local b = data[i]
-        local key = seed
-        key = key ~ (key >> 16)
-        key = key * 0x7FEB352D
-        key = key ~ (key >> 15)
-        key = key * 0x846CA68B
-        key = key ~ (key >> 16)
-        local idx = i - 1
-        local k = seed ~ (idx * 0x9E3779B9)
-        k = k ~ (k >> 16) * 0x7FEB352D
-        k = k ~ (k >> 15) * 0x846CA68B
-        k = k ~ (k >> 16)
-        result[i] = b ~ (k & 0xFF)
-    end
-    return result
-end
-)";
-}
-
-std::string Virtualizer::generateInterpreter(const std::string& bytecodeTableVar,
+std::string Virtualizer::generateInterpreter(const std::string& bcVar,
                                              const std::string& seedVar,
-                                             bool antiDebug) const {
-    std::stringstream code;
+                                             const std::string& decryptFn,
+                                             const std::string& antiFn,
+                                             const Options& options) const {
+    auto op = buildOpcodeMap();
+    auto nMOVE     = std::to_string(op[static_cast<size_t>(Op::MOVE)]);
+    auto nLOADK    = std::to_string(op[static_cast<size_t>(Op::LOADK)]);
+    auto nLOADNIL  = std::to_string(op[static_cast<size_t>(Op::LOADNIL)]);
+    auto nLOADBOOL = std::to_string(op[static_cast<size_t>(Op::LOADBOOL)]);
+    auto nADD      = std::to_string(op[static_cast<size_t>(Op::ADD)]);
+    auto nSUB      = std::to_string(op[static_cast<size_t>(Op::SUB)]);
+    auto nMUL      = std::to_string(op[static_cast<size_t>(Op::MUL)]);
+    auto nDIV      = std::to_string(op[static_cast<size_t>(Op::DIV)]);
+    auto nMOD      = std::to_string(op[static_cast<size_t>(Op::MOD)]);
+    auto nPOW      = std::to_string(op[static_cast<size_t>(Op::POW)]);
+    auto nUNM      = std::to_string(op[static_cast<size_t>(Op::UNM)]);
+    auto nNOT      = std::to_string(op[static_cast<size_t>(Op::NOT)]);
+    auto nLEN      = std::to_string(op[static_cast<size_t>(Op::LEN)]);
+    auto nCONCAT   = std::to_string(op[static_cast<size_t>(Op::CONCAT)]);
+    auto nJMP      = std::to_string(op[static_cast<size_t>(Op::JMP)]);
+    auto nEQ       = std::to_string(op[static_cast<size_t>(Op::EQ)]);
+    auto nLT       = std::to_string(op[static_cast<size_t>(Op::LT)]);
+    auto nLE       = std::to_string(op[static_cast<size_t>(Op::LE)]);
+    auto nCALL     = std::to_string(op[static_cast<size_t>(Op::CALL)]);
+    auto nRETURN   = std::to_string(op[static_cast<size_t>(Op::RETURN)]);
+    auto nFORLOOP  = std::to_string(op[static_cast<size_t>(Op::FORLOOP)]);
+    auto nFORPREP  = std::to_string(op[static_cast<size_t>(Op::FORPREP)]);
+    auto nTFORCALL = std::to_string(op[static_cast<size_t>(Op::TFORCALL)]);
+    auto nTFORLOOP = std::to_string(op[static_cast<size_t>(Op::TFORLOOP)]);
+    auto nSETLIST  = std::to_string(op[static_cast<size_t>(Op::SETLIST)]);
+    auto nCLOSURE  = std::to_string(op[static_cast<size_t>(Op::CLOSURE)]);
+    auto nVARARG   = std::to_string(op[static_cast<size_t>(Op::VARARG)]);
 
-    code << "local pc = 1\n";
-    code << "local reg = {}\n";
-    code << "local stack = {}\n";
-    code << "local top = 0\n";
-    code << "local bc = " << bytecodeTableVar << "\n";
+    std::string pc   = ident("pc");
+    std::string reg  = ident("r");
+    std::string st   = ident("s");
+    std::string top  = ident("t");
+    std::string inst = ident("i");
+    std::string code = ident("op");
+    std::string a    = ident("a");
+    std::string b    = ident("b");
+    std::string c    = ident("c");
+    std::string d    = ident("d");
+    std::string state= ident("st");
+    std::string pred = std::to_string((nextU32() % 7) + 3);
 
-    code << "bc = _decrypt(bc, " << seedVar << ")\n";
+    std::stringstream ss;
+    ss << "local " << pc << ", " << reg << ", " << st << ", " << top << " = 1, {}, {}, 0\n";
+    ss << "local " << bcVar << " = " << decryptFn << "(" << bcVar << ", " << seedVar << ")\n";
+    if (options.antiDebug) ss << antiFn << "()\n";
 
-    if (antiDebug) {
-        code << "_antiDebug()\n";
-    }
+    ss << "local " << state << " = 1\n";
+    ss << "while " << state << " ~= 0 do\n";
+    ss << "  if " << state << " == 1 then\n";
+    ss << "    if (" << pred << " * " << pred << ") < 0 then " << state << " = 99 else " << state << " = 2 end\n";
+    ss << "  elseif " << state << " == 2 then\n";
+    ss << "    while " << pc << " <= #" << bcVar << " do\n";
+    ss << "      local " << inst << " = " << bcVar << "[" << pc << "]\n";
+    ss << "      local " << code << " = " << inst << " & 255\n";
+    ss << "      local " << a << " = (" << inst << " >> 8) & 255\n";
+    ss << "      local " << b << " = (" << inst << " >> 16) & 255\n";
+    ss << "      local " << c << " = (" << inst << " >> 24) & 255\n";
+    ss << "      local " << d << " = (" << inst << " >> 16) & 65535\n";
 
-    // Flattened dispatch loop
-    code << "local state = 0\n";
-    code << "local dispatch = {\n";
-    code << "  [0] = function()\n";
-    code << "    while pc <= #bc do\n";
-    code << "      local inst = bc[pc]\n";
-    code << "      local op = inst & 0xFF\n";
-    code << "      local a = (inst >> 8) & 0xFF\n";
-    code << "      local b = (inst >> 16) & 0xFF\n";
-    code << "      local c = (inst >> 24) & 0xFF\n";
-    code << "      local d = (inst >> 16) & 0xFFFF\n";
-    code << "      local e = (inst >> 8) & 0xFFFFFF\n";
-    code << "      if e & 0x800000 then e = e - 0x1000000 end\n";
-
-    // --- Opcode handlers (extensive list) ---
-    code << R"(
-      if op == 0x01 then -- MOVE
-        reg[a] = reg[b]
-      elseif op == 0x02 then -- LOADK
-        local k = bc[pc+1]
-        reg[a] = k
-        pc = pc + 1
-      elseif op == 0x03 then -- LOADNIL
-        for i = a, b do reg[i] = nil end
-      elseif op == 0x04 then -- LOADBOOL
-        reg[a] = (b ~= 0)
-      elseif op == 0x05 then -- ADD
-        reg[a] = reg[b] + reg[c]
-      elseif op == 0x06 then -- SUB
-        reg[a] = reg[b] - reg[c]
-      elseif op == 0x07 then -- MUL
-        reg[a] = reg[b] * reg[c]
-      elseif op == 0x08 then -- DIV
-        reg[a] = reg[b] / reg[c]
-      elseif op == 0x09 then -- MOD
-        reg[a] = reg[b] % reg[c]
-      elseif op == 0x0A then -- POW
-        reg[a] = reg[b] ^ reg[c]
-      elseif op == 0x0B then -- UNM
-        reg[a] = -reg[b]
-      elseif op == 0x0C then -- NOT
-        reg[a] = not reg[b]
-      elseif op == 0x0D then -- LEN
-        reg[a] = #reg[b]
-      elseif op == 0x0E then -- CONCAT
-        local s = ''
-        for i = b, c do s = s .. reg[i] end
-        reg[a] = s
-      elseif op == 0x0F then -- JMP
-        pc = pc + d
-      elseif op == 0x10 then -- EQ
-        if (reg[b] == reg[c]) == (a ~= 0) then
-          pc = pc + d
-        end
-      elseif op == 0x11 then -- LT
-        if (reg[b] < reg[c]) == (a ~= 0) then
-          pc = pc + d
-        end
-      elseif op == 0x12 then -- LE
-        if (reg[b] <= reg[c]) == (a ~= 0) then
-          pc = pc + d
-        end
-      elseif op == 0x13 then -- CALL
-        local func = reg[a]
-        local nargs = b - 1
-        local nresults = c - 1
-        local args = {}
-        for i = 1, nargs do args[i] = reg[a + i] end
-        local results = { func(table.unpack(args)) }
-        for i = 1, nresults do reg[a + i - 1] = results[i] end
-        if nresults == 0 then top = #results end
-      elseif op == 0x14 then -- RETURN
-        local n = b - 1
-        local ret = {}
-        for i = 1, n do ret[i] = reg[a + i - 1] end
-        return table.unpack(ret)
-      elseif op == 0x15 then -- FORLOOP
-        local idx = reg[a]
-        local limit = reg[a+1]
-        local step = reg[a+2]
-        if (step > 0 and idx <= limit) or (step < 0 and idx >= limit) then
-          reg[a] = idx + step
-          pc = pc + d
-        end
-      elseif op == 0x16 then -- FORPREP
-        reg[a] = reg[a] - reg[a+1]
-        pc = pc + d
-      elseif op == 0x17 then -- TFORCALL
-        local func = reg[a]
-        local nargs = b
-        local args = {}
-        for i = 1, nargs do args[i] = reg[a + i] end
-        local results = { func(table.unpack(args)) }
-        for i = 1, #results do reg[a + i - 1] = results[i] end
-      elseif op == 0x18 then -- TFORLOOP
-        reg[a] = reg[a] + 1
-        pc = pc + d
-      elseif op == 0x19 then -- SETLIST
-        local idx = b
-        local n = c
-        for i = 1, n do
-          reg[a][idx + i - 1] = reg[a + i]
-        end
-      elseif op == 0x1A then -- CLOSURE
-        local proto = bc[pc+1]
-        reg[a] = function() end -- placeholder
-        pc = pc + 1
-      elseif op == 0x1B then -- VARARG
-        local n = b - 1
-        for i = 1, n do reg[a + i - 1] = stack[top + i] end
-      else
-        -- Unknown opcode: skip
-      end
-)";
-    code << "      pc = pc + 1\n";
-    code << "    end\n";
-    code << "  end,\n";
-    code << "}\n";
-    code << "dispatch[0]()\n";
-
-    return code.str();
+    ss << "      if " << code << " == " << nMOVE << " then " << reg << "[" << a << "] = " << reg << "[" << b << "]\n";
+    ss << "      elseif " << code << " == " << nLOADK << " then " << reg << "[" << a << "] = " << bcVar << "[" << pc << "+1]; " << pc << " = " << pc << " + 1\n";
+    ss << "      elseif " << code << " == " << nLOADNIL << " then for i=" << a << "," << b << " do " << reg << "[i]=nil end\n";
+    ss << "      elseif " << code << " == " << nLOADBOOL << " then " << reg << "[" << a << "] = (" << b << " ~= 0)\n";
+    ss << "      elseif " << code << " == " << nADD << " then " << reg << "[" << a << "] = " << reg << "[" << b << "] + " << reg << "[" << c << "]\n";
+    ss << "      elseif " << code << " == " << nSUB << " then " << reg << "[" << a << "] = " << reg << "[" << b << "] - " << reg << "[" << c << "]\n";
+    ss << "      elseif " << code << " == " << nMUL << " then " << reg << "[" << a << "] = " << reg << "[" << b << "] * " << reg << "[" << c << "]\n";
+    ss << "      elseif " << code << " == " << nDIV << " then " << reg << "[" << a << "] = " << reg << "[" << b << "] / " << reg << "[" << c << "]\n";
+    ss << "      elseif " << code << " == " << nMOD << " then " << reg << "[" << a << "] = " << reg << "[" << b << "] % " << reg << "[" << c << "]\n";
+    ss << "      elseif " << code << " == " << nPOW << " then " << reg << "[" << a << "] = " << reg << "[" << b << "] ^ " << reg << "[" << c << "]\n";
+    ss << "      elseif " << code << " == " << nUNM << " then " << reg << "[" << a << "] = -" << reg << "[" << b << "]\n";
+    ss << "      elseif " << code << " == " << nNOT << " then " << reg << "[" << a << "] = not " << reg << "[" << b << "]\n";
+    ss << "      elseif " << code << " == " << nLEN << " then " << reg << "[" << a << "] = #" << reg << "[" << b << "]\n";
+    ss << "      elseif " << code << " == " << nCONCAT << " then\n";
+    ss << "        local s=''; for i=" << b << "," << c << " do s=s.." << reg << "[i] end; " << reg << "[" << a << "]=s\n";
+    ss << "      elseif " << code << " == " << nJMP << " then " << pc << " = " << pc << " + " << d << "\n";
+    ss << "      elseif " << code << " == " << nEQ << " then if (" << reg << "[" << b << "]==" << reg << "[" << c << "])==(" << a << "~=0) then " << pc << "=" << pc << "+" << d << " end\n";
+    ss << "      elseif " << code << " == " << nLT << " then if (" << reg << "[" << b << "]<" << reg << "[" << c << "])==(" << a << "~=0) then " << pc << "=" << pc << "+" << d << " end\n";
+    ss << "      elseif " << code << " == " << nLE << " then if (" << reg << "[" << b << "]<=" << reg << "[" << c << "])==(" << a << "~=0) then " << pc << "=" << pc << "+" << d << " end\n";
+    ss << "      elseif " << code << " == " << nCALL << " then\n";
+    ss << "        local f=" << reg << "[" << a << "]; local n=" << b << "-1; local m=" << c << "-1; local args={}\n";
+    ss << "        for i=1,n do args[i]=" << reg << "[" << a << "+i] end\n";
+    ss << "        local res={f(table.unpack(args))}\n";
+    ss << "        for i=1,m do " << reg << "[" << a << "+i-1]=res[i] end\n";
+    ss << "      elseif " << code << " == " << nRETURN << " then\n";
+    ss << "        local n=" << b << "-1; local ret={}\n";
+    ss << "        for i=1,n do ret[i]=" << reg << "[" << a << "+i-1] end\n";
+    ss << "        return table.unpack(ret)\n";
+    ss << "      elseif " << code << " == " << nFORLOOP << " then\n";
+    ss << "        local idx=" << reg << "[" << a << "]; local lim=" << reg << "[" << a << "+1]; local step=" << reg << "[" << a << "+2]\n";
+    ss << "        if (step>0 and idx<=lim) or (step<0 and idx>=lim) then " << reg << "[" << a << "]=idx+step; " << pc << "=" << pc << "+" << d << " end\n";
+    ss << "      elseif " << code << " == " << nFORPREP << " then " << reg << "[" << a << "]=" << reg << "[" << a << "]-" << reg << "[" << a << "+1]; " << pc << "=" << pc << "+" << d << "\n";
+    ss << "      elseif " << code << " == " << nTFORCALL << " then\n";
+    ss << "        local f=" << reg << "[" << a << "]; local args={}\n";
+    ss << "        for i=1," << b << " do args[i]=" << reg << "[" << a << "+i] end\n";
+    ss << "        local res={f(table.unpack(args))}\n";
+    ss << "        for i=1,#res do " << reg << "[" << a << "+i-1]=res[i] end\n";
+    ss << "      elseif " << code << " == " << nTFORLOOP << " then " << reg << "[" << a << "]=" << reg << "[" << a << "]+1; " << pc << "=" << pc << "+" << d << "\n";
+    ss << "      elseif " << code << " == " << nSETLIST << " then\n";
+    ss << "        for i=1," << c << " do " << reg << "[" << a << "][" << b << "+i-1]=" << reg << "[" << a << "+i] end\n";
+    ss << "      elseif " << code << " == " << nCLOSURE << " then " << reg << "[" << a << "]=function() end; " << pc << "=" << pc << "+1\n";
+    ss << "      elseif " << code << " == " << nVARARG << " then\n";
+    ss << "        local n=" << b << "-1; for i=1,n do " << reg << "[" << a << "+i-1]=" << st << "[" << top << "+i] end\n";
+    ss << "      end\n";
+    ss << "      " << pc << " = " << pc << " + 1\n";
+    ss << "    end\n";
+    ss << "    " << state << " = 0\n";
+    ss << "  else\n";
+    ss << "    " << state << " = 0\n";
+    ss << "  end\n";
+    ss << "end\n";
+    return ss.str();
 }
 
 std::string Virtualizer::emitVirtualizedScript(const Bytecode& obfuscatedBytecode,
                                                const Options& options) const {
     const auto& data = obfuscatedBytecode.data();
-    if (data.empty()) {
-        return "-- No bytecode to virtualize";
-    }
+    if (data.empty()) return "-- empty\nreturn function() end\n";
 
-    std::string vmName = generateVMName();
-    std::string bytecodeVar = vmName + "_bc";
-    std::string seedVar = std::to_string(seed_);
+    std::string decryptFn = ident("_d");
+    std::string antiFn    = ident("_ad");
+    std::string bcVar     = ident("_bc");
+    std::string seedVar   = std::to_string(static_cast<uint32_t>(seed_));
 
     std::stringstream script;
+    if (options.antiDebug) script << generateAntiDebug(antiFn);
+    script << generateDecryptor(decryptFn);
+    script << "local " << bcVar << " = " << bytecodeToLuaTable(data) << "\n";
+    script << generateInterpreter(bcVar, seedVar, decryptFn, antiFn, options);
 
-    if (options.antiDebug) {
-        script << generateAntiDebug();
-    }
-    script << generateDecryptor();
-    script << "local " << bytecodeVar << " = " << bytecodeToLuaTable(data) << "\n";
-    script << generateInterpreter(bytecodeVar, seedVar, options.antiDebug);
-
-    std::stringstream finalScript;
-    finalScript << "return function()\n";
-    finalScript << script.str();
-    finalScript << "end\n";
-    return finalScript.str();
+    std::stringstream out;
+    out << "return (function()\n" << script.str() << "end)()\n";
+    return out.str();
 }
 
 } // namespace Protect
