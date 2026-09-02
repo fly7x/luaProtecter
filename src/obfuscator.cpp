@@ -1,83 +1,59 @@
 #include "obfuscator.hpp"
-#include <random>
 #include <chrono>
-#include <cstring>
+#include <random>
 
 namespace {
-    constexpr uint32_t MAGIC = 0x4C50524Fu; // "LPRO"
-    constexpr uint8_t  VERSION = 2;
+constexpr uint32_t MAGIC = 0x4C50524Fu; // LPRO
+constexpr uint8_t VERSION = 2;
 }
 
-Obfuscator::Obfuscator() : seed_(0) {
+Obfuscator::Obfuscator() {
     std::random_device rd;
-    seed_ = rd() ^ static_cast<uint32_t>(
-        std::chrono::high_resolution_clock::now().time_since_epoch().count());
-    if (seed_ == 0) seed_ = 0xA341316C;
+    seed_ = rd() ^ uint32_t(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+    if (!seed_) seed_ = 0xA341316C;
 }
 
 Obfuscator::Obfuscator(uint32_t seed) : seed_(seed ? seed : 0xA341316C) {}
 
 uint32_t Obfuscator::mix32(uint32_t x) {
     x ^= x >> 16;
-    x *= 0x7FEB352D;
+    x *= 0x7FEB352Du;
     x ^= x >> 15;
-    x *= 0x846CA68B;
+    x *= 0x846CA68Bu;
     x ^= x >> 16;
     return x;
-}
-
-uint32_t Obfuscator::nextKey(uint32_t& state) {
-    state = mix32(state + 0x9E3779B9u);
-    return state;
 }
 
 void Obfuscator::encryptBlock(std::vector<uint8_t>& data, uint32_t seed) {
     uint32_t state = seed;
     for (size_t i = 0; i < data.size(); ++i) {
-        uint32_t k = nextKey(state);
-        // Extra mixing based on position
-        k ^= static_cast<uint32_t>(i * 0x85EBCA77u);
-        k = mix32(k);
-        data[i] ^= static_cast<uint8_t>(k);
-        data[i] ^= static_cast<uint8_t>(k >> 8);
-        data[i] ^= static_cast<uint8_t>(k >> 16);
+        state = mix32(state + 0x9E3779B9u);
+        uint32_t k = mix32(state ^ uint32_t(i * 0x85EBCA77u));
+        data[i] = uint8_t(data[i] ^ uint8_t(k) ^ uint8_t(k >> 8) ^ uint8_t(k >> 16));
     }
 }
 
-std::vector<uint8_t> Obfuscator::packHeader(uint32_t seed, uint32_t originalSize) {
-    std::vector<uint8_t> header;
-    header.reserve(16);
-
-    auto writeU32 = [&](uint32_t v) {
-        header.push_back(v & 0xFF);
-        header.push_back((v >> 8) & 0xFF);
-        header.push_back((v >> 16) & 0xFF);
-        header.push_back((v >> 24) & 0xFF);
-    };
-
-    writeU32(MAGIC);
-    header.push_back(VERSION);
-    header.push_back(0); // reserved
-    header.push_back(0);
-    header.push_back(0);
-    writeU32(seed);
-    writeU32(originalSize);
-
-    return header;
-}
-
-Bytecode Obfuscator::obfuscate(const Bytecode& input, const Options& opts) const {
+Bytecode Obfuscator::obfuscate(const Bytecode& input) const {
     if (input.empty()) return Bytecode();
 
-    std::vector<uint8_t> data = input.data();
-    uint32_t originalSize = static_cast<uint32_t>(data.size());
+    std::vector<uint8_t> payload = input.data();
+    uint32_t originalSize = uint32_t(payload.size());
+    encryptBlock(payload, seed_);
 
-    // Strong encryption
-    encryptBlock(data, seed_);
+    std::vector<uint8_t> out;
+    auto w8 = [&](uint8_t v) { out.push_back(v); };
+    auto w32 = [&](uint32_t v) {
+        out.push_back(uint8_t(v));
+        out.push_back(uint8_t(v >> 8));
+        out.push_back(uint8_t(v >> 16));
+        out.push_back(uint8_t(v >> 24));
+    };
 
-    // Pack header + encrypted payload
-    auto header = packHeader(seed_, originalSize);
-    header.insert(header.end(), data.begin(), data.end());
-
-    return Bytecode(std::move(header));
+    w32(MAGIC);
+    w8(VERSION);
+    w8(0); w8(0); w8(0);
+    w32(seed_);
+    w32(originalSize);
+    out.insert(out.end(), payload.begin(), payload.end());
+    return Bytecode(std::move(out));
 }
