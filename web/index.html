@@ -3,42 +3,99 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LuaProtecter</title>
+    <title>FŁÝ — Lua / Luau Obfuscator</title>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <header>
-        <h1>🔒 LuaProtecter</h1>
-        <p>Protect your Luau scripts with a custom VM &amp; bytecode encryption</p>
+    <div class="scanlines"></div>
+
+    <header class="nav">
+        <a class="brand" href="#top">FŁ<b>Ý</b></a>
+        <span class="meta">v0.1 · BETA</span>
+        <nav>
+            <a href="#why">./why</a>
+            <a href="#pricing">./pricing</a>
+            <a href="#app">./try_it</a>
+        </nav>
+        <a class="nav-cta" href="#app">try_it</a>
     </header>
 
-    <main>
-        <div class="row">
-            <div class="col">
-                <h3>📝 Input</h3>
-                <textarea id="source" rows="12" placeholder="Paste your Luau source here...">local function greet(name)
-    print("Hello, " .. name .. "!")
-end
-greet("World")</textarea>
+    <section class="hero" id="top">
+        <div class="pill">LUAU / LUA OBFUSCATOR</div>
+        <h1 class="logo-huge">FŁÝ</h1>
+        <p class="tag">like VMProtect, but for Lua.</p>
+        <p class="typed">&gt; Because plaintext scripts weren't enough.<span class="caret"></span></p>
+        <div class="hero-actions">
+            <a class="btn btn-grad" href="#app">TRY THE OBFUSCATOR</a>
+            <a class="btn btn-ghost" href="#pricing">SEE PRICING</a>
+        </div>
+    </section>
+
+    <section class="why" id="why">
+        <h2>Why FŁ<b>Ý</b> <span>// protection.stack</span></h2>
+        <p>Every layer below is implemented, not aspirational. Each one adds cost for whoever tries to pull your source back out.</p>
+        <div class="layers">
+            <article><h3>01 · Compile</h3><p>Source is lowered through Luau, not string-rewritten and hoped for.</p></article>
+            <article><h3>02 · Translate</h3><p>Official bytecode is remapped onto a private instruction set.</p></article>
+            <article><h3>03 · Virtualize</h3><p>A generated VM executes the remapped stream. Opcodes shuffle per build.</p></article>
+            <article><h3>04 · Encrypt</h3><p>The proto blob is encrypted before it ever leaves the server.</p></article>
+        </div>
+    </section>
+
+    <section class="pricing" id="pricing">
+        <p class="kicker">PRICING</p>
+        <h2>Pricing</h2>
+        <p class="sub">Free while it's in active development. No accounts, no card, no catch.</p>
+
+        <div class="price-card">
+            <div class="price-top">
+                <span class="plan">PUBLIC / FREE</span>
+                <span class="badge">active</span>
             </div>
-            <div class="col">
-                <h3>🛡️ Output</h3>
-                <textarea id="output" rows="12" readonly placeholder="Protected script will appear here..."></textarea>
+            <div class="amount">$0</div>
+            <div class="during">during active development</div>
+            <ul>
+                <li>Full obfuscation pipeline access</li>
+                <li>VM virtualization + opcode shuffle</li>
+                <li>Bytecode encryption</li>
+                <li>Jump remapping + constant pool</li>
+                <li>No account required</li>
+                <li>No watermark on output</li>
+            </ul>
+            <p class="limit"><b>soft limit while hosting on Render</b> — keep payloads reasonable so the box stays up for everyone.</p>
+            <a class="btn btn-grad wide" href="#app">Try the Obfuscator</a>
+        </div>
+    </section>
+
+    <section class="app" id="app">
+        <p class="kicker">TRY_IT</p>
+        <h2>Obfuscator</h2>
+        <p class="sub">Paste Luau. Get a hardened file. Nothing to install.</p>
+
+        <div class="editor-grid">
+            <div class="pane">
+                <h3>INPUT</h3>
+                <textarea id="source">print("Hello from FLY")</textarea>
+            </div>
+            <div class="pane">
+                <h3>OUTPUT</h3>
+                <textarea id="output" readonly placeholder="Protected script will appear here..."></textarea>
             </div>
         </div>
 
         <div class="controls">
             <label><input type="checkbox" id="vmMode" checked> VM Mode</label>
             <label><input type="checkbox" id="polymorphic" checked> Polymorphic</label>
+            <button id="protectButton" class="btn btn-grad">Protect</button>
+            <button id="copyButton" class="btn btn-ghost">Copy</button>
+            <button id="clearButton" class="btn btn-ghost">Clear</button>
+            <span id="status">ready</span>
         </div>
+    </section>
 
-        <div class="actions">
-            <button id="protectButton"><span id="buttonText">⚡ Protect</span><span id="spinner" class="hidden">⏳</span></button>
-            <button id="clearButton" class="secondary">Clear</button>
-            <button id="copyButton" class="secondary">Copy</button>
-            <span id="status">Ready</span>
-        </div>
-    </main>
+    <footer>
+        FŁÝ Obfuscator · 
+    </footer>
 
     <script src="/app.js"></script>
 </body>
