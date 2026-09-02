@@ -61,30 +61,29 @@ static std::string hexHead(const std::vector<uint8_t>& data) {
     return ss.str();
 }
 
-static Constant convertConst(const TValue* o) {
-    Constant c;
+static FlyConstant convertConst(const TValue* o) {
+    FlyConstant c;
     if (ttisnil(o)) {
-        c.type = Constant::NIL;
+        c.type = FlyConstant::NIL;
     } else if (ttisboolean(o)) {
-        c.type = Constant::BOOL;
+        c.type = FlyConstant::BOOL;
         c.b = bvalue(o) != 0;
     } else if (ttisnumber(o)) {
-        c.type = Constant::NUMBER;
+        c.type = FlyConstant::NUMBER;
         c.n = nvalue(o);
     } else if (ttisstring(o)) {
-        c.type = Constant::STRING;
+        c.type = FlyConstant::STRING;
         TString* ts = tsvalue(o);
         const char* s = getstr(ts);
-        unsigned int len = ts->len;
-        c.s.assign(s, s + len);
+        c.s.assign(s, s + ts->len);
     } else {
-        c.type = Constant::NIL;
+        c.type = FlyConstant::NIL;
     }
     return c;
 }
 
 bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
-                               Proto& proto,
+                               FlyProto& proto,
                                std::string& err) const {
     auto mop = [&](Op o) { return map_[static_cast<size_t>(o)]; };
     struct Jump { size_t patchIndex; int oldTarget; };
@@ -187,20 +186,19 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
     return true;
 }
 
-static uint32_t convertProto(Translator* self,
-                             ::Proto* p,
-                             std::vector<::Proto>& /*unused*/,
-                             std::vector<Proto>& out,
-                             std::string& err) {
+bool Translator::remapPublic(const std::vector<uint32_t>& code, FlyProto& proto, std::string& err) const {
+    return remapFunction(code, proto, err);
+}
+
+static uint32_t pullProto(const Translator* self, struct Proto* p, std::vector<FlyProto>& out, std::string& err) {
     std::vector<uint32_t> kids;
-    kids.reserve(size_t(p->sizep));
     for (int i = 0; i < p->sizep; ++i) {
-        uint32_t id = convertProto(self, p->p[i], out, out, err);
+        uint32_t id = pullProto(self, p->p[i], out, err);
         if (!err.empty()) return 0;
         kids.push_back(id);
     }
 
-    Proto dst;
+    FlyProto dst;
     dst.maxstack = p->maxstacksize;
     dst.numparams = p->numparams;
     dst.nups = p->nups;
@@ -223,13 +221,8 @@ static uint32_t convertProto(Translator* self,
     return id;
 }
 
-// tiny adapter so convertProto can call remap
-bool Translator::remapPublic(const std::vector<uint32_t>& code, Proto& proto, std::string& err) const {
-    return remapFunction(code, proto, err);
-}
-
 bool Translator::parseLuau(const std::vector<uint8_t>& data,
-                           std::vector<Proto>& out,
+                           std::vector<FlyProto>& out,
                            uint32_t& mainId,
                            std::string& err) const {
     if (data.empty()) {
@@ -253,8 +246,7 @@ bool Translator::parseLuau(const std::vector<uint8_t>& data,
     );
     if (st != 0) {
         const char* msg = lua_tostring(L, -1);
-        err = std::string("luau_load failed: ") + (msg ? msg : "?") +
-              " | head " + hexHead(data);
+        err = std::string("luau_load failed: ") + (msg ? msg : "?") + " | head " + hexHead(data);
         lua_close(L);
         return false;
     }
@@ -272,15 +264,13 @@ bool Translator::parseLuau(const std::vector<uint8_t>& data,
         return false;
     }
 
-    ::Proto* root = cl->l.p;
+    struct Proto* root = cl->l.p;
     std::fprintf(stderr,
-        "[FLY debug] load ok version_head=%u size=%zu sizecode=%d sizek=%d sizep=%d\n",
+        "[FLY debug] load ok head=%u size=%zu sizecode=%d sizek=%d sizep=%d\n",
         unsigned(data[0]), data.size(), root->sizecode, root->sizek, root->sizep);
 
-    std::string remapErr;
-    mainId = convertProto(const_cast<Translator*>(this), root, out, out, remapErr);
-    if (!remapErr.empty()) {
-        err = remapErr;
+    mainId = pullProto(this, root, out, err);
+    if (!err.empty()) {
         lua_close(L);
         return false;
     }
@@ -310,7 +300,7 @@ Translator::Result Translator::translate(const Bytecode& luauBlob) const {
     return r;
 }
 
-Bytecode Translator::encodeCustom(const std::vector<Proto>& protos, uint32_t mainId) const {
+Bytecode Translator::encodeCustom(const std::vector<FlyProto>& protos, uint32_t mainId) const {
     std::vector<uint8_t> blob;
     auto w8 = [&](uint8_t v) { blob.push_back(v); };
     auto w32 = [&](uint32_t v) {
@@ -331,12 +321,12 @@ Bytecode Translator::encodeCustom(const std::vector<Proto>& protos, uint32_t mai
         w32(uint32_t(p.constants.size()));
         for (const auto& c : p.constants) {
             w8(uint8_t(c.type));
-            if (c.type == Constant::BOOL) w8(c.b ? 1 : 0);
-            else if (c.type == Constant::NUMBER) {
+            if (c.type == FlyConstant::BOOL) w8(c.b ? 1 : 0);
+            else if (c.type == FlyConstant::NUMBER) {
                 uint64_t bits = 0;
                 std::memcpy(&bits, &c.n, 8);
                 for (int i = 0; i < 8; ++i) w8(uint8_t(bits >> (8 * i)));
-            } else if (c.type == Constant::STRING) {
+            } else if (c.type == FlyConstant::STRING) {
                 w32(uint32_t(c.s.size()));
                 for (unsigned char ch : c.s) w8(ch);
             }
