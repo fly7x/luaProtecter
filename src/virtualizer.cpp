@@ -106,7 +106,7 @@ std::string Virtualizer::generateInterpreter(const std::string& bytecodeTableVar
     code << "      local e = (inst >> 8) & 0xFFFFFF\n";
     code << "      if e & 0x800000 then e = e - 0x1000000 end\n";
 
-    // Opcode handlers (expanded list)
+    // --- Opcode handlers (extensive list) ---
     code << R"(
       if op == 0x01 then -- MOVE
         reg[a] = reg[b]
@@ -168,8 +168,42 @@ std::string Virtualizer::generateInterpreter(const std::string& bytecodeTableVar
         local ret = {}
         for i = 1, n do ret[i] = reg[a + i - 1] end
         return table.unpack(ret)
+      elseif op == 0x15 then -- FORLOOP
+        local idx = reg[a]
+        local limit = reg[a+1]
+        local step = reg[a+2]
+        if (step > 0 and idx <= limit) or (step < 0 and idx >= limit) then
+          reg[a] = idx + step
+          pc = pc + d
+        end
+      elseif op == 0x16 then -- FORPREP
+        reg[a] = reg[a] - reg[a+1]
+        pc = pc + d
+      elseif op == 0x17 then -- TFORCALL
+        local func = reg[a]
+        local nargs = b
+        local args = {}
+        for i = 1, nargs do args[i] = reg[a + i] end
+        local results = { func(table.unpack(args)) }
+        for i = 1, #results do reg[a + i - 1] = results[i] end
+      elseif op == 0x18 then -- TFORLOOP
+        reg[a] = reg[a] + 1
+        pc = pc + d
+      elseif op == 0x19 then -- SETLIST
+        local idx = b
+        local n = c
+        for i = 1, n do
+          reg[a][idx + i - 1] = reg[a + i]
+        end
+      elseif op == 0x1A then -- CLOSURE
+        local proto = bc[pc+1]
+        reg[a] = function() end -- placeholder
+        pc = pc + 1
+      elseif op == 0x1B then -- VARARG
+        local n = b - 1
+        for i = 1, n do reg[a + i - 1] = stack[top + i] end
       else
-        -- Unknown opcode – skip
+        -- Unknown opcode: skip
       end
 )";
     code << "      pc = pc + 1\n";
@@ -189,7 +223,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& obfuscatedBytecod
     }
 
     std::string vmName = generateVMName();
-    std::string bytecodeVar = vmName + "_bc";   // FIXED: use + not ..
+    std::string bytecodeVar = vmName + "_bc";
     std::string seedVar = std::to_string(seed_);
 
     std::stringstream script;
