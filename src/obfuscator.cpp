@@ -5,9 +5,8 @@
 #include <limits>
 
 namespace {
-    constexpr uint32_t MAGIC = 0x31564D4Cu; // "LVM1"
+    constexpr uint32_t MAGIC = 0x31564D4Cu;
     constexpr uint8_t VERSION = 1;
-    
     uint32_t generateSeed() {
         std::random_device rd;
         uint32_t a = static_cast<uint32_t>(rd());
@@ -49,21 +48,16 @@ void Obfuscator::writeU32(std::vector<uint8_t>& output, uint32_t value) {
 Bytecode Obfuscator::obfuscate(const Bytecode& input) const {
     if (input.empty()) return Bytecode();
     const auto& src = input.data();
-    
-    // Format: MAGIC (4) + VERSION (1) + SEED (4) + ORIG_SIZE (4) + ENCRYPTED_DATA
     std::vector<uint8_t> result;
     result.reserve(13 + src.size());
-    
     writeU32(result, MAGIC);
     result.push_back(VERSION);
     writeU32(result, seed_);
     if (src.size() > static_cast<size_t>(UINT32_MAX)) return Bytecode();
     writeU32(result, static_cast<uint32_t>(src.size()));
-    
     for (size_t i = 0; i < src.size(); ++i) {
         uint8_t encrypted = static_cast<uint8_t>(src[i] ^ keyByte(seed_, i));
         result.push_back(encrypted);
     }
-    
     return Bytecode(std::move(result));
 }
