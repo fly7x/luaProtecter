@@ -2,6 +2,7 @@
 
 #include "bytecode.hpp"
 #include "isa.hpp"
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -35,6 +36,7 @@ public:
 
     explicit Translator(uint32_t seed);
     Result translate(const Bytecode& luauBlob) const;
+    bool remapPublic(const std::vector<uint32_t>& code, Proto& proto, std::string& err) const;
 
 private:
     uint32_t seed_;
@@ -44,7 +46,6 @@ private:
         const uint8_t* p = nullptr;
         const uint8_t* end = nullptr;
         bool ok = true;
-
         uint8_t u8();
         uint32_t u32();
         uint32_t varint();
