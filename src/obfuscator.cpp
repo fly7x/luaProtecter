@@ -15,22 +15,21 @@ Obfuscator::Obfuscator() {
 
 Obfuscator::Obfuscator(uint32_t seed) : seed_(seed ? seed : 0xA341316C) {}
 
-uint32_t Obfuscator::mix32(uint32_t x) {
-    return x;
-}
+uint32_t Obfuscator::mix32(uint32_t x) { return x; }
 
 void Obfuscator::encryptBlock(std::vector<uint8_t>& data, uint32_t seed) {
-    for (size_t i = 0; i < data.size(); ++i)
-        data[i] = uint8_t(data[i] ^ uint8_t(seed + uint32_t(i)));
+    for (size_t i = 0; i < data.size(); ++i) {
+        uint8_t k = uint8_t(seed >> ((i & 3) * 8));
+        k = uint8_t(k ^ uint8_t(i * 131u + 17u) ^ uint8_t(seed));
+        data[i] = uint8_t(data[i] ^ k);
+    }
 }
 
 Bytecode Obfuscator::obfuscate(const Bytecode& input) const {
     if (input.empty()) return Bytecode();
-
     std::vector<uint8_t> payload = input.data();
     uint32_t originalSize = uint32_t(payload.size());
     encryptBlock(payload, seed_);
-
     std::vector<uint8_t> out;
     auto w8 = [&](uint8_t v) { out.push_back(v); };
     auto w32 = [&](uint32_t v) {
