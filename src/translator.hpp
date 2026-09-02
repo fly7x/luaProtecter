@@ -7,20 +7,20 @@
 #include <string>
 #include <vector>
 
-struct Constant {
+struct FlyConstant {
     enum Type { NIL = 0, BOOL = 1, NUMBER = 2, STRING = 3 } type = NIL;
     bool b = false;
     double n = 0.0;
     std::string s;
 };
 
-struct Proto {
+struct FlyProto {
     uint8_t maxstack = 2;
     uint8_t numparams = 0;
     uint8_t nups = 0;
     uint8_t isvararg = 0;
     std::vector<uint32_t> code;
-    std::vector<Constant> constants;
+    std::vector<FlyConstant> constants;
     std::vector<uint32_t> childProtos;
 };
 
@@ -29,14 +29,14 @@ public:
     struct Result {
         bool success = false;
         std::string error;
-        std::vector<Proto> protos;
+        std::vector<FlyProto> protos;
         uint32_t mainId = 0;
         Bytecode encoded;
     };
 
     explicit Translator(uint32_t seed);
     Result translate(const Bytecode& luauBlob) const;
-    bool remapPublic(const std::vector<uint32_t>& code, Proto& proto, std::string& err) const;
+    bool remapPublic(const std::vector<uint32_t>& code, FlyProto& proto, std::string& err) const;
 
 private:
     uint32_t seed_;
@@ -53,13 +53,13 @@ private:
     };
 
     bool parseLuau(const std::vector<uint8_t>& data,
-                   std::vector<Proto>& out,
+                   std::vector<FlyProto>& out,
                    uint32_t& mainId,
                    std::string& err) const;
 
     bool remapFunction(const std::vector<uint32_t>& luauCode,
-                       Proto& proto,
+                       FlyProto& proto,
                        std::string& err) const;
 
-    Bytecode encodeCustom(const std::vector<Proto>& protos, uint32_t mainId) const;
+    Bytecode encodeCustom(const std::vector<FlyProto>& protos, uint32_t mainId) const;
 };
