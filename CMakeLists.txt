@@ -21,6 +21,7 @@ add_executable(luaProtecter
 )
 
 target_include_directories(luaProtecter PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/VM/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/VM/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Compiler/include
