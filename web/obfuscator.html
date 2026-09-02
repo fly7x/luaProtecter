@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Obfuscator · ƒŁ¥</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="nav">
+        <a class="brand" href="/home">ƒŁ¥</a>
+        <nav>
+            <a href="/home">Home</a>
+            <a class="active" href="/obfuscator">Obfuscator</a>
+            <a href="/docs">Docs</a>
+            <a href="/pricing">Pricing</a>
+        </nav>
+    </header>
+    <main class="wrap">
+        <p class="kicker">Obfuscator</p>
+        <h2>Protect a script</h2>
+        <div class="grid" style="margin-top:22px">
+            <div>
+                <label>Source</label>
+                <textarea id="source">print("Hello from FLY")</textarea>
+            </div>
+            <div>
+                <label>Output</label>
+                <textarea id="output" readonly></textarea>
+            </div>
+        </div>
+        <div class="bar">
+            <button id="protectButton" class="btn">Protect</button>
+            <button id="copyButton" class="btn ghost">Copy</button>
+            <button id="clearButton" class="btn ghost">Clear</button>
+            <span id="status">Ready</span>
+        </div>
+    </main>
+    <footer>ƒŁ¥ obfuscator</footer>
+    <script src="/app.js"></script>
+</body>
+</html>
