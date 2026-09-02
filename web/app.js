@@ -1,71 +1,47 @@
-const source = document.getElementById('source');
-const output = document.getElementById('output');
-const protectBtn = document.getElementById('protectButton');
-const clearBtn = document.getElementById('clearButton');
-const copyBtn = document.getElementById('copyButton');
-const statusEl = document.getElementById('status');
-const spinner = document.getElementById('spinner');
-const buttonText = document.getElementById('buttonText');
+const source = document.getElementById("source");
+const output = document.getElementById("output");
+const status = document.getElementById("status");
+const protectButton = document.getElementById("protectButton");
+const copyButton = document.getElementById("copyButton");
+const clearButton = document.getElementById("clearButton");
 
-clearBtn.addEventListener('click', () => {
-    source.value = '';
-    output.value = '';
-    statusEl.textContent = 'Cleared';
-});
-
-copyBtn.addEventListener('click', async () => {
-    if (!output.value) return;
-    try {
-        await navigator.clipboard.writeText(output.value);
-        copyBtn.textContent = 'Copied!';
-        setTimeout(() => copyBtn.textContent = 'Copy', 1200);
-    } catch {
-        output.select();
-        document.execCommand('copy');
-        copyBtn.textContent = 'Copied!';
-        setTimeout(() => copyBtn.textContent = 'Copy', 1200);
-    }
-});
-
-protectBtn.addEventListener('click', async () => {
-    const code = source.value.trim();
-    if (!code) {
-        statusEl.textContent = 'Please paste some code.';
-        source.focus();
+protectButton.addEventListener("click", async () => {
+    const code = source.value;
+    if (!code.trim()) {
+        status.textContent = "paste a script first";
         return;
     }
-    
-    protectBtn.disabled = true;
-    buttonText.classList.add('hidden');
-    spinner.classList.remove('hidden');
-    statusEl.textContent = 'Protecting...';
-    
-    const payload = {
-        code: code,
-        options: {
-            vm: document.getElementById('vmMode').checked,
-            polymorphic: document.getElementById('polymorphic').checked
-        }
-    };
-    
+    status.textContent = "protecting...";
+    protectButton.disabled = true;
     try {
-        const resp = await fetch('/api/obfuscate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+        const res = await fetch("/api/obfuscate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                code,
+                vm: document.getElementById("vmMode").checked ? "true" : "false",
+                polymorphic: document.getElementById("polymorphic").checked ? "true" : "false"
+            })
         });
-        const data = await resp.json();
-        if (!resp.ok || !data.success) {
-            throw new Error(data.error || 'Unknown error');
-        }
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || "protect failed");
         output.value = data.code;
-        statusEl.textContent = 'Protection complete!';
+        status.textContent = "done · " + data.code.length + " bytes";
     } catch (err) {
-        output.value = '';
-        statusEl.textContent = 'Error: ' + err.message;
+        status.textContent = String(err.message || err);
     } finally {
-        protectBtn.disabled = false;
-        buttonText.classList.remove('hidden');
-        spinner.classList.add('hidden');
+        protectButton.disabled = false;
     }
+});
+
+copyButton.addEventListener("click", async () => {
+    if (!output.value) return;
+    await navigator.clipboard.writeText(output.value);
+    status.textContent = "copied";
+});
+
+clearButton.addEventListener("click", () => {
+    source.value = "";
+    output.value = "";
+    status.textContent = "ready";
 });
