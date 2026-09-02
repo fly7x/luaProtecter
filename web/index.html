@@ -3,100 +3,105 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FŁÝ — Lua / Luau Obfuscator</title>
+    <title>FŁÝ Obfuscator</title>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <div class="scanlines"></div>
-
-    <header class="nav">
-        <a class="brand" href="#top">FŁ<b>Ý</b></a>
-        <span class="meta">v0.1 · BETA</span>
+    <header>
+        <a class="logo" href="#top">FŁÝ</a>
         <nav>
-            <a href="#why">./why</a>
-            <a href="#pricing">./pricing</a>
-            <a href="#app">./try_it</a>
+            <a href="#app">Obfuscator</a>
+            <a href="#docs">Docs</a>
+            <a href="#faq">FAQ</a>
+            <a href="#pricing">Pricing</a>
         </nav>
-        <a class="nav-cta" href="#app">try_it</a>
     </header>
 
     <section class="hero" id="top">
-        <div class="pill">LUAU / LUA OBFUSCATOR</div>
-        <h1 class="logo-huge">FŁÝ</h1>
-        <p class="tag">like VMProtect, but for Lua.</p>
-        <p class="typed">&gt; Because plaintext scripts weren't enough.<span class="caret"></span></p>
-        <div class="hero-actions">
-            <a class="btn btn-grad" href="#app">TRY THE OBFUSCATOR</a>
-            <a class="btn btn-ghost" href="#pricing">SEE PRICING</a>
-        </div>
+        <p class="eyebrow">Lua / Luau protection</p>
+        <h1>FŁÝ</h1>
+        <p class="lead">Custom VM output that stays valid Luau, including Roblox.</p>
+        <a class="btn" href="#app">Open obfuscator</a>
     </section>
 
-    <section class="why" id="why">
-        <h2>Why FŁ<b>Ý</b> <span>// protection.stack</span></h2>
-        <p>Every layer below is implemented, not aspirational. Each one adds cost for whoever tries to pull your source back out.</p>
-        <div class="layers">
-            <article><h3>01 · Compile</h3><p>Source is lowered through Luau, not string-rewritten and hoped for.</p></article>
-            <article><h3>02 · Translate</h3><p>Official bytecode is remapped onto a private instruction set.</p></article>
-            <article><h3>03 · Virtualize</h3><p>A generated VM executes the remapped stream. Opcodes shuffle per build.</p></article>
-            <article><h3>04 · Encrypt</h3><p>The proto blob is encrypted before it ever leaves the server.</p></article>
-        </div>
-    </section>
-
-    <section class="pricing" id="pricing">
-        <p class="kicker">PRICING</p>
-        <h2>Pricing</h2>
-        <p class="sub">Free while it's in active development. No accounts, no card, no catch.</p>
-
-        <div class="price-card">
-            <div class="price-top">
-                <span class="plan">PUBLIC / FREE</span>
-                <span class="badge">active</span>
-            </div>
-            <div class="amount">$0</div>
-            <div class="during">during active development</div>
-            <ul>
-                <li>Full obfuscation pipeline access</li>
-                <li>VM virtualization + opcode shuffle</li>
-                <li>Bytecode encryption</li>
-                <li>Jump remapping + constant pool</li>
-                <li>No account required</li>
-                <li>No watermark on output</li>
-            </ul>
-            <p class="limit"><b>soft limit while hosting on Render</b> — keep payloads reasonable so the box stays up for everyone.</p>
-            <a class="btn btn-grad wide" href="#app">Try the Obfuscator</a>
-        </div>
-    </section>
-
-    <section class="app" id="app">
-        <p class="kicker">TRY_IT</p>
+    <section id="app">
         <h2>Obfuscator</h2>
-        <p class="sub">Paste Luau. Get a hardened file. Nothing to install.</p>
-
-        <div class="editor-grid">
-            <div class="pane">
-                <h3>INPUT</h3>
+        <div class="grid">
+            <div>
+                <label>Source</label>
                 <textarea id="source">print("Hello from FLY")</textarea>
             </div>
-            <div class="pane">
-                <h3>OUTPUT</h3>
-                <textarea id="output" readonly placeholder="Protected script will appear here..."></textarea>
+            <div>
+                <label>Protected Luau</label>
+                <textarea id="output" readonly></textarea>
             </div>
         </div>
-
-        <div class="controls">
-            <label><input type="checkbox" id="vmMode" checked> VM Mode</label>
-            <label><input type="checkbox" id="polymorphic" checked> Polymorphic</label>
-            <button id="protectButton" class="btn btn-grad">Protect</button>
-            <button id="copyButton" class="btn btn-ghost">Copy</button>
-            <button id="clearButton" class="btn btn-ghost">Clear</button>
-            <span id="status">ready</span>
+        <div class="bar">
+            <button id="protectButton" class="btn">Protect</button>
+            <button id="copyButton" class="btn dim">Copy</button>
+            <button id="clearButton" class="btn dim">Clear</button>
+            <span id="status">Ready</span>
         </div>
     </section>
 
-    <footer>
-        FŁÝ Obfuscator · 
-    </footer>
+    <section id="docs">
+        <h2>Docs</h2>
+        <ol class="steps">
+            <li>Paste Luau or Lua compatible with Roblox.</li>
+            <li>Click Protect. The server compiles, remaps opcodes, encrypts the blob, then emits a Luau VM.</li>
+            <li>Paste the output into a Script / LocalScript / ModuleScript.</li>
+            <li>Keep the file as <code>.lua</code>. Do not wrap it in another obfuscator yet.</li>
+        </ol>
+        <p class="note">First target that must work: <code>print("hi")</code> in Roblox Studio.</p>
+    </section>
 
+    <section id="faq">
+        <h2>FAQ</h2>
+        <details open>
+            <summary>Why did I get “Missing or empty code field”?</summary>
+            <p>The old server read one network packet and dropped the JSON body. That parser is replaced. Redeploy this build before testing again.</p>
+        </details>
+        <details>
+            <summary>Will this run in Roblox?</summary>
+            <p>The emitted file is Luau. It uses <code>bit32</code>, <code>_ENV</code>, and <code>table.unpack</code> only. No <code>getfenv</code>, no <code>os</code>, no <code>debug</code>.</p>
+        </details>
+        <details>
+            <summary>Is this Luraph-level?</summary>
+            <p>No. This is a working custom VM pipeline. Strength comes after the output actually executes.</p>
+        </details>
+        <details>
+            <summary>Free vs premium?</summary>
+            <p>Not enforced yet. The cards are placeholders until the VM is stable.</p>
+        </details>
+    </section>
+
+    <section id="pricing">
+        <h2>Pricing</h2>
+        <div class="cards">
+            <article>
+                <h3>Free</h3>
+                <p class="price">$0</p>
+                <ul>
+                    <li>Public obfuscator</li>
+                    <li>VM output for Roblox</li>
+                    <li>Limits later</li>
+                </ul>
+                <a class="btn" href="#app">Use free</a>
+            </article>
+            <article class="soon">
+                <h3>Premium</h3>
+                <p class="price">Soon</p>
+                <ul>
+                    <li>Higher limits</li>
+                    <li>Stronger VM variants</li>
+                    <li>Not enabled yet</li>
+                </ul>
+                <button class="btn dim" disabled>Coming later</button>
+            </article>
+        </div>
+    </section>
+
+    <footer>FŁÝ Obfuscator</footer>
     <script src="/app.js"></script>
 </body>
 </html>
