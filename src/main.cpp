@@ -131,13 +131,11 @@ void handleClient(int clientFd) {
             if (bodyStart == std::string::npos) throw std::runtime_error("Malformed request");
             std::string body = request.substr(bodyStart + 4);
 
-            // Extract "code" field
             std::string code = extractJsonString(body, "code");
             if (code.empty()) throw std::runtime_error("Missing or empty 'code' field");
 
-            // Extract options if present (optional)
-            bool vmMode = true;
-            bool polymorphic = true;
+            // Options (simple)
+            bool vmMode = true, polymorphic = true;
             std::string vmStr = extractJsonString(body, "vm");
             if (vmStr == "false") vmMode = false;
             std::string polyStr = extractJsonString(body, "polymorphic");
@@ -152,6 +150,7 @@ void handleClient(int clientFd) {
             opts.encodeNumbers = true;
             opts.removeComments = true;
             opts.decoys = true;
+            opts.antiDebug = true;
 
             std::string protectedCode = transformer.protect(code, opts);
 
