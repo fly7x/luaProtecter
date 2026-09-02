@@ -53,6 +53,7 @@ std::string jsonEscape(const std::string& s) {
     return out;
 }
 
+// ---------- Robust JSON string extractor ----------
 static std::string extractJsonString(const std::string& json, const std::string& key) {
     std::string search = "\"" + key + "\"";
     size_t keyPos = json.find(search);
@@ -65,7 +66,7 @@ static std::string extractJsonString(const std::string& json, const std::string&
     while (start < json.size() && std::isspace(json[start])) start++;
     if (start >= json.size() || json[start] != '"') return "";
 
-    start++;
+    start++; // skip opening quote
     std::string result;
     bool escaped = false;
     for (size_t i = start; i < json.size(); ++i) {
@@ -86,7 +87,7 @@ static std::string extractJsonString(const std::string& json, const std::string&
             escaped = true;
             continue;
         }
-        if (c == '"') break;
+        if (c == '"') break; // end of string
         result += c;
     }
     return result;
@@ -131,6 +132,7 @@ void handleClient(int clientFd) {
             std::string code = extractJsonString(body, "code");
             if (code.empty()) throw std::runtime_error("Missing or empty 'code' field");
 
+            // Options
             bool vmMode = true, polymorphic = true;
             std::string vmStr = extractJsonString(body, "vm");
             if (vmStr == "false") vmMode = false;
