@@ -99,12 +99,9 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "return word\n";
     s << "end\n";
 
-    s << "local E={}\n";
-    s << "do local n={} local raw={43,25,18,21,15}\n";
-    s << "for i=1,#raw do n[i]=string.char(bit32.bxor(raw[i],91)) end\n";
-    s << "E[table.concat(n)]=print\n";
-    s << "end\n";
-    s << "setmetatable(E,{__index=function(_,k) return rawget(_G,k) end})\n";
+    s << "local G=_G\n";
+    s << "pcall(function() if getfenv then G=getfenv() or G end end)\n";
+    s << "local E=setmetatable({},{__index=function(_,k) local v=rawget(G,k) if v~=nil then return v end return rawget(_G,k) end})\n";
 
     s << "local M=" << exprOp(Op::MOVE) << "\n";
     s << "local NI=" << exprOp(Op::LOADNIL) << "\n";
