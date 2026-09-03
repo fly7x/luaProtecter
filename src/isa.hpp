@@ -32,6 +32,7 @@ enum class Op : uint8_t {
     GETTABLE,
     SETTABLE,
     GETTABLEKS,
+    SETTABLEKS,
     NEWTABLE,
     CALL,
     RETURN,
@@ -39,6 +40,10 @@ enum class Op : uint8_t {
     FORPREP,
     CLOSURE,
     VARARG,
+    NAMECALL,
+    GETUPVAL,
+    SETUPVAL,
+    SETLIST,
     COUNT
 };
 
