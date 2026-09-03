@@ -117,6 +117,11 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_NOP:
         case LOP_BREAK:
         case LOP_PREPVARARGS:
+        case LOP_CAPTURE:
+        case LOP_FASTCALL:
+        case LOP_FASTCALL1:
+        case LOP_FASTCALL2:
+        case LOP_FASTCALL2K:
             break;
         case LOP_LOADNIL:
             emitABC(Op::LOADNIL, A, A, 0);
@@ -148,11 +153,16 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             int count = int(aux >> 30);
             int id0 = int((aux >> 20) & 1023);
             int id1 = int((aux >> 10) & 1023);
+            int id2 = int(aux & 1023);
             emitABC(Op::GETGLOBAL, A, 0, 0);
             emitK(uint32_t(id0));
             if (count > 1) {
                 emitABC(Op::GETTABLEKS, A, A, 0);
                 emitK(uint32_t(id1));
+            }
+            if (count > 2) {
+                emitABC(Op::GETTABLEKS, A, A, 0);
+                emitK(uint32_t(id2));
             }
             break;
         }
@@ -165,6 +175,23 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_GETTABLEKS:
             emitABC(Op::GETTABLEKS, A, B, 0);
             emitK(aux);
+            break;
+        case LOP_SETTABLEKS:
+            emitABC(Op::SETTABLEKS, A, B, 0);
+            emitK(aux);
+            break;
+        case LOP_NAMECALL:
+            emitABC(Op::NAMECALL, A, B, 0);
+            emitK(aux);
+            break;
+        case LOP_GETUPVAL:
+            emitABC(Op::GETUPVAL, A, B, 0);
+            break;
+        case LOP_SETUPVAL:
+            emitABC(Op::SETUPVAL, A, B, 0);
+            break;
+        case LOP_SETLIST:
+            emitABC(Op::SETLIST, A, B, C);
             break;
         case LOP_NEWTABLE:
             emitABC(Op::NEWTABLE, A, B, C);
@@ -214,6 +241,14 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             break;
         case LOP_JUMPIFNOT:
             emitJump(Op::JMPIFNOT, A, nextOld + D);
+            break;
+        case LOP_JUMPIFEQ:
+        case LOP_JUMPIFLE:
+        case LOP_JUMPIFLT:
+        case LOP_JUMPIFNOTEQ:
+        case LOP_JUMPIFNOTLE:
+        case LOP_JUMPIFNOTLT:
+            emitJump(Op::JMPIF, A, nextOld + D);
             break;
         case LOP_CALL:
             emitABC(Op::CALL, A, B, C);
