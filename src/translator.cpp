@@ -85,6 +85,13 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         proto.code.push_back(packAD(mop(o), a, 0));
     };
     auto emitK = [&](uint32_t idx) { proto.code.push_back(idx | 0x80000000u); };
+    auto emitDead = [&](size_t at) {
+        uint32_t h = seed_ ^ uint32_t(at * 2654435769u);
+        if ((h & 3u) == 0)
+            proto.code.push_back(packAD(mop(Op::JMP), 0, 0));
+        if ((h & 5u) == 5u)
+            proto.code.push_back(packABC(mop(Op::MOVE), 0, 0, 0));
+    };
 
     size_t pc = 0;
     while (pc < luauCode.size()) {
@@ -234,6 +241,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         default:
             break;
         }
+        emitDead(pc);
         pc += size_t(len);
     }
     oldToNew[luauCode.size()] = proto.code.size();
