@@ -30,7 +30,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
 
     auto map = makeOpcodeMap(seed32());
     auto n = [&](Op o) { return int(map[size_t(o)]); };
-    uint32_t sid = seed32();
+
     uint32_t sum = 0;
     for (uint8_t b : encrypted.data())
         sum += b;
@@ -39,15 +39,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     size_t mid = raw.empty() ? 0 : raw.size() / 2;
     std::vector<uint8_t> left(raw.begin(), raw.begin() + mid);
     std::vector<uint8_t> right(raw.begin() + mid, raw.end());
-
-    auto exprOp = [&](Op o) {
-        int v = n(o);
-        int a = (v ^ int(sid & 63)) & 255;
-        int b = v ^ a;
-        std::stringstream e;
-        e << "bit32.bxor(" << a << "," << b << ")";
-        return e.str();
-    };
 
     std::stringstream s;
     s << "--!nocheck\n";
@@ -112,12 +103,14 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "if k==\"CFrame\" then return CFrame end\n";
     s << "if k==\"ColorSequence\" then return ColorSequence end\n";
     s << "if k==\"ColorSequenceKeypoint\" then return ColorSequenceKeypoint end\n";
+    s << "if k==\"TweenInfo\" then return TweenInfo end\n";
     s << "if k==\"task\" then return task end\n";
     s << "if k==\"tick\" then return tick end\n";
     s << "if k==\"time\" then return time end\n";
     s << "if k==\"typeof\" then return typeof end\n";
     s << "if k==\"pairs\" then return pairs end\n";
     s << "if k==\"ipairs\" then return ipairs end\n";
+    s << "if k==\"next\" then return next end\n";
     s << "if k==\"pcall\" then return pcall end\n";
     s << "if k==\"print\" then return print end\n";
     s << "if k==\"warn\" then return warn end\n";
@@ -133,41 +126,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "if k==\"bit32\" then return bit32 end\n";
     s << "return rawget(_G,k)\n";
     s << "end})\n";
-
-    s << "local M=" << exprOp(Op::MOVE) << "\n";
-    s << "local NI=" << exprOp(Op::LOADNIL) << "\n";
-    s << "local LB=" << exprOp(Op::LOADBOOL) << "\n";
-    s << "local LK=" << exprOp(Op::LOADK) << "\n";
-    s << "local AD=" << exprOp(Op::ADD) << "\n";
-    s << "local SU=" << exprOp(Op::SUB) << "\n";
-    s << "local MU=" << exprOp(Op::MUL) << "\n";
-    s << "local DV=" << exprOp(Op::DIV) << "\n";
-    s << "local MD=" << exprOp(Op::MOD) << "\n";
-    s << "local PW=" << exprOp(Op::POW) << "\n";
-    s << "local UN=" << exprOp(Op::UNM) << "\n";
-    s << "local NT=" << exprOp(Op::NOT) << "\n";
-    s << "local LN=" << exprOp(Op::LEN) << "\n";
-    s << "local CC=" << exprOp(Op::CONCAT) << "\n";
-    s << "local JM=" << exprOp(Op::JMP) << "\n";
-    s << "local JI=" << exprOp(Op::JMPIF) << "\n";
-    s << "local JN=" << exprOp(Op::JMPIFNOT) << "\n";
-    s << "local GG=" << exprOp(Op::GETGLOBAL) << "\n";
-    s << "local SG=" << exprOp(Op::SETGLOBAL) << "\n";
-    s << "local GT=" << exprOp(Op::GETTABLE) << "\n";
-    s << "local ST=" << exprOp(Op::SETTABLE) << "\n";
-    s << "local GK=" << exprOp(Op::GETTABLEKS) << "\n";
-    s << "local SK=" << exprOp(Op::SETTABLEKS) << "\n";
-    s << "local TB=" << exprOp(Op::NEWTABLE) << "\n";
-    s << "local CA=" << exprOp(Op::CALL) << "\n";
-    s << "local RT=" << exprOp(Op::RETURN) << "\n";
-    s << "local FP=" << exprOp(Op::FORPREP) << "\n";
-    s << "local FL=" << exprOp(Op::FORLOOP) << "\n";
-    s << "local CL=" << exprOp(Op::CLOSURE) << "\n";
-    s << "local NC=" << exprOp(Op::NAMECALL) << "\n";
-    s << "local GU=" << exprOp(Op::GETUPVAL) << "\n";
-    s << "local SUU=" << exprOp(Op::SETUPVAL) << "\n";
-    s << "local SL=" << exprOp(Op::SETLIST) << "\n";
-
     s << "local function run(pid,args,ups)\n";
     s << "local p=P[pid+1] if not p then error(\"p\") end\n";
     s << "local reg={} if args then for i=1,#args do reg[i]=args[i] end end\n";
@@ -188,7 +146,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::ADD) << " then reg[Ra]=(reg[Rb] or 0)+(reg[Rc] or 0)\n";
     s << "elseif op==" << n(Op::SUB) << " then reg[Ra]=(reg[Rb] or 0)-(reg[Rc] or 0)\n";
     s << "elseif op==" << n(Op::MUL) << " then reg[Ra]=(reg[Rb] or 0)*(reg[Rc] or 0)\n";
-    s << "elseif op==" << n(Op::DIV) << " then reg[Ra]=(reg[Rb] or 1)/(reg[Rc] or 1)\n";
+    s << "elseif op==" << n(Op::DIV) << " then reg[Ra]=(reg[Rb] or 0)/(reg[Rc] or 1)\n";
     s << "elseif op==" << n(Op::MOD) << " then reg[Ra]=(reg[Rb] or 0)%(reg[Rc] or 1)\n";
     s << "elseif op==" << n(Op::POW) << " then reg[Ra]=(reg[Rb] or 0)^(reg[Rc] or 1)\n";
     s << "elseif op==" << n(Op::UNM) << " then reg[Ra]=-(reg[Rb] or 0)\n";
@@ -198,6 +156,9 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::JMP) << " then pc+=D\n";
     s << "elseif op==" << n(Op::JMPIF) << " then if reg[Ra] then pc+=D end\n";
     s << "elseif op==" << n(Op::JMPIFNOT) << " then if not reg[Ra] then pc+=D end\n";
+    s << "elseif op==" << n(Op::EQ) << " then if not (reg[Ra]==reg[Rb]) then pc+=1 end\n";
+    s << "elseif op==" << n(Op::LT) << " then if not (reg[Ra]<reg[Rb]) then pc+=1 end\n";
+    s << "elseif op==" << n(Op::LE) << " then if not (reg[Ra]<=reg[Rb]) then pc+=1 end\n";
     s << "elseif op==" << n(Op::GETGLOBAL) << " then pc+=1 reg[Ra]=E[kn(p,code[pc])]\n";
     s << "elseif op==" << n(Op::SETGLOBAL) << " then pc+=1 E[kn(p,code[pc])]=reg[Ra]\n";
     s << "elseif op==" << n(Op::GETTABLE) << " then reg[Ra]=reg[Rb][reg[Rc]]\n";
@@ -205,14 +166,15 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::GETTABLEKS) << " then pc+=1 reg[Ra]=reg[Rb][kn(p,code[pc])]\n";
     s << "elseif op==" << n(Op::SETTABLEKS) << " then pc+=1 reg[Rb][kn(p,code[pc])]=reg[Ra]\n";
     s << "elseif op==" << n(Op::NEWTABLE) << " then reg[Ra]={}\n";
-    s << "elseif op==" << n(Op::NAMECALL) << " then pc+=1 local key=kn(p,code[pc]) local obj=reg[Rb] reg[Ra+1]=obj local m=obj and obj[key] reg[Ra]=m\n";
+    s << "elseif op==" << n(Op::NAMECALL) << " then pc+=1 local key=kn(p,code[pc]) local obj=reg[Rb] reg[Ra+1]=obj reg[Ra]=obj and obj[key]\n";
     s << "elseif op==" << n(Op::GETUPVAL) << " then reg[Ra]=ups[Rb]\n";
     s << "elseif op==" << n(Op::SETUPVAL) << " then ups[Rb]=reg[Ra]\n";
-    s << "elseif op==" << n(Op::SETLIST) << " then local t=reg[Ra] local n=if C==0 then (#reg-A) else (C-1) for i=1,n do t[i]=reg[Ra+i] end\n";
-    s << "elseif op==" << n(Op::CALL) << " then local narg=if B==0 then (#reg-A) else (B-1) local fn=reg[Ra] local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end local ret={fn(table.unpack(argv,1,math.max(narg,0)))} if C~=1 then local limit=if C==0 then #ret else (C-1) for i=1,limit do reg[Ra+i-1]=ret[i] end end\n";
+    s << "elseif op==" << n(Op::SETLIST) << " then local t=reg[Ra] local n=if C==0 then (#reg-A) else (C-1) if type(t)==\"table\" then for i=1,n do t[i]=reg[Ra+i] end end\n";
+    s << "elseif op==" << n(Op::CALL) << " then local narg=if B==0 then (#reg-A) else (B-1) local fn=reg[Ra] local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end local ret=if type(fn)==\"function\" then {fn(table.unpack(argv,1,math.max(narg,0)))} else {} end if C~=1 then local limit=if C==0 then #ret else (C-1) for i=1,limit do reg[Ra+i-1]=ret[i] end end\n";
     s << "elseif op==" << n(Op::RETURN) << " then local nret=if B==0 then (#reg-A) else (B-1) local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end return table.unpack(out,1,math.max(nret,0))\n";
-    s << "elseif op==" << n(Op::FORPREP) << " then reg[Ra]=(reg[Ra] or 0)-(reg[Ra+2] or 1) pc+=D\n";
-    s << "elseif op==" << n(Op::FORLOOP) << " then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then reg[Ra]=idx reg[Ra+3]=idx pc+=D end\n";
+    s << "elseif op==" << n(Op::FORPREP) << " then if type(reg[Ra])==\"number\" then reg[Ra]=(reg[Ra] or 0)-(reg[Ra+2] or 1) end pc+=D\n";
+    s << "elseif op==" << n(Op::FORLOOP) << " then if type(reg[Ra])==\"number\" then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then reg[Ra]=idx reg[Ra+3]=idx pc+=D end end\n";
+    s << "elseif op==" << n(Op::FORGLOOP) << " then local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2] if type(it)==\"function\" then local res={it(state,ctl)} if res[1]~=nil then reg[Ra+2]=res[1] for i=1,#res do reg[Ra+2+i]=res[i] end pc+=D end end\n";
     s << "elseif op==" << n(Op::CLOSURE) << " then pc+=1 local child=code[pc] or 0 local cid=p.ch[child+1] or 0 reg[Ra]=function(...) return run(cid,{...},reg) end\n";
     s << "end pc+=1 end end\n";
     s << "return run(mainId)\n";
