@@ -41,6 +41,9 @@ static int luauInsnLength(uint8_t op) {
     case LOP_JUMPIFNOTEQ:
     case LOP_JUMPIFNOTLE:
     case LOP_JUMPIFNOTLT:
+#ifdef LOP_FORGLOOP
+    case LOP_FORGLOOP:
+#endif
         return 2;
     default:
         return 1;
@@ -85,12 +88,14 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         proto.code.push_back(packAD(mop(o), a, 0));
     };
     auto emitK = [&](uint32_t idx) { proto.code.push_back(idx | 0x80000000u); };
-    auto emitDead = [&](size_t at) {
-        uint32_t h = seed_ ^ uint32_t(at * 2654435769u);
-        if ((h & 3u) == 0)
-            proto.code.push_back(packAD(mop(Op::JMP), 0, 0));
-        if ((h & 5u) == 5u)
-            proto.code.push_back(packABC(mop(Op::MOVE), 0, 0, 0));
+    auto emitBinK = [&](Op arith, uint8_t a, uint8_t b, uint8_t kc) {
+        uint8_t tmp = proto.maxstack;
+        if (tmp > 250) tmp = 250;
+        if (proto.maxstack < 250)
+            proto.maxstack = uint8_t(proto.maxstack + 1);
+        emitABC(Op::LOADK, tmp, 0, 0);
+        emitK(kc);
+        emitABC(arith, a, b, tmp);
     };
 
     size_t pc = 0;
@@ -197,28 +202,40 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::NEWTABLE, A, B, C);
             break;
         case LOP_ADD:
-        case LOP_ADDK:
             emitABC(Op::ADD, A, B, C);
             break;
         case LOP_SUB:
-        case LOP_SUBK:
             emitABC(Op::SUB, A, B, C);
             break;
         case LOP_MUL:
-        case LOP_MULK:
             emitABC(Op::MUL, A, B, C);
             break;
         case LOP_DIV:
-        case LOP_DIVK:
             emitABC(Op::DIV, A, B, C);
             break;
         case LOP_MOD:
-        case LOP_MODK:
             emitABC(Op::MOD, A, B, C);
             break;
         case LOP_POW:
-        case LOP_POWK:
             emitABC(Op::POW, A, B, C);
+            break;
+        case LOP_ADDK:
+            emitBinK(Op::ADD, A, B, C);
+            break;
+        case LOP_SUBK:
+            emitBinK(Op::SUB, A, B, C);
+            break;
+        case LOP_MULK:
+            emitBinK(Op::MUL, A, B, C);
+            break;
+        case LOP_DIVK:
+            emitBinK(Op::DIV, A, B, C);
+            break;
+        case LOP_MODK:
+            emitBinK(Op::MOD, A, B, C);
+            break;
+        case LOP_POWK:
+            emitBinK(Op::POW, A, B, C);
             break;
         case LOP_NOT:
             emitABC(Op::NOT, A, B, 0);
@@ -243,12 +260,28 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitJump(Op::JMPIFNOT, A, nextOld + D);
             break;
         case LOP_JUMPIFEQ:
+            emitABC(Op::EQ, A, uint8_t(aux), 0);
+            emitJump(Op::JMP, 0, nextOld + D);
+            break;
         case LOP_JUMPIFLE:
+            emitABC(Op::LE, A, uint8_t(aux), 0);
+            emitJump(Op::JMP, 0, nextOld + D);
+            break;
         case LOP_JUMPIFLT:
+            emitABC(Op::LT, A, uint8_t(aux), 0);
+            emitJump(Op::JMP, 0, nextOld + D);
+            break;
         case LOP_JUMPIFNOTEQ:
+            emitABC(Op::EQ, A, uint8_t(aux), 0);
+            emitJump(Op::JMPIFNOT, A, nextOld + D);
+            break;
         case LOP_JUMPIFNOTLE:
+            emitABC(Op::LE, A, uint8_t(aux), 0);
+            emitJump(Op::JMPIFNOT, A, nextOld + D);
+            break;
         case LOP_JUMPIFNOTLT:
-            emitJump(Op::JMPIF, A, nextOld + D);
+            emitABC(Op::LT, A, uint8_t(aux), 0);
+            emitJump(Op::JMPIFNOT, A, nextOld + D);
             break;
         case LOP_CALL:
             emitABC(Op::CALL, A, B, C);
@@ -262,6 +295,26 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_FORNLOOP:
             emitJump(Op::FORLOOP, A, nextOld + D);
             break;
+#ifdef LOP_FORGPREP
+        case LOP_FORGPREP:
+            emitJump(Op::JMP, 0, nextOld + D);
+            break;
+#endif
+#ifdef LOP_FORGPREP_NEXT
+        case LOP_FORGPREP_NEXT:
+            emitJump(Op::JMP, 0, nextOld + D);
+            break;
+#endif
+#ifdef LOP_FORGPREP_INEXT
+        case LOP_FORGPREP_INEXT:
+            emitJump(Op::JMP, 0, nextOld + D);
+            break;
+#endif
+#ifdef LOP_FORGLOOP
+        case LOP_FORGLOOP:
+            emitJump(Op::FORGLOOP, A, nextOld + D);
+            break;
+#endif
         case LOP_NEWCLOSURE:
             emitABC(Op::CLOSURE, A, 0, 0);
             proto.code.push_back(uint32_t(int32_t(D)));
@@ -276,7 +329,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         default:
             break;
         }
-        emitDead(pc);
         pc += size_t(len);
     }
     oldToNew[luauCode.size()] = proto.code.size();
