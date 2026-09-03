@@ -16,7 +16,7 @@ std::string Virtualizer::bytesToLuaTable(const std::vector<uint8_t>& data) const
     ss << "{";
     for (size_t i = 0; i < data.size(); ++i) {
         if (i) ss << ",";
-        if ((i % 16) == 0) ss << "\n";
+        if ((i % 14) == 0) ss << "\n";
         ss << int(data[i]);
     }
     ss << "}";
@@ -30,144 +30,173 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
 
     auto map = makeOpcodeMap(seed32());
     auto n = [&](Op o) { return int(map[size_t(o)]); };
-
+    uint32_t sid = seed32();
     uint32_t sum = 0;
     for (uint8_t b : encrypted.data())
         sum += b;
 
-    uint32_t sid = seed32();
-    std::string A = ident("_A", sid ^ 0x11u);
-    std::string B = ident("_B", sid ^ 0x22u);
-    std::string C = ident("_C", sid ^ 0x33u);
-    std::string D = ident("_D", sid ^ 0x44u);
-    std::string E = ident("_E", sid ^ 0x55u);
-    std::string F = ident("_F", sid ^ 0x66u);
-    std::string G = ident("_G", sid ^ 0x77u);
-    std::string H = ident("_H", sid ^ 0x88u);
-    std::string I = ident("_I", sid ^ 0x99u);
-    std::string J = ident("_J", sid ^ 0xAAu);
+    const std::vector<uint8_t>& raw = encrypted.data();
+    size_t mid = raw.empty() ? 0 : raw.size() / 2;
+    std::vector<uint8_t> left(raw.begin(), raw.begin() + mid);
+    std::vector<uint8_t> right(raw.begin() + mid, raw.end());
+
+    auto exprOp = [&](Op o) {
+        int v = n(o);
+        int a = (v ^ int(sid & 63)) & 255;
+        int b = v ^ a;
+        std::stringstream e;
+        e << "bit32.bxor(" << a << "," << b << ")";
+        return e.str();
+    };
 
     std::stringstream s;
     s << "--!nocheck\n";
-
-    // dead noise tables (never read for real control)
-    s << "local " << A << "={";
-    for (int i = 0; i < 32; ++i) {
-        if (i) s << ",";
-        s << ((sid >> (i % 24)) ^ (i * 17));
-    }
-    s << "}\n";
-    s << "local " << B << "=function(x) return bit32.bxor(x or 0," << (sid & 255) << ") end\n";
-    s << "local " << C << "=0\n";
-    s << "for i=1,#" << A << " do " << C << "=bit32.band(" << C << "+" << A << "[i],65535) end\n";
-    s << "if " << C << "==999999 then error(\"dead\") end\n";
-
-    s << "local _B=" << bytesToLuaTable(encrypted.data()) << "\n";
+    s << "local L=" << bytesToLuaTable(left) << "\n";
+    s << "local R=" << bytesToLuaTable(right) << "\n";
+    s << "local _B={}\n";
+    s << "for i=1,#L do _B[i]=L[i] end\n";
+    s << "for i=1,#R do _B[#L+i]=R[i] end\n";
     s << "do local s=0 for i=1,#_B do s+=_B[i] end if s~=" << sum << " then error(\"t\") end end\n";
-    s << "pcall(function() local d=debug if d and d.info and d.info(1,\"s\")==\"[C]\" then end end)\n";
 
-    // opaque predicate helpers (always true / always false in practice)
-    s << "local function " << D << "(x)\n";
-    s << "  x=bit32.band(x or 0,255)\n";
-    s << "  return bit32.band(x*x-x,1)==0 or x==x\n";
-    s << "end\n";
-    s << "local function " << E << "(x)\n";
-    s << "  return bit32.band((x or 0)+1,0)==2\n"; // always false
-    s << "end\n";
-
-    s << "local function _dec(buf)\n";
+    s << "local function dec(buf)\n";
     s << "local function u8(i) return buf[i] or 0 end\n";
     s << "local function u32(i) return u8(i)+u8(i+1)*256+u8(i+2)*65536+u8(i+3)*16777216 end\n";
     s << "local seed=u32(9) local size=u32(13) local out={}\n";
-    s << "if " << E << "(seed) then for i=1,size do out[i]=0 end return out end\n";
     s << "for i=1,size do\n";
     s << "local k=bit32.band(bit32.rshift(seed,bit32.band(i-1,3)*8),255)\n";
     s << "k=bit32.band(bit32.bxor(k,bit32.band((i-1)*131+17,255),bit32.band(seed,255)),255)\n";
     s << "out[i]=bit32.band(bit32.bxor(u8(16+i),k),255)\n";
-    s << "if " << E << "(i) then out[i]=bit32.bxor(out[i],1) end\n";
     s << "end return out end\n";
 
-    s << "local data=_dec(_B) local pos=1\n";
+    s << "local data=dec(_B) local pos=1\n";
     s << "local function ru8() local v=data[pos] or 0 pos+=1 return v end\n";
     s << "local function ru32() return ru8()+ru8()*256+ru8()*65536+ru8()*16777216 end\n";
-    s << "if not " << D << "(1) then error(\"o\") end\n";
     s << "if ru32()~=0x3252504C then error(\"x\") end\n";
-    s << "local ks=ru32() ru8() local nprotos=ru32() local mainId=ru32() local protos={}\n";
+    s << "local ks=ru32() ru8() local nprotos=ru32() local mainId=ru32()\n";
+    s << "local P={}\n";
+    s << "for i=1,nprotos do\n";
+    s << "local p={c={},z={},t={},ch={}}\n";
+    s << "p.m,p.a,p.u,p.v=ru8(),ru8(),ru8(),ru8()\n";
+    s << "local ncode=ru32() for j=1,ncode do p.c[j]=ru32() end\n";
+    s << "local nk=ru32() for j=1,nk do local tag=ru8() p.t[j]=tag\n";
+    s << "if tag==1 then p.z[j]=ru8()~=0\n";
+    s << "elseif tag==2 then p.z[j]=string.unpack(\"<d\",string.char(ru8(),ru8(),ru8(),ru8(),ru8(),ru8(),ru8(),ru8()))\n";
+    s << "elseif tag==3 then local n=ru32() local raw={} for z=1,n do raw[z]=ru8() end p.z[j]=raw\n";
+    s << "else p.z[j]=nil end end\n";
+    s << "local nc=ru32() for j=1,nc do p.ch[j]=ru32() end P[i]=p end\n";
 
-    // decoy proto path (never taken)
-    s << "if " << E << "(nprotos) then protos[1]={code={0},k={},child={}} end\n";
+    s << "local function S(raw)\n";
+    s << "if type(raw)~=\"table\" then return raw end\n";
+    s << "local o={} for i=1,#raw do o[i]=string.char(bit32.band(bit32.bxor(raw[i],bit32.band(ks+(i-1)*13,255)),255)) end\n";
+    s << "return table.concat(o)\n";
+    s << "end\n";
+    s << "local function kn(p,word)\n";
+    s << "if word>=2147483648 then\n";
+    s << "local i=(word-2147483648)+1\n";
+    s << "if p.t[i]==3 then p.z[i]=S(p.z[i]) p.t[i]=0 end\n";
+    s << "return p.z[i]\n";
+    s << "end\n";
+    s << "return word\n";
+    s << "end\n";
 
-    s << "for i=1,nprotos do local p={code={},k={},child={}}\n";
-    s << "p.maxstack,p.nparams,p.nups,p.isvararg=ru8(),ru8(),ru8(),ru8()\n";
-    s << "local ncode=ru32() for j=1,ncode do p.code[j]=ru32() end\n";
-    s << "local nk=ru32() for j=1,nk do local tag=ru8()\n";
-    s << "if tag==1 then p.k[j]=ru8()~=0\n";
-    s << "elseif tag==2 then p.k[j]=string.unpack(\"<d\",string.char(ru8(),ru8(),ru8(),ru8(),ru8(),ru8(),ru8(),ru8()))\n";
-    s << "elseif tag==3 then local n=ru32() local t={} for z=1,n do t[z]=string.char(bit32.band(bit32.bxor(ru8(),bit32.band(ks+(z-1)*13,255)),255)) end p.k[j]=table.concat(t)\n";
-    s << "else p.k[j]=nil end end\n";
-    s << "local nc=ru32() for j=1,nc do p.child[j]=ru32() end protos[i]=p end\n";
+    s << "local E={}\n";
+    s << "do local n={} local raw={43,25,18,21,15}\n";
+    s << "for i=1,#raw do n[i]=string.char(bit32.bxor(raw[i],91)) end\n";
+    s << "E[table.concat(n)]=print\n";
+    s << "end\n";
+    s << "setmetatable(E,{__index=function(_,k) return rawget(_G,k) end})\n";
 
-    s << "local function nm(t) local o={} for i=1,#t do o[i]=string.char(bit32.bxor(t[i],91)) end return table.concat(o) end\n";
-    s << "local ENV={} ENV[nm({43,25,18,21,15})]=print\n";
-    s << "setmetatable(ENV,{__index=function(_,k) return rawget(_G,k) end})\n";
-    s << "local function kn(p,word) if word>=2147483648 then return p.k[(word-2147483648)+1] end return word end\n";
+    s << "local M=" << exprOp(Op::MOVE) << "\n";
+    s << "local NI=" << exprOp(Op::LOADNIL) << "\n";
+    s << "local LB=" << exprOp(Op::LOADBOOL) << "\n";
+    s << "local LK=" << exprOp(Op::LOADK) << "\n";
+    s << "local AD=" << exprOp(Op::ADD) << "\n";
+    s << "local SU=" << exprOp(Op::SUB) << "\n";
+    s << "local MU=" << exprOp(Op::MUL) << "\n";
+    s << "local DV=" << exprOp(Op::DIV) << "\n";
+    s << "local MD=" << exprOp(Op::MOD) << "\n";
+    s << "local PW=" << exprOp(Op::POW) << "\n";
+    s << "local UN=" << exprOp(Op::UNM) << "\n";
+    s << "local NT=" << exprOp(Op::NOT) << "\n";
+    s << "local LN=" << exprOp(Op::LEN) << "\n";
+    s << "local CC=" << exprOp(Op::CONCAT) << "\n";
+    s << "local JM=" << exprOp(Op::JMP) << "\n";
+    s << "local JI=" << exprOp(Op::JMPIF) << "\n";
+    s << "local JN=" << exprOp(Op::JMPIFNOT) << "\n";
+    s << "local GG=" << exprOp(Op::GETGLOBAL) << "\n";
+    s << "local SG=" << exprOp(Op::SETGLOBAL) << "\n";
+    s << "local GT=" << exprOp(Op::GETTABLE) << "\n";
+    s << "local ST=" << exprOp(Op::SETTABLE) << "\n";
+    s << "local GK=" << exprOp(Op::GETTABLEKS) << "\n";
+    s << "local TB=" << exprOp(Op::NEWTABLE) << "\n";
+    s << "local CA=" << exprOp(Op::CALL) << "\n";
+    s << "local RT=" << exprOp(Op::RETURN) << "\n";
+    s << "local FP=" << exprOp(Op::FORPREP) << "\n";
+    s << "local FL=" << exprOp(Op::FORLOOP) << "\n";
+    s << "local CL=" << exprOp(Op::CLOSURE) << "\n";
 
-    // decoy handlers (never matched by real remapped ops in practice, but present)
-    s << "local " << F << "={}\n";
-    for (int i = 0; i < 12; ++i) {
-        int fake = int((sid + i * 37) % 240);
-        s << F << "[" << fake << "]=function(reg,A) reg[A+1]=reg[A+1] end\n";
-    }
+    s << "local function stepA(op,p,reg,A,B,C,D,pc,code)\n";
+    s << "local Ra,Rb,Rc=A+1,B+1,C+1\n";
+    s << "if op==M then reg[Ra]=reg[Rb] return pc,0 end\n";
+    s << "if op==NI then reg[Ra]=nil return pc,0 end\n";
+    s << "if op==LB then reg[Ra]=B~=0 return pc,0 end\n";
+    s << "if op==LK then pc+=1 reg[Ra]=kn(p,code[pc]) return pc,0 end\n";
+    s << "if op==AD then reg[Ra]=reg[Rb]+reg[Rc] return pc,0 end\n";
+    s << "if op==SU then reg[Ra]=reg[Rb]-reg[Rc] return pc,0 end\n";
+    s << "if op==MU then reg[Ra]=reg[Rb]*reg[Rc] return pc,0 end\n";
+    s << "if op==DV then reg[Ra]=reg[Rb]/reg[Rc] return pc,0 end\n";
+    s << "return pc,1\n";
+    s << "end\n";
 
-    s << "local function exec(pid,args)\n";
-    s << "local p=protos[pid+1] if not p then error(\"p\") end local reg={} if args then for i=1,#args do reg[i]=args[i] end end\n";
-    s << "local pc=1 local code=p.code local " << G << "=0\n";
+    s << "local function stepB(op,p,reg,A,B,C,D,pc,code)\n";
+    s << "local Ra,Rb,Rc=A+1,B+1,C+1\n";
+    s << "if op==MD then reg[Ra]=reg[Rb]%reg[Rc] return pc,0 end\n";
+    s << "if op==PW then reg[Ra]=reg[Rb]^reg[Rc] return pc,0 end\n";
+    s << "if op==UN then reg[Ra]=-reg[Rb] return pc,0 end\n";
+    s << "if op==NT then reg[Ra]=not reg[Rb] return pc,0 end\n";
+    s << "if op==LN then reg[Ra]=#reg[Rb] return pc,0 end\n";
+    s << "if op==CC then local t=\"\" for i=Rb,Rc do t..=tostring(reg[i]) end reg[Ra]=t return pc,0 end\n";
+    s << "if op==JM then return pc+D,0 end\n";
+    s << "if op==JI then if reg[Ra] then pc+=D end return pc,0 end\n";
+    s << "if op==JN then if not reg[Ra] then pc+=D end return pc,0 end\n";
+    s << "return pc,1\n";
+    s << "end\n";
+
+    s << "local function stepC(op,p,reg,A,B,C,D,pc,code,run)\n";
+    s << "local Ra,Rb,Rc=A+1,B+1,C+1\n";
+    s << "if op==GG then pc+=1 reg[Ra]=E[kn(p,code[pc])] return pc,0 end\n";
+    s << "if op==SG then pc+=1 E[kn(p,code[pc])]=reg[Ra] return pc,0 end\n";
+    s << "if op==GT then reg[Ra]=reg[Rb][reg[Rc]] return pc,0 end\n";
+    s << "if op==ST then reg[Ra][reg[Rb]]=reg[Rc] return pc,0 end\n";
+    s << "if op==GK then pc+=1 reg[Ra]=reg[Rb][kn(p,code[pc])] return pc,0 end\n";
+    s << "if op==TB then reg[Ra]={} return pc,0 end\n";
+    s << "if op==CA then local narg=if B==0 then (#reg-A) else (B-1) local fn=reg[Ra] local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end local ret={fn(table.unpack(argv,1,math.max(narg,0)))} if C~=1 then local limit=if C==0 then #ret else (C-1) for i=1,limit do reg[Ra+i-1]=ret[i] end end return pc,0 end\n";
+    s << "if op==RT then local nret=if B==0 then (#reg-A) else (B-1) local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end return pc,2,out,nret end\n";
+    s << "if op==FP then reg[Ra]=(reg[Ra] or 0)-(reg[Ra+2] or 1) return pc+D,0 end\n";
+    s << "if op==FL then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then reg[Ra]=idx reg[Ra+3]=idx return pc+D,0 end return pc,0 end\n";
+    s << "if op==CL then pc+=1 local child=code[pc] or 0 local cid=p.ch[child+1] or 0 reg[Ra]=function(...) return run(cid,{...}) end return pc,0 end\n";
+    s << "return pc,1\n";
+    s << "end\n";
+
+    s << "local function run(pid,args)\n";
+    s << "local p=P[pid+1] if not p then error(\"p\") end\n";
+    s << "local reg={} if args then for i=1,#args do reg[i]=args[i] end end\n";
+    s << "local pc=1 local code=p.c\n";
     s << "while pc<=#code do\n";
     s << "local inst=code[pc]\n";
-    s << "local op=bit32.band(inst,255) local A=bit32.band(bit32.rshift(inst,8),255)\n";
-    s << "local B=bit32.band(bit32.rshift(inst,16),255) local C=bit32.band(bit32.rshift(inst,24),255)\n";
+    s << "local op=bit32.band(inst,255)\n";
+    s << "local A=bit32.band(bit32.rshift(inst,8),255)\n";
+    s << "local B=bit32.band(bit32.rshift(inst,16),255)\n";
+    s << "local C=bit32.band(bit32.rshift(inst,24),255)\n";
     s << "local D=bit32.band(bit32.rshift(inst,16),65535) if D>=32768 then D-=65536 end\n";
-    s << "local Ra,Rb,Rc=A+1,B+1,C+1\n";
-    s << G << "=bit32.band(" << G << "+op,65535)\n";
-    s << "if " << E << "(" << G << ") then " << F << "[op](reg,A) end\n";
-
-    // real dispatch (same semantics as working build)
-    s << "if op==" << n(Op::MOVE) << " then reg[Ra]=reg[Rb]\n";
-    s << "elseif op==" << n(Op::LOADNIL) << " then reg[Ra]=nil\n";
-    s << "elseif op==" << n(Op::LOADBOOL) << " then reg[Ra]=B~=0\n";
-    s << "elseif op==" << n(Op::LOADK) << " then pc+=1 reg[Ra]=kn(p,code[pc])\n";
-    s << "elseif op==" << n(Op::ADD) << " then reg[Ra]=reg[Rb]+reg[Rc]\n";
-    s << "elseif op==" << n(Op::SUB) << " then reg[Ra]=reg[Rb]-reg[Rc]\n";
-    s << "elseif op==" << n(Op::MUL) << " then reg[Ra]=reg[Rb]*reg[Rc]\n";
-    s << "elseif op==" << n(Op::DIV) << " then reg[Ra]=reg[Rb]/reg[Rc]\n";
-    s << "elseif op==" << n(Op::MOD) << " then reg[Ra]=reg[Rb]%reg[Rc]\n";
-    s << "elseif op==" << n(Op::POW) << " then reg[Ra]=reg[Rb]^reg[Rc]\n";
-    s << "elseif op==" << n(Op::UNM) << " then reg[Ra]=-reg[Rb]\n";
-    s << "elseif op==" << n(Op::NOT) << " then reg[Ra]=not reg[Rb]\n";
-    s << "elseif op==" << n(Op::LEN) << " then reg[Ra]=#reg[Rb]\n";
-    s << "elseif op==" << n(Op::CONCAT) << " then local t=\"\" for i=Rb,Rc do t..=tostring(reg[i]) end reg[Ra]=t\n";
-    s << "elseif op==" << n(Op::JMP) << " then pc+=D\n";
-    s << "elseif op==" << n(Op::JMPIF) << " then if reg[Ra] then pc+=D end\n";
-    s << "elseif op==" << n(Op::JMPIFNOT) << " then if not reg[Ra] then pc+=D end\n";
-    s << "elseif op==" << n(Op::GETGLOBAL) << " then pc+=1 reg[Ra]=ENV[kn(p,code[pc])]\n";
-    s << "elseif op==" << n(Op::SETGLOBAL) << " then pc+=1 ENV[kn(p,code[pc])]=reg[Ra]\n";
-    s << "elseif op==" << n(Op::GETTABLE) << " then reg[Ra]=reg[Rb][reg[Rc]]\n";
-    s << "elseif op==" << n(Op::SETTABLE) << " then reg[Ra][reg[Rb]]=reg[Rc]\n";
-    s << "elseif op==" << n(Op::GETTABLEKS) << " then pc+=1 reg[Ra]=reg[Rb][kn(p,code[pc])]\n";
-    s << "elseif op==" << n(Op::NEWTABLE) << " then reg[Ra]={}\n";
-    s << "elseif op==" << n(Op::CALL) << " then local narg=if B==0 then (#reg-A) else (B-1) local fn=reg[Ra] local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end local ret={fn(table.unpack(argv,1,math.max(narg,0)))} if C~=1 then local limit=if C==0 then #ret else (C-1) for i=1,limit do reg[Ra+i-1]=ret[i] end end\n";
-    s << "elseif op==" << n(Op::RETURN) << " then local nret=if B==0 then (#reg-A) else (B-1) local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end return table.unpack(out,1,math.max(nret,0))\n";
-    s << "elseif op==" << n(Op::FORPREP) << " then reg[Ra]=(reg[Ra] or 0)-(reg[Ra+2] or 1) pc+=D\n";
-    s << "elseif op==" << n(Op::FORLOOP) << " then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then reg[Ra]=idx reg[Ra+3]=idx pc+=D end\n";
-    s << "elseif op==" << n(Op::CLOSURE) << " then pc+=1 local child=code[pc] or 0 local cid=p.child[child+1] or 0 reg[Ra]=function(...) return exec(cid,{...}) end\n";
-    // extra dead elseif noise
-    s << "elseif " << E << "(op) then reg[Ra]=reg[Ra]\n";
-    s << "elseif op==999 then error(\"deadop\")\n";
+    s << "local npc,st,out,nret=stepA(op,p,reg,A,B,C,D,pc,code)\n";
+    s << "if st==1 then npc,st,out,nret=stepB(op,p,reg,A,B,C,D,npc,code) end\n";
+    s << "if st==1 then npc,st,out,nret=stepC(op,p,reg,A,B,C,D,npc,code,run) end\n";
+    s << "if st==2 then return table.unpack(out,1,nret) end\n";
+    s << "pc=npc+1\n";
     s << "end\n";
-    s << "if " << E << "(pc) then pc=pc end\n";
-    s << "pc+=1 end end\n";
-    s << "if " << E << "(mainId) then return nil end\n";
-    s << "return exec(mainId)\n";
+    s << "end\n";
+    s << "return run(mainId)\n";
     return s.str();
 }
 
