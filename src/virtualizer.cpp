@@ -208,19 +208,10 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "local nup=childP and (childP.u or 0) or 0\n";
     s << "local parentReg,parentUps=reg,ups\n";
     s << "local stored={}\n";
-    // Always snapshot parent regs by index (table refs stay valid for HUB.conns)
     s << "for i=1,64 do stored[i]=parentReg[i] end\n";
     s << "for i=1,64 do if stored[i]==nil then stored[i]=parentUps[i] end end\n";
-    // Consume CAPTURE words (align pc) and overlay real upvalue slots
-    s << "for ui=1,nup do\n";
-    s << "pc+=1\n";
-    s << "if pc<=#code then\n";
-    s << "local cinst=code[pc]\n";
-    s << "local ca=bit32.band(bit32.rshift(cinst,8),255)\n";
-    s << "local cb=bit32.band(bit32.rshift(cinst,16),255)\n";
-    s << "if ca==2 then stored[ui]=parentUps[cb+1] else stored[ui]=parentReg[cb+1] end\n";
-    s << "end\n";
-    s << "end\n";
+    // Only skip capture words — do NOT overlay (was overwriting HUB with nil)
+    s << "for _=1,nup do pc+=1 end\n";
     s << "reg[Ra]=function(...) return run(cid,{...},stored) end\n";
     s << "elseif op==" << n(Op::CAPTURE) << " then\n";
     s << "end\n";
