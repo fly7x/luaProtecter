@@ -41,7 +41,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     std::vector<uint8_t> right(raw.begin() + mid, raw.end());
 
     std::stringstream s;
-    s << "--!nocheck\n";
+    s << "--FLYX OWNNEEEER <_>_<>€€_<>_<>_<>_>_<_>>_>_<_>_<_€\>€\<_>%\<\#>_X\n";
     s << "local L=" << bytesToLuaTable(left) << "\n";
     s << "local R=" << bytesToLuaTable(right) << "\n";
     s << "local _B={}\n";
