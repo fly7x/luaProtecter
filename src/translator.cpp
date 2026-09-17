@@ -122,11 +122,14 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_NOP:
         case LOP_BREAK:
         case LOP_PREPVARARGS:
-        case LOP_CAPTURE:
         case LOP_FASTCALL:
         case LOP_FASTCALL1:
         case LOP_FASTCALL2:
         case LOP_FASTCALL2K:
+            break;
+        case LOP_CAPTURE:
+            // A = capture type (0=VAL, 1=REF, 2=UPVAL), B = index
+            emitABC(Op::CAPTURE, A, B, 0);
             break;
         case LOP_LOADNIL:
             emitABC(Op::LOADNIL, A, A, 0);
