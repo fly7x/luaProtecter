@@ -46,6 +46,10 @@ enum class Op : uint8_t {
     SETLIST,
     FORGLOOP,
     CAPTURE,
+    AND,
+    OR,
+    GETTABLEN,
+    SETTABLEN,
     COUNT
 };
 
