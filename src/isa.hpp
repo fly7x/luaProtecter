@@ -45,6 +45,7 @@ enum class Op : uint8_t {
     SETUPVAL,
     SETLIST,
     FORGLOOP,
+    CAPTURE,
     COUNT
 };
 
