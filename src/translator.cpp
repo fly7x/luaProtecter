@@ -122,13 +122,13 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_NOP:
         case LOP_BREAK:
         case LOP_PREPVARARGS:
+        case LOP_CLOSEUPVALS:
         case LOP_FASTCALL:
         case LOP_FASTCALL1:
         case LOP_FASTCALL2:
         case LOP_FASTCALL2K:
             break;
         case LOP_CAPTURE:
-            // A = capture type (0=VAL, 1=REF, 2=UPVAL), B = index
             emitABC(Op::CAPTURE, A, B, 0);
             break;
         case LOP_LOADNIL:
@@ -178,6 +178,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::GETTABLE, A, B, C);
             break;
         case LOP_SETTABLE:
+            // Luau: A=value, B=table, C=key  →  table[key]=value
             emitABC(Op::SETTABLE, A, B, C);
             break;
         case LOP_GETTABLEKS:
@@ -203,6 +204,10 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             break;
         case LOP_NEWTABLE:
             emitABC(Op::NEWTABLE, A, B, C);
+            break;
+        case LOP_DUPTABLE:
+            // Table template → plain empty table; SETTABLEKS fills keys after
+            emitABC(Op::NEWTABLE, A, 0, 0);
             break;
         case LOP_ADD:
             emitABC(Op::ADD, A, B, C);
