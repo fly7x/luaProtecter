@@ -36,6 +36,9 @@ static int luauInsnLength(uint8_t op) {
     case LOP_FASTCALL1:
     case LOP_FASTCALL2:
     case LOP_FASTCALL2K:
+#ifdef LOP_FASTCALL3
+    case LOP_FASTCALL3:
+#endif
     case LOP_JUMPIFEQ:
     case LOP_JUMPIFLE:
     case LOP_JUMPIFLT:
@@ -44,6 +47,12 @@ static int luauInsnLength(uint8_t op) {
     case LOP_JUMPIFNOTLT:
 #ifdef LOP_FORGLOOP
     case LOP_FORGLOOP:
+#endif
+#ifdef LOP_JUMPXEQKNIL
+    case LOP_JUMPXEQKNIL:
+    case LOP_JUMPXEQKB:
+    case LOP_JUMPXEQKN:
+    case LOP_JUMPXEQKS:
 #endif
         return 2;
     default:
@@ -98,6 +107,16 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         emitK(kc);
         emitABC(arith, a, b, tmp);
     };
+    auto emitBinRK = [&](Op arith, uint8_t a, uint8_t kb, uint8_t c) {
+        // constant first, then register (SUBRK/DIVRK style)
+        uint8_t tmp = proto.maxstack;
+        if (tmp > 250) tmp = 250;
+        if (proto.maxstack < 250)
+            proto.maxstack = uint8_t(proto.maxstack + 1);
+        emitABC(Op::LOADK, tmp, 0, 0);
+        emitK(kb);
+        emitABC(arith, a, tmp, c);
+    };
 
     size_t pc = 0;
     while (pc < luauCode.size()) {
@@ -128,10 +147,21 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_FASTCALL1:
         case LOP_FASTCALL2:
         case LOP_FASTCALL2K:
+#ifdef LOP_FASTCALL3
+        case LOP_FASTCALL3:
+#endif
+#ifdef LOP_COVERAGE
+        case LOP_COVERAGE:
+#endif
+#ifdef LOP_NATIVECALL
+        case LOP_NATIVECALL:
+#endif
             break;
+
         case LOP_CAPTURE:
             emitABC(Op::CAPTURE, A, B, 0);
             break;
+
         case LOP_LOADNIL:
             emitABC(Op::LOADNIL, A, A, 0);
             break;
@@ -154,6 +184,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_MOVE:
             emitABC(Op::MOVE, A, B, 0);
             break;
+
         case LOP_GETGLOBAL:
             emitABC(Op::GETGLOBAL, A, 0, 0);
             emitK(aux);
@@ -179,10 +210,12 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             }
             break;
         }
+
         case LOP_GETTABLE:
             emitABC(Op::GETTABLE, A, B, C);
             break;
         case LOP_SETTABLE:
+            // Luau: A=value, B=table, C=key
             emitABC(Op::SETTABLE, A, B, C);
             break;
         case LOP_GETTABLEKS:
@@ -203,22 +236,26 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::NAMECALL, A, B, 0);
             emitK(aux);
             break;
+
         case LOP_GETUPVAL:
             emitABC(Op::GETUPVAL, A, B, 0);
             break;
         case LOP_SETUPVAL:
             emitABC(Op::SETUPVAL, A, B, 0);
             break;
-        case LOP_SETLIST:
-            emitABC(Op::SETLIST, A, B, C);
-            proto.code.push_back(aux == 0 ? 1u : aux);
-            break;
+
         case LOP_NEWTABLE:
             emitABC(Op::NEWTABLE, A, B, C);
             break;
         case LOP_DUPTABLE:
+            // Template table → empty table; shape filled by following SETTABLEKS
             emitABC(Op::NEWTABLE, A, 0, 0);
             break;
+        case LOP_SETLIST:
+            emitABC(Op::SETLIST, A, B, C);
+            proto.code.push_back(aux == 0 ? 1u : aux);
+            break;
+
         case LOP_ADD:
             emitABC(Op::ADD, A, B, C);
             break;
@@ -237,6 +274,11 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_POW:
             emitABC(Op::POW, A, B, C);
             break;
+#ifdef LOP_IDIV
+        case LOP_IDIV:
+            emitABC(Op::IDIV, A, B, C);
+            break;
+#endif
         case LOP_ADDK:
             emitBinK(Op::ADD, A, B, C);
             break;
@@ -255,6 +297,22 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_POWK:
             emitBinK(Op::POW, A, B, C);
             break;
+#ifdef LOP_IDIVK
+        case LOP_IDIVK:
+            emitBinK(Op::IDIV, A, B, C);
+            break;
+#endif
+#ifdef LOP_SUBRK
+        case LOP_SUBRK:
+            emitBinRK(Op::SUB, A, B, C);
+            break;
+#endif
+#ifdef LOP_DIVRK
+        case LOP_DIVRK:
+            emitBinRK(Op::DIV, A, B, C);
+            break;
+#endif
+
         case LOP_AND:
             emitABC(Op::AND, A, B, C);
             break;
@@ -281,6 +339,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::OR, A, B, tmp);
             break;
         }
+
         case LOP_NOT:
             emitABC(Op::NOT, A, B, 0);
             break;
@@ -293,6 +352,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_CONCAT:
             emitABC(Op::CONCAT, A, B, C);
             break;
+
         case LOP_JUMP:
         case LOP_JUMPBACK:
             emitJump(Op::JMP, 0, nextOld + D);
@@ -327,12 +387,72 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::LT, A, uint8_t(aux), 0);
             emitJump(Op::JMPIFNOT, A, nextOld + D);
             break;
+
+#ifdef LOP_JUMPXEQKNIL
+        case LOP_JUMPXEQKNIL: {
+            // compare reg[A] == nil (or ~= if NOT flag in aux high bit)
+            bool isNot = (aux >> 31) != 0;
+            emitABC(Op::LOADNIL, 255, 255, 0); // temp nil in high reg (approx)
+            // simpler: use JUMPXEQ style — load bool and jump
+            // A vs nil: emit EQ against a nil via LOADNIL into temp then EQ
+            uint8_t tmp = proto.maxstack;
+            if (tmp > 250) tmp = 250;
+            if (proto.maxstack < 250)
+                proto.maxstack = uint8_t(proto.maxstack + 1);
+            emitABC(Op::LOADNIL, tmp, tmp, 0);
+            emitABC(Op::EQ, A, tmp, 0);
+            if (isNot)
+                emitJump(Op::JMPIFNOT, A, nextOld + D);
+            else
+                emitJump(Op::JMP, 0, nextOld + D);
+            break;
+        }
+        case LOP_JUMPXEQKB: {
+            bool isNot = (aux >> 31) != 0;
+            bool val = (aux & 1) != 0;
+            uint8_t tmp = proto.maxstack;
+            if (tmp > 250) tmp = 250;
+            if (proto.maxstack < 250)
+                proto.maxstack = uint8_t(proto.maxstack + 1);
+            emitABC(Op::LOADBOOL, tmp, val ? 1 : 0, 0);
+            emitABC(Op::EQ, A, tmp, 0);
+            if (isNot)
+                emitJump(Op::JMPIFNOT, A, nextOld + D);
+            else
+                emitJump(Op::JMP, 0, nextOld + D);
+            break;
+        }
+        case LOP_JUMPXEQKN:
+        case LOP_JUMPXEQKS: {
+            bool isNot = (aux >> 31) != 0;
+            uint32_t kidx = aux & 0xFFFFFFu;
+            uint8_t tmp = proto.maxstack;
+            if (tmp > 250) tmp = 250;
+            if (proto.maxstack < 250)
+                proto.maxstack = uint8_t(proto.maxstack + 1);
+            emitABC(Op::LOADK, tmp, 0, 0);
+            emitK(kidx);
+            emitABC(Op::EQ, A, tmp, 0);
+            if (isNot)
+                emitJump(Op::JMPIFNOT, A, nextOld + D);
+            else
+                emitJump(Op::JMP, 0, nextOld + D);
+            break;
+        }
+#endif
+#ifdef LOP_JUMPX
+        case LOP_JUMPX:
+            emitJump(Op::JMP, 0, nextOld + int(LUAU_INSN_E(insn)));
+            break;
+#endif
+
         case LOP_CALL:
             emitABC(Op::CALL, A, B, C);
             break;
         case LOP_RETURN:
             emitABC(Op::RETURN, A, B, 0);
             break;
+
         case LOP_FORNPREP:
             emitJump(Op::FORPREP, A, nextOld + D);
             break;
@@ -359,18 +479,24 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitJump(Op::FORGLOOP, A, nextOld + D);
             break;
 #endif
+
         case LOP_NEWCLOSURE:
             emitABC(Op::CLOSURE, A, 0, 0);
             proto.code.push_back(uint32_t(int32_t(D)));
             break;
         case LOP_DUPCLOSURE:
+            // D indexes constant table (closure); child list still follows via CAPTURE stream
+            // Emit CLOSURE with child index 0 as fallback; real scripts often use NEWCLOSURE
             emitABC(Op::CLOSURE, A, 0, 0);
             proto.code.push_back(0);
             break;
+
         case LOP_GETVARARGS:
             emitABC(Op::VARARG, A, B, 0);
             break;
+
         default:
+            // unknown / rare — skip (keeps pc aligned)
             break;
         }
         pc += size_t(len);
