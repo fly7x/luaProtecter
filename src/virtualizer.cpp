@@ -41,7 +41,13 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     std::vector<uint8_t> right(raw.begin() + mid, raw.end());
 
     std::stringstream s;
-    s << "--FLYX OWNNEEEER <_>_<>€€_<>_<>_<>_>_<_>>_>_<_>_<_€\>€\<_>%\<\#>_X\n";
+    s << "--!nocheck\n";
+    s << "--[[\n";
+    s << "  ╔══════════════════════════════════════════╗\n";
+    s << "  ║     Protected by FŁÝ / FLYX Obfuscator   ║\n";
+    s << "  ║   Custom VM · unique build · keep private ║\n";
+    s << "  ╚══════════════════════════════════════════╝\n";
+    s << "]]\n";
     s << "local L=" << bytesToLuaTable(left) << "\n";
     s << "local R=" << bytesToLuaTable(right) << "\n";
     s << "local _B={}\n";
@@ -201,10 +207,8 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "local cid=p.ch[child+1] or 0\n";
     s << "local childP=P[cid+1]\n";
     s << "local nup=childP and (childP.u or 0) or 0\n";
-    s << "local newUps={}\n";
-    // Snapshot parent registers so locals like HUB stay visible even if CAPTURE layout is odd
-    s << "for i=1,math.max(#reg, nup) do newUps[i]=reg[i] end\n";
-    s << "for i=1,#ups do if newUps[i]==nil then newUps[i]=ups[i] end end\n";
+    s << "local mapU={}\n";
+    s << "local parentReg, parentUps = reg, ups\n";
     s << "for ui=1,nup do\n";
     s << "local nextPc=pc+1\n";
     s << "if nextPc>#code then break end\n";
@@ -212,19 +216,37 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "local cop=bit32.band(cinst,255)\n";
     s << "local ca=bit32.band(bit32.rshift(cinst,8),255)\n";
     s << "local cb=bit32.band(bit32.rshift(cinst,16),255)\n";
-    s << "if cop==CAP then\n";
+    s << "if cop~=CAP then break end\n";
     s << "pc=nextPc\n";
-    s << "if ca==2 then newUps[ui]=ups[cb+1] else newUps[ui]=reg[cb+1] end\n";
+    s << "if ca==2 then\n";
+    s << "mapU[ui]={t=\"u\",i=cb+1}\n";
     s << "else\n";
-    // No CAPTURE word; keep snapshot slot
-    s << "break\n";
+    s << "mapU[ui]={t=\"r\",i=cb+1}\n";
     s << "end\n";
     s << "end\n";
+    // If no CAPTURE words, assume upval slot i <-> parent register i (common for simple locals)
+    s << "if nup>0 and next(mapU)==nil then\n";
+    s << "for ui=1,nup do mapU[ui]={t=\"r\",i=ui} end\n";
+    s << "end\n";
+    s << "local proxy=setmetatable({},{__index=function(_,i)\n";
+    s << "local m=mapU[i]\n";
+    s << "if m then\n";
+    s << "if m.t==\"r\" then return parentReg[m.i] end\n";
+    s << "return parentUps[m.i]\n";
+    s << "end\n";
+    s << "local v=parentReg[i]\n";
+    s << "if v~=nil then return v end\n";
+    s << "return parentUps[i]\n";
+    s << "end,__newindex=function(_,i,v)\n";
+    s << "local m=mapU[i]\n";
+    s << "if m then\n";
+    s << "if m.t==\"r\" then parentReg[m.i]=v else parentUps[m.i]=v end\n";
+    s << "else parentReg[i]=v end\n";
+    s << "end})\n";
     s << "reg[Ra]=function(...)\n";
-    s << "return run(cid,{...},newUps)\n";
+    s << "return run(cid,{...},proxy)\n";
     s << "end\n";
     s << "elseif op==CAP then\n";
-    s << "-- stand-alone CAPTURE (should be consumed by CLOSURE)\n";
     s << "end\n";
     s << "pc+=1\n";
     s << "end\n";
