@@ -31,6 +31,7 @@ static int luauInsnLength(uint8_t op) {
     case LOP_NAMECALL:
     case LOP_NEWTABLE:
     case LOP_SETLIST:
+    case LOP_LOADKX:
     case LOP_FASTCALL:
     case LOP_FASTCALL1:
     case LOP_FASTCALL2:
@@ -146,6 +147,10 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::LOADK, A, 0, 0);
             emitK(uint32_t(D));
             break;
+        case LOP_LOADKX:
+            emitABC(Op::LOADK, A, 0, 0);
+            emitK(aux);
+            break;
         case LOP_MOVE:
             emitABC(Op::MOVE, A, B, 0);
             break;
@@ -178,7 +183,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::GETTABLE, A, B, C);
             break;
         case LOP_SETTABLE:
-            // Luau: A=value, B=table, C=key  →  table[key]=value
             emitABC(Op::SETTABLE, A, B, C);
             break;
         case LOP_GETTABLEKS:
@@ -188,6 +192,12 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_SETTABLEKS:
             emitABC(Op::SETTABLEKS, A, B, 0);
             emitK(aux);
+            break;
+        case LOP_GETTABLEN:
+            emitABC(Op::GETTABLEN, A, B, C);
+            break;
+        case LOP_SETTABLEN:
+            emitABC(Op::SETTABLEN, A, B, C);
             break;
         case LOP_NAMECALL:
             emitABC(Op::NAMECALL, A, B, 0);
@@ -201,12 +211,12 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             break;
         case LOP_SETLIST:
             emitABC(Op::SETLIST, A, B, C);
+            proto.code.push_back(aux == 0 ? 1u : aux);
             break;
         case LOP_NEWTABLE:
             emitABC(Op::NEWTABLE, A, B, C);
             break;
         case LOP_DUPTABLE:
-            // Table template → plain empty table; SETTABLEKS fills keys after
             emitABC(Op::NEWTABLE, A, 0, 0);
             break;
         case LOP_ADD:
@@ -245,6 +255,32 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_POWK:
             emitBinK(Op::POW, A, B, C);
             break;
+        case LOP_AND:
+            emitABC(Op::AND, A, B, C);
+            break;
+        case LOP_OR:
+            emitABC(Op::OR, A, B, C);
+            break;
+        case LOP_ANDK: {
+            uint8_t tmp = proto.maxstack;
+            if (tmp > 250) tmp = 250;
+            if (proto.maxstack < 250)
+                proto.maxstack = uint8_t(proto.maxstack + 1);
+            emitABC(Op::LOADK, tmp, 0, 0);
+            emitK(C);
+            emitABC(Op::AND, A, B, tmp);
+            break;
+        }
+        case LOP_ORK: {
+            uint8_t tmp = proto.maxstack;
+            if (tmp > 250) tmp = 250;
+            if (proto.maxstack < 250)
+                proto.maxstack = uint8_t(proto.maxstack + 1);
+            emitABC(Op::LOADK, tmp, 0, 0);
+            emitK(C);
+            emitABC(Op::OR, A, B, tmp);
+            break;
+        }
         case LOP_NOT:
             emitABC(Op::NOT, A, B, 0);
             break;
