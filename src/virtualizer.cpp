@@ -145,6 +145,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "if k==\"rawequal\" then return rawequal end\n";
     s << "return rawget(_G,k)\n";
     s << "end,__newindex=function(_,k,v) RealG[k]=v end})\n";
+    s << "local CAP=" << n(Op::CAPTURE) << "\n";
     s << "local function run(pid,args,ups)\n";
     s << "local p=P[pid+1] if not p then error(\"p\") end\n";
     s << "local reg={} if args then for i=1,#args do reg[i]=args[i] end end\n";
@@ -195,21 +196,39 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::FORLOOP) << " then if type(reg[Ra])==\"number\" then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then reg[Ra]=idx reg[Ra+3]=idx pc+=D end end\n";
     s << "elseif op==" << n(Op::FORGLOOP) << " then local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2] if type(it)==\"function\" then local res={it(state,ctl)} if res[1]~=nil then reg[Ra+2]=res[1] for i=1,#res do reg[Ra+2+i]=res[i] end pc+=D end end\n";
     s << "elseif op==" << n(Op::CLOSURE) << " then\n";
-    s << "pc+=1 local child=code[pc] or 0 local cid=p.ch[child+1] or 0\n";
-    s << "local childP=P[cid+1]\n";
-    s << "local nup=childP and childP.u or 0\n";
-    s << "local newUps={}\n";
-    s << "for ui=1,nup do\n";
     s << "pc+=1\n";
-    s << "local cinst=code[pc] or 0\n";
+    s << "local child=code[pc] or 0\n";
+    s << "local cid=p.ch[child+1] or 0\n";
+    s << "local childP=P[cid+1]\n";
+    s << "local nup=childP and (childP.u or 0) or 0\n";
+    s << "local newUps={}\n";
+    // Snapshot parent registers so locals like HUB stay visible even if CAPTURE layout is odd
+    s << "for i=1,math.max(#reg, nup) do newUps[i]=reg[i] end\n";
+    s << "for i=1,#ups do if newUps[i]==nil then newUps[i]=ups[i] end end\n";
+    s << "for ui=1,nup do\n";
+    s << "local nextPc=pc+1\n";
+    s << "if nextPc>#code then break end\n";
+    s << "local cinst=code[nextPc]\n";
+    s << "local cop=bit32.band(cinst,255)\n";
     s << "local ca=bit32.band(bit32.rshift(cinst,8),255)\n";
     s << "local cb=bit32.band(bit32.rshift(cinst,16),255)\n";
+    s << "if cop==CAP then\n";
+    s << "pc=nextPc\n";
     s << "if ca==2 then newUps[ui]=ups[cb+1] else newUps[ui]=reg[cb+1] end\n";
+    s << "else\n";
+    // No CAPTURE word; keep snapshot slot
+    s << "break\n";
     s << "end\n";
-    s << "reg[Ra]=function(...) return run(cid,{...},newUps) end\n";
-    s << "elseif op==" << n(Op::CAPTURE) << " then\n";
-    s << "-- consumed by CLOSURE; ignore if encountered alone\n";
-    s << "end pc+=1 end end\n";
+    s << "end\n";
+    s << "reg[Ra]=function(...)\n";
+    s << "return run(cid,{...},newUps)\n";
+    s << "end\n";
+    s << "elseif op==CAP then\n";
+    s << "-- stand-alone CAPTURE (should be consumed by CLOSURE)\n";
+    s << "end\n";
+    s << "pc+=1\n";
+    s << "end\n";
+    s << "end\n";
     s << "return run(mainId)\n";
     return s.str();
 }
