@@ -174,6 +174,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::DIV) << " then reg[Ra]=(reg[Rb] or 0)/(reg[Rc] or 1)\n";
     s << "elseif op==" << n(Op::MOD) << " then reg[Ra]=(reg[Rb] or 0)%(reg[Rc] or 1)\n";
     s << "elseif op==" << n(Op::POW) << " then reg[Ra]=(reg[Rb] or 0)^(reg[Rc] or 1)\n";
+    s << "elseif op==" << n(Op::IDIV) << " then reg[Ra]=math.floor((reg[Rb] or 0)/(reg[Rc] or 1))\n";
     s << "elseif op==" << n(Op::UNM) << " then reg[Ra]=-(reg[Rb] or 0)\n";
     s << "elseif op==" << n(Op::NOT) << " then reg[Ra]=not reg[Rb]\n";
     s << "elseif op==" << n(Op::LEN) << " then reg[Ra]=#(reg[Rb] or \"\")\n";
