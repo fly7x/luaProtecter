@@ -187,7 +187,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::GETGLOBAL) << " then pc+=1 reg[Ra]=E[kn(p,code[pc])]\n";
     s << "elseif op==" << n(Op::SETGLOBAL) << " then pc+=1 local key=kn(p,code[pc]) E[key]=reg[Ra] RealG[key]=reg[Ra]\n";
     s << "elseif op==" << n(Op::GETTABLE) << " then reg[Ra]=reg[Rb][reg[Rc]]\n";
-    s << "elseif op==" << n(Op::SETTABLE) << " then reg[Ra][reg[Rb]]=reg[Rc]\n";
+    s << "elseif op==" << n(Op::SETTABLE) << " then reg[Rb][reg[Rc]]=reg[Ra]\n";
     s << "elseif op==" << n(Op::GETTABLEKS) << " then pc+=1 reg[Ra]=reg[Rb][kn(p,code[pc])]\n";
     s << "elseif op==" << n(Op::SETTABLEKS) << " then pc+=1 reg[Rb][kn(p,code[pc])]=reg[Ra]\n";
     s << "elseif op==" << n(Op::NEWTABLE) << " then reg[Ra]={}\n";
@@ -210,8 +210,18 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "local stored={}\n";
     s << "for i=1,64 do stored[i]=parentReg[i] end\n";
     s << "for i=1,64 do if stored[i]==nil then stored[i]=parentUps[i] end end\n";
-    // Only skip capture words — do NOT overlay (was overwriting HUB with nil)
-    s << "for _=1,nup do pc+=1 end\n";
+    s << "for ui=1,nup do\n";
+    s << "pc+=1\n";
+    s << "if pc<=#code then\n";
+    s << "local cinst=code[pc]\n";
+    s << "local ca=bit32.band(bit32.rshift(cinst,8),255)\n";
+    s << "local cb=bit32.band(bit32.rshift(cinst,16),255)\n";
+    s << "if ca<=2 and cb<64 then\n";
+    s << "local v=if ca==2 then parentUps[cb+1] else parentReg[cb+1]\n";
+    s << "if v~=nil then stored[ui]=v end\n";
+    s << "end\n";
+    s << "end\n";
+    s << "end\n";
     s << "reg[Ra]=function(...) return run(cid,{...},stored) end\n";
     s << "elseif op==" << n(Op::CAPTURE) << " then\n";
     s << "end\n";
