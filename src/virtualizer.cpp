@@ -178,6 +178,8 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::NOT) << " then reg[Ra]=not reg[Rb]\n";
     s << "elseif op==" << n(Op::LEN) << " then reg[Ra]=#(reg[Rb] or \"\")\n";
     s << "elseif op==" << n(Op::CONCAT) << " then local t=\"\" for i=Rb,Rc do t..=tostring(reg[i]) end reg[Ra]=t\n";
+    s << "elseif op==" << n(Op::AND) << " then if reg[Rb] then reg[Ra]=reg[Rc] else reg[Ra]=reg[Rb] end\n";
+    s << "elseif op==" << n(Op::OR) << " then if reg[Rb] then reg[Ra]=reg[Rb] else reg[Ra]=reg[Rc] end\n";
     s << "elseif op==" << n(Op::JMP) << " then pc+=D\n";
     s << "elseif op==" << n(Op::JMPIF) << " then if reg[Ra] then pc+=D end\n";
     s << "elseif op==" << n(Op::JMPIFNOT) << " then if not reg[Ra] then pc+=D end\n";
@@ -190,11 +192,13 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::SETTABLE) << " then reg[Rb][reg[Rc]]=reg[Ra]\n";
     s << "elseif op==" << n(Op::GETTABLEKS) << " then pc+=1 reg[Ra]=reg[Rb][kn(p,code[pc])]\n";
     s << "elseif op==" << n(Op::SETTABLEKS) << " then pc+=1 reg[Rb][kn(p,code[pc])]=reg[Ra]\n";
+    s << "elseif op==" << n(Op::GETTABLEN) << " then reg[Ra]=reg[Rb][C+1]\n";
+    s << "elseif op==" << n(Op::SETTABLEN) << " then reg[Rb][C+1]=reg[Ra]\n";
     s << "elseif op==" << n(Op::NEWTABLE) << " then reg[Ra]={}\n";
     s << "elseif op==" << n(Op::NAMECALL) << " then pc+=1 local key=kn(p,code[pc]) local obj=reg[Rb] reg[Ra+1]=obj reg[Ra]=obj and obj[key]\n";
     s << "elseif op==" << n(Op::GETUPVAL) << " then reg[Ra]=ups[B+1]\n";
     s << "elseif op==" << n(Op::SETUPVAL) << " then ups[B+1]=reg[Ra]\n";
-    s << "elseif op==" << n(Op::SETLIST) << " then local t=reg[Ra] local n=if C==0 then (#reg-A) else (C-1) if type(t)==\"table\" then for i=1,n do t[i]=reg[Ra+i] end end\n";
+    s << "elseif op==" << n(Op::SETLIST) << " then pc+=1 local start=code[pc] or 1 local t=reg[Ra] local n=if C==0 then (#reg-A) else (C-1) if type(t)==\"table\" then for i=1,n do t[start+i-1]=reg[Ra+i] end end\n";
     s << "elseif op==" << n(Op::CALL) << " then local narg=if B==0 then (#reg-A) else (B-1) local fn=reg[Ra] local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end local ret={fn(table.unpack(argv,1,math.max(narg,0)))} if C~=1 then local limit=if C==0 then #ret else (C-1) for i=1,limit do reg[Ra+i-1]=ret[i] end end\n";
     s << "elseif op==" << n(Op::RETURN) << " then local nret=if B==0 then (#reg-A) else (B-1) local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end return table.unpack(out,1,math.max(nret,0))\n";
     s << "elseif op==" << n(Op::FORPREP) << " then if type(reg[Ra])==\"number\" then reg[Ra]=(reg[Ra] or 0)-(reg[Ra+2] or 1) end pc+=D\n";
