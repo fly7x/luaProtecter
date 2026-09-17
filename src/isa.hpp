@@ -50,6 +50,8 @@ enum class Op : uint8_t {
     OR,
     GETTABLEN,
     SETTABLEN,
+    IDIV,
+    JUMPXEQ,
     COUNT
 };
 
