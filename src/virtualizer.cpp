@@ -97,14 +97,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "return word\n";
     s << "end\n";
 
-    // Snapshot every common Roblox global at load (Studio environment)
-    s << "local function grab(name, fallback)\n";
-    s << "local ok,v=pcall(function() return rawget(_G,name) or getfenv and getfenv()[name] end)\n";
-    s << "if ok and v~=nil then return v end\n";
-    s << "ok,v=pcall(function() return getfenv()[name] end)\n";
-    s << "if ok and v~=nil then return v end\n";
-    s << "return fallback\n";
-    s << "end\n";
+    // Roblox + Luau globals captured at load
     s << "local G={\n";
     s << "game=game,workspace=workspace,Workspace=workspace,script=script,\n";
     s << "Enum=Enum,Instance=Instance,Color3=Color3,UDim2=UDim2,UDim=UDim,\n";
@@ -122,11 +115,9 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "require=require,shared=shared,setfenv=setfenv,getfenv=getfenv,\n";
     s << "setmetatable=setmetatable,getmetatable=getmetatable,\n";
     s << "rawget=rawget,rawset=rawset,rawequal=rawequal,rawlen=rawlen,\n";
-    s << "newproxy=newproxy,gcinfo=gcinfo,\n";
+    s << "newproxy=newproxy,\n";
     s << "}\n";
     s << "pcall(function() G.setclipboard=setclipboard end)\n";
-    s << "pcall(function() G.Owner=Owner end)\n";
-    s << "pcall(function() if plugin then G.plugin=plugin end end)\n";
 
     s << "local RealG=_G\n";
     s << "pcall(function() if getfenv then local e=getfenv() if type(e)==\"table\" then RealG=e end end end)\n";
@@ -139,10 +130,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "if v~=nil then return v end\n";
     s << "v=rawget(RealG,k)\n";
     s << "if v~=nil then return v end\n";
-    s << "v=rawget(_G,k)\n";
-    s << "if v~=nil then return v end\n";
-    // last resort: try global as bare name via loadstring-less path
-    s << "return nil\n";
+    s << "return rawget(_G,k)\n";
     s << "end,__newindex=function(_,k,v) RealG[k]=v G[k]=v end})\n";
 
     s << "local function run(pid,args,ups)\n";
@@ -158,20 +146,24 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "local C=bit32.band(bit32.rshift(inst,24),255)\n";
     s << "local D=bit32.band(bit32.rshift(inst,16),65535) if D>=32768 then D-=65536 end\n";
     s << "local Ra,Rb,Rc=A+1,B+1,C+1\n";
+
     s << "if op==" << n(Op::MOVE) << " then reg[Ra]=reg[Rb]\n";
     s << "elseif op==" << n(Op::LOADNIL) << " then reg[Ra]=nil\n";
     s << "elseif op==" << n(Op::LOADBOOL) << " then reg[Ra]=B~=0\n";
     s << "elseif op==" << n(Op::LOADK) << " then pc+=1 reg[Ra]=kn(p,code[pc])\n";
-    s << "elseif op==" << n(Op::ADD) << " then reg[Ra]=(reg[Rb] or 0)+(reg[Rc] or 0)\n";
-    s << "elseif op==" << n(Op::SUB) << " then reg[Ra]=(reg[Rb] or 0)-(reg[Rc] or 0)\n";
-    s << "elseif op==" << n(Op::MUL) << " then reg[Ra]=(reg[Rb] or 0)*(reg[Rc] or 0)\n";
-    s << "elseif op==" << n(Op::DIV) << " then reg[Ra]=(reg[Rb] or 0)/(reg[Rc] or 1)\n";
-    s << "elseif op==" << n(Op::MOD) << " then reg[Ra]=(reg[Rb] or 0)%(reg[Rc] or 1)\n";
-    s << "elseif op==" << n(Op::POW) << " then reg[Ra]=(reg[Rb] or 0)^(reg[Rc] or 1)\n";
-    s << "elseif op==" << n(Op::IDIV) << " then reg[Ra]=math.floor((reg[Rb] or 0)/(reg[Rc] or 1))\n";
-    s << "elseif op==" << n(Op::UNM) << " then reg[Ra]=-(reg[Rb] or 0)\n";
+
+    // Arithmetic: real + metamethods (no \"or 0\" — that caused Instance+number)
+    s << "elseif op==" << n(Op::ADD) << " then local ok,res=pcall(function() return reg[Rb]+reg[Rc] end) reg[Ra]=ok and res or nil\n";
+    s << "elseif op==" << n(Op::SUB) << " then local ok,res=pcall(function() return reg[Rb]-reg[Rc] end) reg[Ra]=ok and res or nil\n";
+    s << "elseif op==" << n(Op::MUL) << " then local ok,res=pcall(function() return reg[Rb]*reg[Rc] end) reg[Ra]=ok and res or nil\n";
+    s << "elseif op==" << n(Op::DIV) << " then local ok,res=pcall(function() return reg[Rb]/reg[Rc] end) reg[Ra]=ok and res or nil\n";
+    s << "elseif op==" << n(Op::MOD) << " then local ok,res=pcall(function() return reg[Rb]%reg[Rc] end) reg[Ra]=ok and res or nil\n";
+    s << "elseif op==" << n(Op::POW) << " then local ok,res=pcall(function() return reg[Rb]^reg[Rc] end) reg[Ra]=ok and res or nil\n";
+    s << "elseif op==" << n(Op::IDIV) << " then local ok,res=pcall(function() return math.floor(reg[Rb]/reg[Rc]) end) reg[Ra]=ok and res or nil\n";
+    s << "elseif op==" << n(Op::UNM) << " then local ok,res=pcall(function() return -reg[Rb] end) reg[Ra]=ok and res or nil\n";
+
     s << "elseif op==" << n(Op::NOT) << " then reg[Ra]=not reg[Rb]\n";
-    s << "elseif op==" << n(Op::LEN) << " then reg[Ra]=#(reg[Rb] or \"\")\n";
+    s << "elseif op==" << n(Op::LEN) << " then local ok,res=pcall(function() return #reg[Rb] end) reg[Ra]=ok and res or 0\n";
     s << "elseif op==" << n(Op::CONCAT) << " then local t=\"\" for i=Rb,Rc do t..=tostring(reg[i]) end reg[Ra]=t\n";
     s << "elseif op==" << n(Op::AND) << " then if reg[Rb] then reg[Ra]=reg[Rc] else reg[Ra]=reg[Rb] end\n";
     s << "elseif op==" << n(Op::OR) << " then if reg[Rb] then reg[Ra]=reg[Rb] else reg[Ra]=reg[Rc] end\n";
@@ -197,9 +189,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::CALL) << " then\n";
     s << "local narg=if B==0 then (#reg-A) else (B-1)\n";
     s << "local fn=reg[Ra]\n";
-    s << "if type(fn)~=\"function\" then\n";
-    s << "error(\"bad call \"..tostring(fn)..\" at pc \"..tostring(pc))\n";
-    s << "end\n";
+    s << "if type(fn)~=\"function\" then error(\"bad call \"..tostring(fn)..\" at pc \"..tostring(pc)) end\n";
     s << "local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end\n";
     s << "local ret={fn(table.unpack(argv,1,math.max(narg,0)))}\n";
     s << "if C~=1 then local limit=if C==0 then #ret else (C-1) for i=1,limit do reg[Ra+i-1]=ret[i] end end\n";
