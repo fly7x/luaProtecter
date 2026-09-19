@@ -134,6 +134,18 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
 
     s << "local CAP=" << n(Op::CAPTURE) << "\n";
 
+    // Filter table args for ColorSequence/NumberSequence constructors
+    s << "local function filterSeqTable(t, wantType)\n";
+    s << "if type(t)~=\"table\" then return t end\n";
+    s << "local out={}\n";
+    s << "for i=1,64 do\n";
+    s << "local v=t[i]\n";
+    s << "if v==nil then break end\n";
+    s << "if typeof(v)==wantType then out[#out+1]=v end\n";
+    s << "end\n";
+    s << "return #out>0 and out or t\n";
+    s << "end\n";
+
     s << "local function run(pid,args,ups)\n";
     s << "local p=P[pid+1] if not p then error(\"p\") end\n";
     s << "local reg={} if args then for i=1,#args do reg[i]=args[i] end end\n";
@@ -184,27 +196,43 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::GETUPVAL) << " then reg[Ra]=ups[B+1]\n";
     s << "elseif op==" << n(Op::SETUPVAL) << " then ups[B+1]=reg[Ra]\n";
 
-    // SETLIST: B = count (0 = through top). C is NOT the count.
+    // SETLIST: B = count (0 = stop at first nil after Ra)
     s << "elseif op==" << n(Op::SETLIST) << " then\n";
     s << "pc+=1\n";
     s << "local start=code[pc] or 1\n";
     s << "local t=reg[Ra]\n";
-    s << "local n=if B==0 then math.max(0,#reg-A) else B\n";
-    s << "if type(t)==\"table\" then for i=1,n do t[start+i-1]=reg[Ra+i] end end\n";
+    s << "local n=B\n";
+    s << "if n==0 then\n";
+    s << "n=0\n";
+    s << "while reg[Ra+n+1]~=nil do n+=1 if n>200 then break end end\n";
+    s << "end\n";
+    s << "if type(t)==\"table\" then\n";
+    s << "for i=1,n do t[start+i-1]=reg[Ra+i] end\n";
+    s << "end\n";
 
     s << "elseif op==" << n(Op::CALL) << " then\n";
-    s << "local narg=if B==0 then (#reg-A) else (B-1)\n";
+    s << "local narg=if B==0 then math.max(0,#reg-A) else (B-1)\n";
     s << "local fn=reg[Ra]\n";
     s << "if type(fn)~=\"function\" then error(\"bad call \"..tostring(fn)..\" at pc \"..tostring(pc)) end\n";
     s << "local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end\n";
+    // Sanitize ColorSequence / NumberSequence table arguments
+    s << "if narg>=1 and type(argv[1])==\"table\" then\n";
+    s << "local a1=argv[1]\n";
+    s << "local filtered=filterSeqTable(a1,\"ColorSequenceKeypoint\")\n";
+    s << "if filtered~=a1 then argv[1]=filtered\n";
+    s << "else\n";
+    s << "filtered=filterSeqTable(a1,\"NumberSequenceKeypoint\")\n";
+    s << "if filtered~=a1 then argv[1]=filtered end\n";
+    s << "end\n";
+    s << "end\n";
     s << "local ret={fn(table.unpack(argv,1,math.max(narg,0)))}\n";
     s << "if C~=1 then local limit=if C==0 then #ret else (C-1) for i=1,limit do reg[Ra+i-1]=ret[i] end end\n";
+
     s << "elseif op==" << n(Op::RETURN) << " then local nret=if B==0 then (#reg-A) else (B-1) local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end return table.unpack(out,1,math.max(nret,0))\n";
     s << "elseif op==" << n(Op::FORPREP) << " then if type(reg[Ra])==\"number\" then reg[Ra]=(reg[Ra] or 0)-(reg[Ra+2] or 1) end pc+=D\n";
     s << "elseif op==" << n(Op::FORLOOP) << " then if type(reg[Ra])==\"number\" then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then reg[Ra]=idx reg[Ra+3]=idx pc+=D end end\n";
     s << "elseif op==" << n(Op::FORGLOOP) << " then local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2] if type(it)==\"function\" then local res={it(state,ctl)} if res[1]~=nil then reg[Ra+2]=res[1] for i=1,#res do reg[Ra+2+i]=res[i] end pc+=D end end\n";
 
-    // CAPTURE-safe CLOSURE
     s << "elseif op==" << n(Op::CLOSURE) << " then\n";
     s << "pc+=1\n";
     s << "local child=code[pc] or 0\n";
