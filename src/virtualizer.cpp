@@ -97,7 +97,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "return word\n";
     s << "end\n";
 
-    // Roblox + Luau globals captured at load
     s << "local G={\n";
     s << "game=game,workspace=workspace,Workspace=workspace,script=script,\n";
     s << "Enum=Enum,Instance=Instance,Color3=Color3,UDim2=UDim2,UDim=UDim,\n";
@@ -133,6 +132,8 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "return rawget(_G,k)\n";
     s << "end,__newindex=function(_,k,v) RealG[k]=v G[k]=v end})\n";
 
+    s << "local CAP=" << n(Op::CAPTURE) << "\n";
+
     s << "local function run(pid,args,ups)\n";
     s << "local p=P[pid+1] if not p then error(\"p\") end\n";
     s << "local reg={} if args then for i=1,#args do reg[i]=args[i] end end\n";
@@ -151,8 +152,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::LOADNIL) << " then reg[Ra]=nil\n";
     s << "elseif op==" << n(Op::LOADBOOL) << " then reg[Ra]=B~=0\n";
     s << "elseif op==" << n(Op::LOADK) << " then pc+=1 reg[Ra]=kn(p,code[pc])\n";
-
-    // Arithmetic: real + metamethods (no \"or 0\" — that caused Instance+number)
     s << "elseif op==" << n(Op::ADD) << " then local ok,res=pcall(function() return reg[Rb]+reg[Rc] end) reg[Ra]=ok and res or nil\n";
     s << "elseif op==" << n(Op::SUB) << " then local ok,res=pcall(function() return reg[Rb]-reg[Rc] end) reg[Ra]=ok and res or nil\n";
     s << "elseif op==" << n(Op::MUL) << " then local ok,res=pcall(function() return reg[Rb]*reg[Rc] end) reg[Ra]=ok and res or nil\n";
@@ -161,7 +160,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::POW) << " then local ok,res=pcall(function() return reg[Rb]^reg[Rc] end) reg[Ra]=ok and res or nil\n";
     s << "elseif op==" << n(Op::IDIV) << " then local ok,res=pcall(function() return math.floor(reg[Rb]/reg[Rc]) end) reg[Ra]=ok and res or nil\n";
     s << "elseif op==" << n(Op::UNM) << " then local ok,res=pcall(function() return -reg[Rb] end) reg[Ra]=ok and res or nil\n";
-
     s << "elseif op==" << n(Op::NOT) << " then reg[Ra]=not reg[Rb]\n";
     s << "elseif op==" << n(Op::LEN) << " then local ok,res=pcall(function() return #reg[Rb] end) reg[Ra]=ok and res or 0\n";
     s << "elseif op==" << n(Op::CONCAT) << " then local t=\"\" for i=Rb,Rc do t..=tostring(reg[i]) end reg[Ra]=t\n";
@@ -197,6 +195,8 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::FORPREP) << " then if type(reg[Ra])==\"number\" then reg[Ra]=(reg[Ra] or 0)-(reg[Ra+2] or 1) end pc+=D\n";
     s << "elseif op==" << n(Op::FORLOOP) << " then if type(reg[Ra])==\"number\" then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then reg[Ra]=idx reg[Ra+3]=idx pc+=D end end\n";
     s << "elseif op==" << n(Op::FORGLOOP) << " then local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2] if type(it)==\"function\" then local res={it(state,ctl)} if res[1]~=nil then reg[Ra+2]=res[1] for i=1,#res do reg[Ra+2+i]=res[i] end pc+=D end end\n";
+
+    // CAPTURE-safe CLOSURE — never eat non-CAPTURE words (fixes DUPCLOSURE desync)
     s << "elseif op==" << n(Op::CLOSURE) << " then\n";
     s << "pc+=1\n";
     s << "local child=code[pc] or 0\n";
@@ -208,15 +208,16 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "for i=1,64 do stored[i]=parentReg[i] end\n";
     s << "for i=1,64 do if stored[i]==nil then stored[i]=parentUps[i] end end\n";
     s << "for ui=1,nup do\n";
+    s << "if pc+1>#code then break end\n";
+    s << "local nextInst=code[pc+1]\n";
+    s << "local nextOp=bit32.band(nextInst,255)\n";
+    s << "if nextOp~=CAP then break end\n";
     s << "pc+=1\n";
-    s << "if pc<=#code then\n";
-    s << "local cinst=code[pc]\n";
-    s << "local ca=bit32.band(bit32.rshift(cinst,8),255)\n";
-    s << "local cb=bit32.band(bit32.rshift(cinst,16),255)\n";
+    s << "local ca=bit32.band(bit32.rshift(nextInst,8),255)\n";
+    s << "local cb=bit32.band(bit32.rshift(nextInst,16),255)\n";
     s << "if ca<=2 and cb<64 then\n";
     s << "local v=if ca==2 then parentUps[cb+1] else parentReg[cb+1]\n";
     s << "if v~=nil then stored[ui]=v end\n";
-    s << "end\n";
     s << "end\n";
     s << "end\n";
     s << "reg[Ra]=function(...) return run(cid,{...},stored) end\n";
