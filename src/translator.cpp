@@ -79,12 +79,10 @@ static FlyConstant convertConst(const TValue* o) {
     return c;
 }
 
-// Resolve DUPCLOSURE constant → child proto index within parent
 static uint32_t resolveDupChild(Proto* parent, int constIndex) {
     if (!parent || constIndex < 0 || constIndex >= parent->sizek)
         return 0;
     const TValue* o = &parent->k[constIndex];
-    // Closure constant: match proto pointer against parent->p[i]
     if (ttisfunction(o)) {
         Closure* cl = clvalue(o);
         if (cl && !cl->isC && cl->l.p) {
@@ -94,7 +92,6 @@ static uint32_t resolveDupChild(Proto* parent, int constIndex) {
             }
         }
     }
-    // Fallback: if D looks like a valid child index, use it
     if (constIndex >= 0 && constIndex < parent->sizep)
         return uint32_t(constIndex);
     return 0;
@@ -139,6 +136,78 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         emitABC(arith, a, tmp, c);
     };
 
+    auto addStr = [&](const char* str) -> uint32_t {
+        for (size_t i = 0; i < proto.constants.size(); ++i) {
+            if (proto.constants[i].type == FlyConstant::STRING &&
+                proto.constants[i].s == str)
+                return uint32_t(i);
+        }
+        FlyConstant c;
+        c.type = FlyConstant::STRING;
+        c.s = str;
+        proto.constants.push_back(c);
+        return uint32_t(proto.constants.size() - 1);
+    };
+
+    // Emit GETGLOBAL lib + GETTABLEKS fn into register callA
+    auto emitBuiltinLoad = [&](uint8_t callA, uint32_t builtinId) {
+        const char* lib = nullptr;
+        const char* fn = nullptr;
+        // LuauBuiltinFunction ids from Luau Bytecode.h
+        switch (builtinId) {
+        case 2:  lib = "math"; fn = "abs"; break;       // LBF_MATH_ABS
+        case 7:  lib = "math"; fn = "ceil"; break;      // LBF_MATH_CEIL
+        case 12: lib = "math"; fn = "floor"; break;     // LBF_MATH_FLOOR
+        case 18: lib = "math"; fn = "max"; break;       // LBF_MATH_MAX
+        case 19: lib = "math"; fn = "min"; break;       // LBF_MATH_MIN
+        case 21: lib = "math"; fn = "pow"; break;       // LBF_MATH_POW
+        case 25: lib = "math"; fn = "sqrt"; break;      // LBF_MATH_SQRT
+        case 46: lib = "math"; fn = "clamp"; break;     // LBF_MATH_CLAMP
+        case 47: lib = "math"; fn = "sign"; break;      // LBF_MATH_SIGN
+        case 48: lib = "math"; fn = "round"; break;     // LBF_MATH_ROUND
+        case 9:  lib = "math"; fn = "cos"; break;
+        case 24: lib = "math"; fn = "sin"; break;
+        case 27: lib = "math"; fn = "tan"; break;
+        case 11: lib = "math"; fn = "exp"; break;
+        case 17: lib = "math"; fn = "log"; break;
+        case 52: lib = "table"; fn = "insert"; break;   // LBF_TABLE_INSERT
+        case 53: lib = "table"; fn = "unpack"; break;   // LBF_TABLE_UNPACK
+        case 41: lib = "string"; fn = "byte"; break;
+        case 42: lib = "string"; fn = "char"; break;
+        case 45: lib = "string"; fn = "sub"; break;
+        case 29: lib = "bit32"; fn = "band"; break;
+        case 31: lib = "bit32"; fn = "bor"; break;
+        case 32: lib = "bit32"; fn = "bxor"; break;
+        case 30: lib = "bit32"; fn = "bnot"; break;
+        case 36: lib = "bit32"; fn = "lshift"; break;
+        case 39: lib = "bit32"; fn = "rshift"; break;
+        default: break;
+        }
+
+        if (lib && fn) {
+            uint32_t kLib = addStr(lib);
+            uint32_t kFn = addStr(fn);
+            emitABC(Op::GETGLOBAL, callA, 0, 0);
+            emitK(kLib);
+            emitABC(Op::GETTABLEKS, callA, callA, 0);
+            emitK(kFn);
+            return;
+        }
+        // Single-global builtins
+        const char* g = nullptr;
+        if (builtinId == 1) g = "assert";
+        else if (builtinId == 40) g = "type";
+        else if (builtinId == 44) g = "typeof";
+        else if (builtinId == 49) g = "rawset";
+        else if (builtinId == 50) g = "rawget";
+        else if (builtinId == 51) g = "rawequal";
+        if (g) {
+            uint32_t k = addStr(g);
+            emitABC(Op::GETGLOBAL, callA, 0, 0);
+            emitK(k);
+        }
+    };
+
     size_t pc = 0;
     while (pc < luauCode.size()) {
         oldToNew[pc] = proto.code.size();
@@ -164,13 +233,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_BREAK:
         case LOP_PREPVARARGS:
         case LOP_CLOSEUPVALS:
-        case LOP_FASTCALL:
-        case LOP_FASTCALL1:
-        case LOP_FASTCALL2:
-        case LOP_FASTCALL2K:
-#ifdef LOP_FASTCALL3
-        case LOP_FASTCALL3:
-#endif
 #ifdef LOP_COVERAGE
         case LOP_COVERAGE:
 #endif
@@ -178,6 +240,37 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_NATIVECALL:
 #endif
             break;
+
+        // FASTCALL: A = builtin id. Ensure following CALL has the real function.
+        case LOP_FASTCALL:
+        case LOP_FASTCALL1:
+        case LOP_FASTCALL2:
+        case LOP_FASTCALL2K:
+#ifdef LOP_FASTCALL3
+        case LOP_FASTCALL3:
+#endif
+        {
+            uint32_t builtinId = A;
+            size_t look = pc + size_t(len);
+            int callA = -1;
+            while (look < luauCode.size()) {
+                uint8_t lop = uint8_t(LUAU_INSN_OP(luauCode[look]));
+                int ln = luauInsnLength(lop);
+                if (lop == LOP_CALL) {
+                    callA = int(LUAU_INSN_A(luauCode[look]));
+                    break;
+                }
+                if (lop == LOP_GETIMPORT || lop == LOP_MOVE || lop == LOP_GETUPVAL ||
+                    lop == LOP_GETGLOBAL || lop == LOP_GETTABLEKS) {
+                    look += size_t(ln);
+                    continue;
+                }
+                break;
+            }
+            if (callA >= 0)
+                emitBuiltinLoad(uint8_t(callA), builtinId);
+            break;
+        }
 
         case LOP_CAPTURE:
             emitABC(Op::CAPTURE, A, B, 0);
@@ -500,7 +593,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             proto.code.push_back(uint32_t(int32_t(D)));
             break;
         case LOP_DUPCLOSURE: {
-            // D = constant index of a prototype closure → real child index
             uint32_t childIndex = resolveDupChild(luauProto, int(D));
             emitABC(Op::CLOSURE, A, 0, 0);
             proto.code.push_back(childIndex);
