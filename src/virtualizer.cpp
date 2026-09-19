@@ -134,7 +134,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
 
     s << "local CAP=" << n(Op::CAPTURE) << "\n";
 
-    // Filter table args for ColorSequence/NumberSequence constructors
     s << "local function filterSeqTable(t, wantType)\n";
     s << "if type(t)~=\"table\" then return t end\n";
     s << "local out={}\n";
@@ -196,7 +195,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::GETUPVAL) << " then reg[Ra]=ups[B+1]\n";
     s << "elseif op==" << n(Op::SETUPVAL) << " then ups[B+1]=reg[Ra]\n";
 
-    // SETLIST: B = count (0 = stop at first nil after Ra)
     s << "elseif op==" << n(Op::SETLIST) << " then\n";
     s << "pc+=1\n";
     s << "local start=code[pc] or 1\n";
@@ -206,16 +204,13 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "n=0\n";
     s << "while reg[Ra+n+1]~=nil do n+=1 if n>200 then break end end\n";
     s << "end\n";
-    s << "if type(t)==\"table\" then\n";
-    s << "for i=1,n do t[start+i-1]=reg[Ra+i] end\n";
-    s << "end\n";
+    s << "if type(t)==\"table\" then for i=1,n do t[start+i-1]=reg[Ra+i] end end\n";
 
     s << "elseif op==" << n(Op::CALL) << " then\n";
     s << "local narg=if B==0 then math.max(0,#reg-A) else (B-1)\n";
     s << "local fn=reg[Ra]\n";
-    s << "if type(fn)~=\"function\" then error(\"bad call \"..tostring(fn)..\" at pc \"..tostring(pc)) end\n";
+    s << "if type(fn)~=\"function\" then error(\"bad call \"..tostring(fn)..\" at pc \"..tostring(pc)..\" pid \"..tostring(pid)) end\n";
     s << "local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end\n";
-    // Sanitize ColorSequence / NumberSequence table arguments
     s << "if narg>=1 and type(argv[1])==\"table\" then\n";
     s << "local a1=argv[1]\n";
     s << "local filtered=filterSeqTable(a1,\"ColorSequenceKeypoint\")\n";
@@ -233,28 +228,32 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::FORLOOP) << " then if type(reg[Ra])==\"number\" then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then reg[Ra]=idx reg[Ra+3]=idx pc+=D end end\n";
     s << "elseif op==" << n(Op::FORGLOOP) << " then local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2] if type(it)==\"function\" then local res={it(state,ctl)} if res[1]~=nil then reg[Ra+2]=res[1] for i=1,#res do reg[Ra+2+i]=res[i] end pc+=D end end\n";
 
+    // CLOSURE: consume ALL following CAPTURE ops (ignore nup count — fixes nil upvalues)
     s << "elseif op==" << n(Op::CLOSURE) << " then\n";
     s << "pc+=1\n";
     s << "local child=code[pc] or 0\n";
     s << "local cid=p.ch[child+1] or 0\n";
-    s << "local childP=P[cid+1]\n";
-    s << "local nup=childP and (childP.u or 0) or 0\n";
     s << "local parentReg,parentUps=reg,ups\n";
     s << "local stored={}\n";
     s << "for i=1,64 do stored[i]=parentReg[i] end\n";
     s << "for i=1,64 do if stored[i]==nil then stored[i]=parentUps[i] end end\n";
-    s << "for ui=1,nup do\n";
-    s << "if pc+1>#code then break end\n";
+    s << "local ui=1\n";
+    s << "while pc+1<=#code do\n";
     s << "local nextInst=code[pc+1]\n";
     s << "local nextOp=bit32.band(nextInst,255)\n";
     s << "if nextOp~=CAP then break end\n";
     s << "pc+=1\n";
     s << "local ca=bit32.band(bit32.rshift(nextInst,8),255)\n";
     s << "local cb=bit32.band(bit32.rshift(nextInst,16),255)\n";
-    s << "if ca<=2 and cb<64 then\n";
-    s << "local v=if ca==2 then parentUps[cb+1] else parentReg[cb+1]\n";
-    s << "if v~=nil then stored[ui]=v end\n";
+    s << "local v=nil\n";
+    s << "if ca==2 then\n";
+    s << "v=parentUps[cb+1]\n";
+    s << "elseif ca<=1 then\n";
+    s << "v=parentReg[cb+1]\n";
     s << "end\n";
+    s << "if v~=nil then stored[ui]=v end\n";
+    s << "ui+=1\n";
+    s << "if ui>64 then break end\n";
     s << "end\n";
     s << "reg[Ra]=function(...) return run(cid,{...},stored) end\n";
     s << "elseif op==" << n(Op::CAPTURE) << " then\n";
