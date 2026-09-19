@@ -79,9 +79,31 @@ static FlyConstant convertConst(const TValue* o) {
     return c;
 }
 
+// Resolve DUPCLOSURE constant → child proto index within parent
+static uint32_t resolveDupChild(Proto* parent, int constIndex) {
+    if (!parent || constIndex < 0 || constIndex >= parent->sizek)
+        return 0;
+    const TValue* o = &parent->k[constIndex];
+    // Closure constant: match proto pointer against parent->p[i]
+    if (ttisfunction(o)) {
+        Closure* cl = clvalue(o);
+        if (cl && !cl->isC && cl->l.p) {
+            for (int i = 0; i < parent->sizep; ++i) {
+                if (parent->p[i] == cl->l.p)
+                    return uint32_t(i);
+            }
+        }
+    }
+    // Fallback: if D looks like a valid child index, use it
+    if (constIndex >= 0 && constIndex < parent->sizep)
+        return uint32_t(constIndex);
+    return 0;
+}
+
 bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
                                FlyProto& proto,
-                               std::string& err) const {
+                               std::string& err,
+                               Proto* luauProto) const {
     auto mop = [&](Op o) { return map_[static_cast<size_t>(o)]; };
     struct Jump {
         size_t patchIndex;
@@ -108,7 +130,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         emitABC(arith, a, b, tmp);
     };
     auto emitBinRK = [&](Op arith, uint8_t a, uint8_t kb, uint8_t c) {
-        // constant first, then register (SUBRK/DIVRK style)
         uint8_t tmp = proto.maxstack;
         if (tmp > 250) tmp = 250;
         if (proto.maxstack < 250)
@@ -215,7 +236,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::GETTABLE, A, B, C);
             break;
         case LOP_SETTABLE:
-            // Luau: A=value, B=table, C=key
             emitABC(Op::SETTABLE, A, B, C);
             break;
         case LOP_GETTABLEKS:
@@ -248,7 +268,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::NEWTABLE, A, B, C);
             break;
         case LOP_DUPTABLE:
-            // Template table → empty table; shape filled by following SETTABLEKS
             emitABC(Op::NEWTABLE, A, 0, 0);
             break;
         case LOP_SETLIST:
@@ -390,11 +409,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
 
 #ifdef LOP_JUMPXEQKNIL
         case LOP_JUMPXEQKNIL: {
-            // compare reg[A] == nil (or ~= if NOT flag in aux high bit)
             bool isNot = (aux >> 31) != 0;
-            emitABC(Op::LOADNIL, 255, 255, 0); // temp nil in high reg (approx)
-            // simpler: use JUMPXEQ style — load bool and jump
-            // A vs nil: emit EQ against a nil via LOADNIL into temp then EQ
             uint8_t tmp = proto.maxstack;
             if (tmp > 250) tmp = 250;
             if (proto.maxstack < 250)
@@ -484,19 +499,19 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::CLOSURE, A, 0, 0);
             proto.code.push_back(uint32_t(int32_t(D)));
             break;
-        case LOP_DUPCLOSURE:
-            // D indexes constant table (closure); child list still follows via CAPTURE stream
-            // Emit CLOSURE with child index 0 as fallback; real scripts often use NEWCLOSURE
+        case LOP_DUPCLOSURE: {
+            // D = constant index of a prototype closure → real child index
+            uint32_t childIndex = resolveDupChild(luauProto, int(D));
             emitABC(Op::CLOSURE, A, 0, 0);
-            proto.code.push_back(0);
+            proto.code.push_back(childIndex);
             break;
+        }
 
         case LOP_GETVARARGS:
             emitABC(Op::VARARG, A, B, 0);
             break;
 
         default:
-            // unknown / rare — skip (keeps pc aligned)
             break;
         }
         pc += size_t(len);
@@ -518,7 +533,11 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
 }
 
 bool Translator::remapPublic(const std::vector<uint32_t>& code, FlyProto& proto, std::string& err) const {
-    return remapFunction(code, proto, err);
+    return remapFunction(code, proto, err, nullptr);
+}
+
+bool Translator::remapPublic(const std::vector<uint32_t>& code, FlyProto& proto, std::string& err, Proto* luauProto) const {
+    return remapFunction(code, proto, err, luauProto);
 }
 
 static uint32_t pullProto(const Translator* self, struct Proto* p, std::vector<FlyProto>& out, std::string& err) {
@@ -544,7 +563,7 @@ static uint32_t pullProto(const Translator* self, struct Proto* p, std::vector<F
     for (int i = 0; i < p->sizecode; ++i)
         code.push_back(uint32_t(p->code[i]));
 
-    if (!self->remapPublic(code, dst, err))
+    if (!self->remapPublic(code, dst, err, p))
         return 0;
 
     uint32_t id = uint32_t(out.size());
