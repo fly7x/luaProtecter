@@ -183,7 +183,15 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::NAMECALL) << " then pc+=1 local key=kn(p,code[pc]) local obj=reg[Rb] reg[Ra+1]=obj reg[Ra]=obj~=nil and obj[key] or nil\n";
     s << "elseif op==" << n(Op::GETUPVAL) << " then reg[Ra]=ups[B+1]\n";
     s << "elseif op==" << n(Op::SETUPVAL) << " then ups[B+1]=reg[Ra]\n";
-    s << "elseif op==" << n(Op::SETLIST) << " then pc+=1 local start=code[pc] or 1 local t=reg[Ra] local n=if C==0 then (#reg-A) else (C-1) if type(t)==\"table\" then for i=1,n do t[start+i-1]=reg[Ra+i] end end\n";
+
+    // SETLIST: B = count (0 = through top). C is NOT the count.
+    s << "elseif op==" << n(Op::SETLIST) << " then\n";
+    s << "pc+=1\n";
+    s << "local start=code[pc] or 1\n";
+    s << "local t=reg[Ra]\n";
+    s << "local n=if B==0 then math.max(0,#reg-A) else B\n";
+    s << "if type(t)==\"table\" then for i=1,n do t[start+i-1]=reg[Ra+i] end end\n";
+
     s << "elseif op==" << n(Op::CALL) << " then\n";
     s << "local narg=if B==0 then (#reg-A) else (B-1)\n";
     s << "local fn=reg[Ra]\n";
@@ -196,7 +204,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::FORLOOP) << " then if type(reg[Ra])==\"number\" then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then reg[Ra]=idx reg[Ra+3]=idx pc+=D end end\n";
     s << "elseif op==" << n(Op::FORGLOOP) << " then local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2] if type(it)==\"function\" then local res={it(state,ctl)} if res[1]~=nil then reg[Ra+2]=res[1] for i=1,#res do reg[Ra+2+i]=res[i] end pc+=D end end\n";
 
-    // CAPTURE-safe CLOSURE — never eat non-CAPTURE words (fixes DUPCLOSURE desync)
+    // CAPTURE-safe CLOSURE
     s << "elseif op==" << n(Op::CLOSURE) << " then\n";
     s << "pc+=1\n";
     s << "local child=code[pc] or 0\n";
