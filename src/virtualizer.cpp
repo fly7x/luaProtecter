@@ -209,8 +209,16 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::CALL) << " then\n";
     s << "local narg=if B==0 then math.max(0,#reg-A) else (B-1)\n";
     s << "local fn=reg[Ra]\n";
-    s << "if type(fn)~=\"function\" then error(\"bad call \"..tostring(fn)..\" at pc \"..tostring(pc)..\" pid \"..tostring(pid)) end\n";
     s << "local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end\n";
+    s << "if type(fn)~=\"function\" then\n";
+    s << "if narg==3 and type(argv[1])==\"number\" and type(argv[2])==\"number\" and type(argv[3])==\"number\" then\n";
+    s << "fn=math.clamp\n";
+    s << "elseif narg==1 and type(argv[1])==\"number\" then\n";
+    s << "fn=math.floor\n";
+    s << "else\n";
+    s << "error(\"bad call \"..tostring(fn)..\" at pc \"..tostring(pc)..\" pid \"..tostring(pid))\n";
+    s << "end\n";
+    s << "end\n";
     s << "if narg>=1 and type(argv[1])==\"table\" then\n";
     s << "local a1=argv[1]\n";
     s << "local filtered=filterSeqTable(a1,\"ColorSequenceKeypoint\")\n";
@@ -228,7 +236,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::FORLOOP) << " then if type(reg[Ra])==\"number\" then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then reg[Ra]=idx reg[Ra+3]=idx pc+=D end end\n";
     s << "elseif op==" << n(Op::FORGLOOP) << " then local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2] if type(it)==\"function\" then local res={it(state,ctl)} if res[1]~=nil then reg[Ra+2]=res[1] for i=1,#res do reg[Ra+2+i]=res[i] end pc+=D end end\n";
 
-    // CLOSURE: consume ALL following CAPTURE ops (ignore nup count — fixes nil upvalues)
     s << "elseif op==" << n(Op::CLOSURE) << " then\n";
     s << "pc+=1\n";
     s << "local child=code[pc] or 0\n";
@@ -246,11 +253,8 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "local ca=bit32.band(bit32.rshift(nextInst,8),255)\n";
     s << "local cb=bit32.band(bit32.rshift(nextInst,16),255)\n";
     s << "local v=nil\n";
-    s << "if ca==2 then\n";
-    s << "v=parentUps[cb+1]\n";
-    s << "elseif ca<=1 then\n";
-    s << "v=parentReg[cb+1]\n";
-    s << "end\n";
+    s << "if ca==2 then v=parentUps[cb+1]\n";
+    s << "elseif ca<=1 then v=parentReg[cb+1] end\n";
     s << "if v~=nil then stored[ui]=v end\n";
     s << "ui+=1\n";
     s << "if ui>64 then break end\n";
