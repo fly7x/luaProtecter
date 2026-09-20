@@ -21,6 +21,7 @@ uint32_t Translator::Reader::u32() { return 0; }
 uint32_t Translator::Reader::varint() { return 0; }
 std::string Translator::Reader::bytes(uint32_t) { return {}; }
 
+// Official Luau getOpLength (BytecodeUtils.h)
 static int luauInsnLength(uint8_t op) {
     switch (op) {
     case LOP_GETGLOBAL:
@@ -29,24 +30,22 @@ static int luauInsnLength(uint8_t op) {
     case LOP_GETTABLEKS:
     case LOP_SETTABLEKS:
     case LOP_NAMECALL:
-    case LOP_NEWTABLE:
-    case LOP_SETLIST:
-    case LOP_LOADKX:
-    case LOP_FASTCALL:
-    case LOP_FASTCALL1:
-    case LOP_FASTCALL2:
-    case LOP_FASTCALL2K:
-#ifdef LOP_FASTCALL3
-    case LOP_FASTCALL3:
-#endif
     case LOP_JUMPIFEQ:
     case LOP_JUMPIFLE:
     case LOP_JUMPIFLT:
     case LOP_JUMPIFNOTEQ:
     case LOP_JUMPIFNOTLE:
     case LOP_JUMPIFNOTLT:
+    case LOP_NEWTABLE:
+    case LOP_SETLIST:
 #ifdef LOP_FORGLOOP
     case LOP_FORGLOOP:
+#endif
+    case LOP_LOADKX:
+    case LOP_FASTCALL2:
+    case LOP_FASTCALL2K:
+#ifdef LOP_FASTCALL3
+    case LOP_FASTCALL3:
 #endif
 #ifdef LOP_JUMPXEQKNIL
     case LOP_JUMPXEQKNIL:
@@ -55,6 +54,7 @@ static int luauInsnLength(uint8_t op) {
     case LOP_JUMPXEQKS:
 #endif
         return 2;
+    // LOP_FASTCALL and LOP_FASTCALL1 are length 1
     default:
         return 1;
     }
@@ -149,41 +149,38 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         return uint32_t(proto.constants.size() - 1);
     };
 
-    // Emit GETGLOBAL lib + GETTABLEKS fn into register callA
     auto emitBuiltinLoad = [&](uint8_t callA, uint32_t builtinId) {
         const char* lib = nullptr;
         const char* fn = nullptr;
-        // LuauBuiltinFunction ids from Luau Bytecode.h
         switch (builtinId) {
-        case 2:  lib = "math"; fn = "abs"; break;       // LBF_MATH_ABS
-        case 7:  lib = "math"; fn = "ceil"; break;      // LBF_MATH_CEIL
-        case 12: lib = "math"; fn = "floor"; break;     // LBF_MATH_FLOOR
-        case 18: lib = "math"; fn = "max"; break;       // LBF_MATH_MAX
-        case 19: lib = "math"; fn = "min"; break;       // LBF_MATH_MIN
-        case 21: lib = "math"; fn = "pow"; break;       // LBF_MATH_POW
-        case 25: lib = "math"; fn = "sqrt"; break;      // LBF_MATH_SQRT
-        case 46: lib = "math"; fn = "clamp"; break;     // LBF_MATH_CLAMP
-        case 47: lib = "math"; fn = "sign"; break;      // LBF_MATH_SIGN
-        case 48: lib = "math"; fn = "round"; break;     // LBF_MATH_ROUND
+        case 2:  lib = "math"; fn = "abs"; break;
+        case 7:  lib = "math"; fn = "ceil"; break;
         case 9:  lib = "math"; fn = "cos"; break;
-        case 24: lib = "math"; fn = "sin"; break;
-        case 27: lib = "math"; fn = "tan"; break;
         case 11: lib = "math"; fn = "exp"; break;
+        case 12: lib = "math"; fn = "floor"; break;
         case 17: lib = "math"; fn = "log"; break;
-        case 52: lib = "table"; fn = "insert"; break;   // LBF_TABLE_INSERT
-        case 53: lib = "table"; fn = "unpack"; break;   // LBF_TABLE_UNPACK
+        case 18: lib = "math"; fn = "max"; break;
+        case 19: lib = "math"; fn = "min"; break;
+        case 21: lib = "math"; fn = "pow"; break;
+        case 24: lib = "math"; fn = "sin"; break;
+        case 25: lib = "math"; fn = "sqrt"; break;
+        case 27: lib = "math"; fn = "tan"; break;
+        case 46: lib = "math"; fn = "clamp"; break;
+        case 47: lib = "math"; fn = "sign"; break;
+        case 48: lib = "math"; fn = "round"; break;
+        case 29: lib = "bit32"; fn = "band"; break;
+        case 30: lib = "bit32"; fn = "bnot"; break;
+        case 31: lib = "bit32"; fn = "bor"; break;
+        case 32: lib = "bit32"; fn = "bxor"; break;
+        case 36: lib = "bit32"; fn = "lshift"; break;
+        case 39: lib = "bit32"; fn = "rshift"; break;
         case 41: lib = "string"; fn = "byte"; break;
         case 42: lib = "string"; fn = "char"; break;
         case 45: lib = "string"; fn = "sub"; break;
-        case 29: lib = "bit32"; fn = "band"; break;
-        case 31: lib = "bit32"; fn = "bor"; break;
-        case 32: lib = "bit32"; fn = "bxor"; break;
-        case 30: lib = "bit32"; fn = "bnot"; break;
-        case 36: lib = "bit32"; fn = "lshift"; break;
-        case 39: lib = "bit32"; fn = "rshift"; break;
+        case 52: lib = "table"; fn = "insert"; break;
+        case 53: lib = "table"; fn = "unpack"; break;
         default: break;
         }
-
         if (lib && fn) {
             uint32_t kLib = addStr(lib);
             uint32_t kFn = addStr(fn);
@@ -193,7 +190,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitK(kFn);
             return;
         }
-        // Single-global builtins
         const char* g = nullptr;
         if (builtinId == 1) g = "assert";
         else if (builtinId == 40) g = "type";
@@ -241,7 +237,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
 #endif
             break;
 
-        // FASTCALL: A = builtin id. Ensure following CALL has the real function.
         case LOP_FASTCALL:
         case LOP_FASTCALL1:
         case LOP_FASTCALL2:
