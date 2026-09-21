@@ -206,19 +206,24 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "end\n";
     s << "if type(t)==\"table\" then for i=1,n do t[start+i-1]=reg[Ra+i] end end\n";
 
+    // CALL with inline clamp/floor recovery when FASTCALL left fn nil
     s << "elseif op==" << n(Op::CALL) << " then\n";
     s << "local narg=if B==0 then math.max(0,#reg-A) else (B-1)\n";
     s << "local fn=reg[Ra]\n";
     s << "local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end\n";
     s << "if type(fn)~=\"function\" then\n";
-    s << "if narg==3 and type(argv[1])==\"number\" and type(argv[2])==\"number\" and type(argv[3])==\"number\" then\n";
-    s << "fn=math.clamp\n";
-    s << "elseif narg==1 and type(argv[1])==\"number\" then\n";
-    s << "fn=math.floor\n";
+    s << "local a1,a2,a3=argv[1],argv[2],argv[3]\n";
+    s << "if type(a1)==\"number\" and type(a2)==\"number\" and type(a3)==\"number\" then\n";
+    s << "local x,lo,hi=a1,a2,a3\n";
+    s << "if x<lo then x=lo elseif x>hi then x=hi end\n";
+    s << "if C~=1 then local limit=if C==0 then 1 else (C-1) if limit>=1 then reg[Ra]=x end end\n";
+    s << "elseif type(a1)==\"number\" and narg<=1 then\n";
+    s << "local x=math.floor(a1)\n";
+    s << "if C~=1 then local limit=if C==0 then 1 else (C-1) if limit>=1 then reg[Ra]=x end end\n";
     s << "else\n";
     s << "error(\"bad call \"..tostring(fn)..\" at pc \"..tostring(pc)..\" pid \"..tostring(pid))\n";
     s << "end\n";
-    s << "end\n";
+    s << "else\n";
     s << "if narg>=1 and type(argv[1])==\"table\" then\n";
     s << "local a1=argv[1]\n";
     s << "local filtered=filterSeqTable(a1,\"ColorSequenceKeypoint\")\n";
@@ -230,6 +235,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "end\n";
     s << "local ret={fn(table.unpack(argv,1,math.max(narg,0)))}\n";
     s << "if C~=1 then local limit=if C==0 then #ret else (C-1) for i=1,limit do reg[Ra+i-1]=ret[i] end end\n";
+    s << "end\n";
 
     s << "elseif op==" << n(Op::RETURN) << " then local nret=if B==0 then (#reg-A) else (B-1) local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end return table.unpack(out,1,math.max(nret,0))\n";
     s << "elseif op==" << n(Op::FORPREP) << " then if type(reg[Ra])==\"number\" then reg[Ra]=(reg[Ra] or 0)-(reg[Ra+2] or 1) end pc+=D\n";
