@@ -21,7 +21,7 @@ uint32_t Translator::Reader::u32() { return 0; }
 uint32_t Translator::Reader::varint() { return 0; }
 std::string Translator::Reader::bytes(uint32_t) { return {}; }
 
-// Official Luau getOpLength (BytecodeUtils.h)
+// Official Luau getOpLength
 static int luauInsnLength(uint8_t op) {
     switch (op) {
     case LOP_GETGLOBAL:
@@ -54,9 +54,8 @@ static int luauInsnLength(uint8_t op) {
     case LOP_JUMPXEQKS:
 #endif
         return 2;
-    // LOP_FASTCALL and LOP_FASTCALL1 are length 1
     default:
-        return 1;
+        return 1; // FASTCALL + FASTCALL1 = 1
     }
 }
 
