@@ -45,7 +45,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "--[[\n";
     s << "  ╔══════════════════════════════════════════╗\n";
     s << "  ║     Protected by FŁÝ / FLYX Obfuscator   ║\n";
-    s << "  ║   Dual-VM · Clyde CALL · seq filter      ║\n";
+    s << "  ║   Custom VM · seq-safe · keep private    ║\n";
     s << "  ╚══════════════════════════════════════════╝\n";
     s << "]]\n";
 
@@ -55,7 +55,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "for i=1,#L do _B[i]=L[i] end\n";
     s << "for i=1,#R do _B[#L+i]=R[i] end\n";
     s << "do local s=0 for i=1,#_B do s+=_B[i] end if s~=" << sum << " then error(\"t\") end end\n";
-    s << "L,R=nil,nil\n";
 
     s << "local function dec(buf)\n";
     s << "local function u8(i) return buf[i] or 0 end\n";
@@ -67,8 +66,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "out[i]=bit32.band(bit32.bxor(u8(16+i),k),255)\n";
     s << "end return out end\n";
 
-    s << "local data=dec(_B) _B=nil\n";
-    s << "local pos=1\n";
+    s << "local data=dec(_B) local pos=1\n";
     s << "local function ru8() local v=data[pos] or 0 pos+=1 return v end\n";
     s << "local function ru32() return ru8()+ru8()*256+ru8()*65536+ru8()*16777216 end\n";
     s << "if ru32()~=0x3252504C then error(\"x\") end\n";
@@ -85,7 +83,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif tag==3 then local n=ru32() local raw={} for z=1,n do raw[z]=ru8() end p.z[j]=raw\n";
     s << "else p.z[j]=nil end end\n";
     s << "local nc=ru32() for j=1,nc do p.ch[j]=ru32() end P[i]=p end\n";
-    s << "data,pos,ru8,ru32=nil,nil,nil,nil\n";
 
     s << "local function S(raw)\n";
     s << "if type(raw)~=\"table\" then return raw end\n";
@@ -93,7 +90,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "return table.concat(o)\n";
     s << "end\n";
     s << "for i=1,#P do local p=P[i] for j=1,#p.t do if p.t[j]==3 then p.z[j]=S(p.z[j]) p.t[j]=0 end end end\n";
-    s << "S=nil\n";
 
     s << "local function kn(p,word)\n";
     s << "if type(word)~=\"number\" then return word end\n";
@@ -137,38 +133,27 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "end,__newindex=function(_,k,v) RealG[k]=v G[k]=v end})\n";
 
     s << "local CAP=" << n(Op::CAPTURE) << "\n";
-    s << "local tpack=table.pack\n";
-    s << "local tunpack=table.unpack\n";
+    s << "local CSNew=ColorSequence.new\n";
+    s << "local NSNew=NumberSequence.new\n";
 
-    // Keep only valid keypoints (fixes ColorSequence.new index errors)
-    s << "local function filterSeqTable(t, wantType)\n";
+    // Strip non-keypoints so ColorSequence.new never sees junk at index N
+    s << "local function onlyKeypoints(t, kind)\n";
     s << "if type(t)~=\"table\" then return t end\n";
     s << "local out={}\n";
-    s << "for i=1,64 do\n";
-    s << "local v=t[i]\n";
+    s << "for i=1,32 do\n";
+    s << "local v=rawget(t,i)\n";
     s << "if v==nil then break end\n";
-    s << "if typeof(v)==wantType then out[#out+1]=v end\n";
+    s << "if typeof(v)==kind then out[#out+1]=v end\n";
     s << "end\n";
-    s << "return #out>0 and out or t\n";
-    s << "end\n";
-
-    // Sanitize first arg if it looks like a keypoint list
-    s << "local function sanitizeArgs(argv, narg)\n";
-    s << "if narg<1 then return end\n";
-    s << "local a1=argv[1]\n";
-    s << "if type(a1)~=\"table\" then return end\n";
-    s << "local f=filterSeqTable(a1,\"ColorSequenceKeypoint\")\n";
-    s << "if f~=a1 then argv[1]=f return end\n";
-    s << "f=filterSeqTable(a1,\"NumberSequenceKeypoint\")\n";
-    s << "if f~=a1 then argv[1]=f end\n";
+    s << "return out\n";
     s << "end\n";
 
     s << "local function run(pid,args,ups)\n";
     s << "local p=P[pid+1] if not p then error(\"p\") end\n";
     s << "local reg={} local top=0\n";
-    s << "if args then for i=1,#args do reg[i]=args[i] if i>top then top=i end end end\n";
+    s << "if args then for i=1,#args do reg[i]=args[i] top=i end end\n";
     s << "ups=ups or {}\n";
-    s << "local function setR(i,v) reg[i]=v if i>top then top=i end end\n";
+    s << "local function setR(i,v) reg[i]=v if v~=nil and i>top then top=i elseif i>top then top=i end end\n";
     s << "local pc=1 local code=p.c\n";
     s << "while pc<=#code do\n";
     s << "local inst=code[pc]\n";
@@ -219,73 +204,82 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::GETUPVAL) << " then setR(Ra,ups[B+1])\n";
     s << "elseif op==" << n(Op::SETUPVAL) << " then ups[B+1]=reg[Ra]\n";
 
+    // SETLIST: exact B, or stop at nil; always clear next slots
     s << "elseif op==" << n(Op::SETLIST) << " then\n";
     s << "pc+=1\n";
     s << "local start=code[pc] or 1\n";
+    s << "if type(start)~=\"number\" or start<1 then start=1 end\n";
     s << "local t=reg[Ra]\n";
     s << "local n=B\n";
     s << "if n==0 then\n";
     s << "n=0\n";
-    s << "while reg[Ra+n+1]~=nil do n+=1 if n>64 then break end end\n";
+    s << "while reg[Ra+n+1]~=nil do n+=1 if n>32 then break end end\n";
     s << "end\n";
     s << "if type(t)==\"table\" then\n";
-    s << "for i=1,n do t[start+i-1]=reg[Ra+i] end\n";
-    // clear any leftover slots past n (stops index-4 garbage)
-    s << "for i=n+1,n+8 do t[start+i-1]=nil end\n";
+    s << "for i=1,n do rawset(t,start+i-1,reg[Ra+i]) end\n";
+    s << "for i=n+1,n+16 do rawset(t,start+i-1,nil) end\n";
     s << "end\n";
 
-    // CALL — Clyde top + ARG filter before invoke
     s << "elseif op==" << n(Op::CALL) << " then\n";
-    s << "local fn=reg[Ra]\n";
-    s << "local argv={}\n";
     s << "local narg\n";
     s << "if B==0 then\n";
-    s << "local hi=top\n";
-    s << "if hi<Ra then hi=Ra end\n";
-    s << "narg=math.max(0,hi-Ra)\n";
-    s << "if narg>16 then narg=16 end\n";
-    s << "for i=1,narg do argv[i]=reg[Ra+i] end\n";
-    s << "elseif B==1 then\n";
-    s << "narg=0\n";
+    s << "narg=math.max(0,top-Ra)\n";
+    s << "if narg>12 then narg=12 end\n";
     s << "else\n";
     s << "narg=B-1\n";
-    s << "for i=1,narg do argv[i]=reg[Ra+i] end\n";
     s << "end\n";
-    s << "sanitizeArgs(argv,narg)\n";
-    s << "local r\n";
+    s << "local fn=reg[Ra]\n";
+    s << "local argv={}\n";
+    s << "for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end\n";
+    // ColorSequence / NumberSequence: only keypoints in the table arg
+    s << "if type(fn)==\"function\" and narg>=1 and type(argv[1])==\"table\" then\n";
+    s << "if fn==CSNew then\n";
+    s << "argv[1]=onlyKeypoints(argv[1],\"ColorSequenceKeypoint\")\n";
+    s << "elseif fn==NSNew then\n";
+    s << "argv[1]=onlyKeypoints(argv[1],\"NumberSequenceKeypoint\")\n";
+    s << "else\n";
+    // Heuristic: table already holds keypoints → strip junk
+    s << "local a1=argv[1]\n";
+    s << "local v1=rawget(a1,1)\n";
+    s << "if v1~=nil and typeof(v1)==\"ColorSequenceKeypoint\" then\n";
+    s << "argv[1]=onlyKeypoints(a1,\"ColorSequenceKeypoint\")\n";
+    s << "elseif v1~=nil and typeof(v1)==\"NumberSequenceKeypoint\" then\n";
+    s << "argv[1]=onlyKeypoints(a1,\"NumberSequenceKeypoint\")\n";
+    s << "end\n";
+    s << "end\n";
+    s << "end\n";
     s << "if type(fn)~=\"function\" then\n";
     s << "local a1,a2,a3=argv[1],argv[2],argv[3]\n";
     s << "if type(a1)==\"number\" and type(a2)==\"number\" and type(a3)==\"number\" then\n";
     s << "local x,lo,hi=a1,a2,a3\n";
     s << "if x<lo then x=lo elseif x>hi then x=hi end\n";
-    s << "r=tpack(x)\n";
+    s << "if C~=1 then local limit=if C==0 then 1 else (C-1) if limit>=1 then setR(Ra,x) top=Ra+limit-1 end end\n";
     s << "elseif type(a1)==\"number\" and narg<=1 then\n";
-    s << "r=tpack(math.floor(a1))\n";
+    s << "local x=math.floor(a1)\n";
+    s << "if C~=1 then local limit=if C==0 then 1 else (C-1) if limit>=1 then setR(Ra,x) top=Ra+limit-1 end end\n";
     s << "else\n";
     s << "error(\"bad call \"..tostring(fn)..\" at pc \"..tostring(pc)..\" pid \"..tostring(pid))\n";
     s << "end\n";
     s << "else\n";
-    s << "r=tpack(fn(tunpack(argv,1,narg)))\n";
-    s << "end\n";
-    s << "if C==0 then\n";
-    s << "for i=1,r.n do setR(Ra+i-1,r[i]) end\n";
-    s << "top=Ra+math.max(r.n,0)-1\n";
+    s << "local ret={fn(table.unpack(argv,1,math.max(narg,0)))}\n";
+    s << "if C~=1 then\n";
+    s << "local limit=if C==0 then #ret else (C-1)\n";
+    s << "for i=1,limit do setR(Ra+i-1,ret[i]) end\n";
+    s << "top=Ra+math.max(limit,0)-1\n";
     s << "if top<0 then top=0 end\n";
-    s << "elseif C==1 then\n";
-    s << "top=math.max(0,Ra-1)\n";
     s << "else\n";
-    s << "for i=1,C-1 do setR(Ra+i-1,r[i]) end\n";
-    s << "top=Ra+(C-1)-1\n";
+    s << "top=math.max(0,Ra-1)\n";
+    s << "end\n";
     s << "end\n";
 
     s << "elseif op==" << n(Op::RETURN) << " then\n";
-    s << "if B==0 then return tunpack(reg,Ra,top)\n";
-    s << "elseif B==1 then return\n";
-    s << "else return tunpack(reg,Ra,Ra+(B-1)-1) end\n";
+    s << "local nret=if B==0 then math.max(0,top-Ra+1) else (B-1)\n";
+    s << "local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end\n";
+    s << "return table.unpack(out,1,math.max(nret,0))\n";
 
     s << "elseif op==" << n(Op::FORPREP) << " then if type(reg[Ra])==\"number\" then setR(Ra,(reg[Ra] or 0)-(reg[Ra+2] or 1)) end pc+=D\n";
     s << "elseif op==" << n(Op::FORLOOP) << " then if type(reg[Ra])==\"number\" then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then setR(Ra,idx) setR(Ra+3,idx) pc+=D end end\n";
-    s << "elseif op==" << n(Op::FORGLOOP) << " then local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2] if type(it)==\"function\" then local res=tpack(it(state,ctl)) if res[1]~=nil then setR(Ra+2,res[1]) for i=1,res.n do setR(Ra+2+i,res[i]) end pc+=D end end\n";
+    s << "elseif op==" << n(Op::FORGLOOP) << " then local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2] if type(it)==\"function\" then local res={it(state,ctl)} if res[1]~=nil then setR(Ra+2,res[1]) for i=1,#res do setR(Ra+2+i,res[i]) end pc+=D end end\n";
 
     s << "elseif op==" << n(Op::CLOSURE) << " then\n";
     s << "pc+=1\n";
