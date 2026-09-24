@@ -1,10 +1,16 @@
 const source = document.getElementById("source");
 const output = document.getElementById("output");
 const status = document.getElementById("status");
+
+function setStatus(text, state) {
+    status.textContent = text;
+    status.className = state || "";
+}
+
 if (source) {
     document.getElementById("protectButton").onclick = async () => {
-        if (!source.value.trim()) { status.textContent = "Paste source first"; return; }
-        status.textContent = "Protecting...";
+        if (!source.value.trim()) { setStatus("Paste source first", "error"); return; }
+        setStatus("Protecting…", "busy");
         try {
             const res = await fetch("/api/obfuscate", {
                 method: "POST",
@@ -17,19 +23,27 @@ if (source) {
             catch { throw new Error(text.slice(0, 180) || "Bad server response"); }
             if (!data.success) throw new Error(data.error || "Protect failed");
             output.value = data.code;
-            status.textContent = "Done (" + data.code.length + " bytes)";
+            setStatus("Done — " + data.code.length + " bytes", "done");
         } catch (e) {
-            status.textContent = String(e.message || e);
+            setStatus(String(e.message || e), "error");
         }
     };
     document.getElementById("copyButton").onclick = async () => {
         if (!output.value) return;
         await navigator.clipboard.writeText(output.value);
-        status.textContent = "Copied";
+        setStatus("Copied to clipboard", "done");
     };
     document.getElementById("clearButton").onclick = () => {
         source.value = "";
         output.value = "";
-        status.textContent = "Ready";
+        setStatus("Ready");
     };
+    source.addEventListener("keydown", (e) => {
+        if (e.key === "Tab") {
+            e.preventDefault();
+            const start = source.selectionStart, end = source.selectionEnd;
+            source.value = source.value.slice(0, start) + "    " + source.value.slice(end);
+            source.selectionStart = source.selectionEnd = start + 4;
+        }
+    });
 }
