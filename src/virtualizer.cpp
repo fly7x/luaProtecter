@@ -40,26 +40,22 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     std::vector<uint8_t> left(raw.begin(), raw.begin() + mid);
     std::vector<uint8_t> right(raw.begin() + mid, raw.end());
 
-    // Second key material for outer layer (derived, not equal to inner seed display)
-    uint32_t outerMix = seed32() ^ 0xA5A5A5A5u;
-
     std::stringstream s;
     s << "--!nocheck\n";
     s << "--[[\n";
     s << "  ╔══════════════════════════════════════════╗\n";
     s << "  ║     Protected by FŁÝ / FLYX Obfuscator   ║\n";
-    s << "  ║   Dual-VM · executor-fast · keep private ║\n";
+    s << "  ║   Dual-VM · Clyde CALL/top · keep private ║\n";
     s << "  ╚══════════════════════════════════════════╝\n";
     s << "]]\n";
 
-    // ── OUTER VM: payload tables + integrity (runs once) ──
     s << "local L=" << bytesToLuaTable(left) << "\n";
     s << "local R=" << bytesToLuaTable(right) << "\n";
     s << "local _B={}\n";
     s << "for i=1,#L do _B[i]=L[i] end\n";
     s << "for i=1,#R do _B[#L+i]=R[i] end\n";
     s << "do local s=0 for i=1,#_B do s+=_B[i] end if s~=" << sum << " then error(\"t\") end end\n";
-    s << "L,R=nil,nil\n"; // drop split copies after merge (tiny anti-dump)
+    s << "L,R=nil,nil\n";
 
     s << "local function dec(buf)\n";
     s << "local function u8(i) return buf[i] or 0 end\n";
@@ -71,7 +67,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "out[i]=bit32.band(bit32.bxor(u8(16+i),k),255)\n";
     s << "end return out end\n";
 
-    // Outer handoff: decrypt once, build INNER state, never re-enter outer
     s << "local data=dec(_B) _B=nil\n";
     s << "local pos=1\n";
     s << "local function ru8() local v=data[pos] or 0 pos+=1 return v end\n";
@@ -90,22 +85,14 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif tag==3 then local n=ru32() local raw={} for z=1,n do raw[z]=ru8() end p.z[j]=raw\n";
     s << "else p.z[j]=nil end end\n";
     s << "local nc=ru32() for j=1,nc do p.ch[j]=ru32() end P[i]=p end\n";
-    s << "data,pos,ru8,ru32=nil,nil,nil,nil\n"; // free outer decode state
+    s << "data,pos,ru8,ru32=nil,nil,nil,nil\n";
 
-    // ── INNER helpers: string decrypt once ──
     s << "local function S(raw)\n";
     s << "if type(raw)~=\"table\" then return raw end\n";
     s << "local o={} for i=1,#raw do o[i]=string.char(bit32.band(bit32.bxor(raw[i],bit32.band(ks+(i-1)*13,255)),255)) end\n";
     s << "return table.concat(o)\n";
     s << "end\n";
-
-    // Materialize all string constants once (speed on executors)
-    s << "for i=1,#P do\n";
-    s << "local p=P[i]\n";
-    s << "for j=1,#p.t do\n";
-    s << "if p.t[j]==3 then p.z[j]=S(p.z[j]) p.t[j]=0 end\n";
-    s << "end\n";
-    s << "end\n";
+    s << "for i=1,#P do local p=P[i] for j=1,#p.t do if p.t[j]==3 then p.z[j]=S(p.z[j]) p.t[j]=0 end end end\n";
     s << "S=nil\n";
 
     s << "local function kn(p,word)\n";
@@ -142,18 +129,16 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "local RealG=_G\n";
     s << "pcall(function() if getfenv then local e=getfenv() if type(e)==\"table\" then RealG=e end end end)\n";
     s << "if type(RealG)~=\"table\" then RealG=_G end\n";
-    s << "G._G=RealG\n";
-    s << "G._ENV=RealG\n";
-
+    s << "G._G=RealG G._ENV=RealG\n";
     s << "local E=setmetatable({},{__index=function(_,k)\n";
-    s << "local v=G[k]\n";
-    s << "if v~=nil then return v end\n";
-    s << "v=rawget(RealG,k)\n";
-    s << "if v~=nil then return v end\n";
+    s << "local v=G[k] if v~=nil then return v end\n";
+    s << "v=rawget(RealG,k) if v~=nil then return v end\n";
     s << "return rawget(_G,k)\n";
     s << "end,__newindex=function(_,k,v) RealG[k]=v G[k]=v end})\n";
 
     s << "local CAP=" << n(Op::CAPTURE) << "\n";
+    s << "local tpack=table.pack\n";
+    s << "local tunpack=table.unpack\n";
 
     s << "local function filterSeqTable(t, wantType)\n";
     s << "if type(t)~=\"table\" then return t end\n";
@@ -166,13 +151,15 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "return #out>0 and out or t\n";
     s << "end\n";
 
-    // ── INNER VM: run() ──
     s << "local function run(pid,args,ups)\n";
     s << "local p=P[pid+1] if not p then error(\"p\") end\n";
     s << "local reg={} local top=0\n";
     s << "if args then for i=1,#args do reg[i]=args[i] if i>top then top=i end end end\n";
     s << "ups=ups or {}\n";
-    s << "local function setR(i,v) reg[i]=v if v~=nil and i>top then top=i end end\n";
+    s << "local function setR(i,v)\n";
+    s << "reg[i]=v\n";
+    s << "if i>top then top=i end\n";
+    s << "end\n";
     s << "local pc=1 local code=p.c\n";
     s << "while pc<=#code do\n";
     s << "local inst=code[pc]\n";
@@ -215,7 +202,11 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::GETTABLEN) << " then local t=reg[Rb] setR(Ra,t~=nil and t[C+1] or nil)\n";
     s << "elseif op==" << n(Op::SETTABLEN) << " then local t=reg[Rb] if t~=nil then t[C+1]=reg[Ra] end\n";
     s << "elseif op==" << n(Op::NEWTABLE) << " then setR(Ra,{})\n";
-    s << "elseif op==" << n(Op::NAMECALL) << " then pc+=1 local key=kn(p,code[pc]) local obj=reg[Rb] setR(Ra+1,obj) setR(Ra,obj~=nil and obj[key] or nil)\n";
+    s << "elseif op==" << n(Op::NAMECALL) << " then\n";
+    s << "pc+=1 local key=kn(p,code[pc]) local obj=reg[Rb]\n";
+    s << "setR(Ra+1,obj)\n";
+    s << "setR(Ra,obj~=nil and obj[key] or nil)\n";
+    s << "if top<Ra+1 then top=Ra+1 end\n";
     s << "elseif op==" << n(Op::GETUPVAL) << " then setR(Ra,ups[B+1])\n";
     s << "elseif op==" << n(Op::SETUPVAL) << " then ups[B+1]=reg[Ra]\n";
 
@@ -224,52 +215,65 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "local start=code[pc] or 1\n";
     s << "local t=reg[Ra]\n";
     s << "local n=B\n";
-    s << "if n==0 then n=math.max(0,top-A) end\n";
+    s << "if n==0 then n=math.max(0,top-Ra) end\n";
     s << "if type(t)==\"table\" then for i=1,n do t[start+i-1]=reg[Ra+i] end end\n";
 
+    // ── CALL: Clyde-style (table.pack + top shrink) ──
     s << "elseif op==" << n(Op::CALL) << " then\n";
-    s << "local narg=if B==0 then math.max(0,top-A) else (B-1)\n";
-    s << "if narg>16 then narg=16 end\n";
     s << "local fn=reg[Ra]\n";
-    s << "local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end\n";
+    s << "local r\n";
     s << "if type(fn)~=\"function\" then\n";
-    s << "local a1,a2,a3=argv[1],argv[2],argv[3]\n";
+    s << "local a1,a2,a3=reg[Ra+1],reg[Ra+2],reg[Ra+3]\n";
     s << "if type(a1)==\"number\" and type(a2)==\"number\" and type(a3)==\"number\" then\n";
     s << "local x,lo,hi=a1,a2,a3\n";
     s << "if x<lo then x=lo elseif x>hi then x=hi end\n";
-    s << "if C~=1 then local limit=if C==0 then 1 else (C-1) if limit>=1 then setR(Ra,x) top=Ra+limit-1 end end\n";
-    s << "elseif type(a1)==\"number\" and narg<=1 then\n";
-    s << "local x=math.floor(a1)\n";
-    s << "if C~=1 then local limit=if C==0 then 1 else (C-1) if limit>=1 then setR(Ra,x) top=Ra+limit-1 end end\n";
+    s << "r=tpack(x)\n";
+    s << "elseif type(a1)==\"number\" and (B==0 or B<=2) then\n";
+    s << "r=tpack(math.floor(a1))\n";
     s << "else\n";
     s << "error(\"bad call \"..tostring(fn)..\" at pc \"..tostring(pc)..\" pid \"..tostring(pid))\n";
     s << "end\n";
     s << "else\n";
-    s << "if narg>=1 and type(argv[1])==\"table\" then\n";
-    s << "local a1=argv[1]\n";
-    s << "local filtered=filterSeqTable(a1,\"ColorSequenceKeypoint\")\n";
-    s << "if filtered~=a1 then argv[1]=filtered\n";
+    s << "if B==1 then\n";
+    s << "r=tpack(fn())\n";
+    s << "elseif B==2 then\n";
+    s << "r=tpack(fn(reg[Ra+1]))\n";
+    s << "elseif B==3 then\n";
+    s << "r=tpack(fn(reg[Ra+1],reg[Ra+2]))\n";
+    s << "elseif B==4 then\n";
+    s << "r=tpack(fn(reg[Ra+1],reg[Ra+2],reg[Ra+3]))\n";
+    s << "elseif B==0 then\n";
+    s << "local hi=top\n";
+    s << "if hi<Ra then hi=Ra end\n";
+    s << "r=tpack(fn(tunpack(reg,Ra+1,hi)))\n";
     s << "else\n";
-    s << "filtered=filterSeqTable(a1,\"NumberSequenceKeypoint\")\n";
-    s << "if filtered~=a1 then argv[1]=filtered end\n";
+    s << "r=tpack(fn(tunpack(reg,Ra+1,Ra+(B-1))))\n";
+    s << "end\n";
+    s << "if r.n>=1 and type(r[1])==\"table\" then\n";
+    s << "local filtered=filterSeqTable(r[1],\"ColorSequenceKeypoint\")\n";
+    s << "if filtered==r[1] then filtered=filterSeqTable(r[1],\"NumberSequenceKeypoint\") end\n";
     s << "end\n";
     s << "end\n";
-    s << "local ret={fn(table.unpack(argv,1,math.max(narg,0)))}\n";
-    s << "if C~=1 then\n";
-    s << "local limit=if C==0 then #ret else (C-1)\n";
-    s << "for i=1,limit do setR(Ra+i-1,ret[i]) end\n";
-    s << "if limit>=1 then top=Ra+limit-1 end\n";
-    s << "end\n";
+    // store results + ALWAYS shrink/set top (Clyde pattern)
+    s << "if C==0 then\n";
+    s << "for i=1,r.n do setR(Ra+i-1,r[i]) end\n";
+    s << "top=Ra+r.n-1\n";
+    s << "if top<Ra-1 then top=math.max(0,Ra-1) end\n";
+    s << "elseif C==1 then\n";
+    s << "top=math.max(0,Ra-1)\n";
+    s << "else\n";
+    s << "for i=1,C-1 do setR(Ra+i-1,r[i]) end\n";
+    s << "top=Ra+(C-1)-1\n";
     s << "end\n";
 
     s << "elseif op==" << n(Op::RETURN) << " then\n";
-    s << "local nret=if B==0 then math.max(0,top-A+1) else (B-1)\n";
-    s << "local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end\n";
-    s << "return table.unpack(out,1,math.max(nret,0))\n";
+    s << "if B==0 then return tunpack(reg,Ra,top)\n";
+    s << "elseif B==1 then return\n";
+    s << "else return tunpack(reg,Ra,Ra+(B-1)-1) end\n";
 
     s << "elseif op==" << n(Op::FORPREP) << " then if type(reg[Ra])==\"number\" then setR(Ra,(reg[Ra] or 0)-(reg[Ra+2] or 1)) end pc+=D\n";
     s << "elseif op==" << n(Op::FORLOOP) << " then if type(reg[Ra])==\"number\" then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then setR(Ra,idx) setR(Ra+3,idx) pc+=D end end\n";
-    s << "elseif op==" << n(Op::FORGLOOP) << " then local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2] if type(it)==\"function\" then local res={it(state,ctl)} if res[1]~=nil then setR(Ra+2,res[1]) for i=1,#res do setR(Ra+2+i,res[i]) end pc+=D end end\n";
+    s << "elseif op==" << n(Op::FORGLOOP) << " then local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2] if type(it)==\"function\" then local res=tpack(it(state,ctl)) if res[1]~=nil then setR(Ra+2,res[1]) for i=1,res.n do setR(Ra+2+i,res[i]) end pc+=D end end\n";
 
     s << "elseif op==" << n(Op::CLOSURE) << " then\n";
     s << "pc+=1\n";
@@ -300,11 +304,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "pc+=1\n";
     s << "end\n";
     s << "end\n";
-
-    // OUTER → INNER handoff (single entry)
     s << "return run(mainId)\n";
-
-    (void)outerMix; // reserved for future outer-key polymorphism
     return s.str();
 }
 
