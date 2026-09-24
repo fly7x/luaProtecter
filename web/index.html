@@ -3,36 +3,142 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ƒŁ¥</title>
+    <title>fly::protect() · Luau obfuscator</title>
+    <meta name="description" content="Compile Roblox Luau into a private virtual machine. Custom opcode maps, encoded constants, and an integrity check before dispatch.">
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <header class="nav">
-        <a class="brand" href="/home">ƒŁ¥</a>
-        <nav>
-            <a class="active" href="/home">Home</a>
-            <a href="/obfuscator">Obfuscator</a>
-            <a href="/docs">Docs</a>
-            <a href="/pricing">Pricing</a>
+    <canvas id="bg-grid" aria-hidden="true"></canvas>
+
+    <div class="chrome">
+        <div class="titlebar">
+            <div class="dots"><span></span><span></span><span></span></div>
+            <span class="path">fly@protect:~/home</span>
+            <a class="brand" href="/home"><span class="p1">fly::</span>protect<span class="p2">()</span></a>
+        </div>
+        <nav class="tabs">
+            <a class="tab active" href="/home"><span class="dot"></span>home.lua</a>
+            <a class="tab" href="/obfuscator"><span class="dot"></span>obfuscator.lua</a>
+            <a class="tab" href="/docs"><span class="dot"></span>docs.md</a>
+            <a class="tab" href="/pricing"><span class="dot"></span>pricing.json</a>
         </nav>
-    </header>
-    <main class="wrap hero">
-        <p class="kicker">Luau protection</p>
-        <h1>ƒŁ¥</h1>
-        <p class="lead">Custom VM output for Roblox and Luau. Built to raise the cost of recovery, not to look like a landing-page clone.</p>
-        <div class="row">
-            <a class="btn" href="/obfuscator">Open obfuscator</a>
-            <a class="btn ghost" href="/docs">Read docs</a>
-        </div>
+    </div>
+
+    <main class="wrap">
+        <section class="hero">
+            <div>
+                <p class="eyebrow">Luau protection, self-hosted</p>
+                <h1>Ship scripts nobody can read.</h1>
+                <p class="lead">fly::protect() compiles your Luau source onto a private instruction set and runs it through a generated interpreter. Every build gets its own opcode map, so no two outputs are the same file.</p>
+                <div class="row">
+                    <a class="btn" href="/obfuscator">Open obfuscator</a>
+                    <a class="btn ghost" href="/docs">Read the docs</a>
+                </div>
+            </div>
+
+            <div class="diff" id="hero-diff">
+                <div class="diff-row">
+                    <div class="diff-pane src">
+                        <div class="diff-label"><span>input.lua</span><span>readable</span></div>
+                        <div class="diff-body" id="diff-src"></div>
+                    </div>
+                    <div class="diff-pane out">
+                        <div class="diff-label"><span>output.lua</span><span>protected</span></div>
+                        <div class="diff-body" id="diff-out"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="pipeline">
+            <h2>What happens on protect</h2>
+            <p>Four stages run in order, every time. None of them are optional and none of them are decoration.</p>
+            <div class="steps">
+                <div class="step">
+                    <div class="step-num">01</div>
+                    <h3>Virtualize</h3>
+                    <p>Source is compiled, remapped onto a private instruction set, then executed by an interpreter generated for that build.</p>
+                </div>
+                <div class="step">
+                    <div class="step-num">02</div>
+                    <h3>Mutate</h3>
+                    <p>The opcode map, local names, and dispatch keys change per build, so two protected files never share a byte-for-byte structure.</p>
+                </div>
+                <div class="step">
+                    <div class="step-num">03</div>
+                    <h3>Lock constants</h3>
+                    <p>Strings and numbers leave the blob encoded. The VM reconstructs each one only at the moment it's needed.</p>
+                </div>
+                <div class="step">
+                    <div class="step-num">04</div>
+                    <h3>Integrity</h3>
+                    <p>A payload checksum and a small anti-debug probe run before the dispatch loop starts.</p>
+                </div>
+            </div>
+        </section>
     </main>
-    <section class="wrap">
-        <div class="grid">
-            <article class="card"><h3>Virtualize</h3><p>Source is compiled, remapped onto a private ISA, then run by a generated interpreter.</p></article>
-            <article class="card"><h3>Mutate</h3><p>Opcode map, names, and keys change per build so two outputs are not the same file.</p></article>
-            <article class="card"><h3>Lock constants</h3><p>Strings leave the blob encoded. The VM reconstructs them only while executing.</p></article>
-            <article class="card"><h3>Integrity</h3><p>Payload checksum plus a small anti-debug probe before dispatch starts.</p></article>
-        </div>
-    </section>
-    <footer>ƒŁ¥ · custom VM pipeline</footer>
+
+    <footer>
+        <span>fly::protect() — custom VM pipeline for Luau</span>
+        <span>No public VM is undecompilable. This one just raises the price of trying.</span>
+    </footer>
+
+    <script src="/bg.js"></script>
+    <script>
+        (function () {
+            var srcEl = document.getElementById("diff-src");
+            var outEl = document.getElementById("diff-out");
+            var srcText = 'print("Hello from FLY")';
+            var outText = "local _0x2f=(getfenv()).newproxy;local _0xa9={0x1b,0x4e,0x0d,0x2a,0x77,0x3c,0x91,0x0f};for _0xi=1,#_0xa9 do _0xa9[_0xi]=_0xa9[_0xi]~0x5a end;return (loadstring or load)(string.char(unpack(_0xa9)))()";
+            var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+            function line(container, gutter) {
+                var row = document.createElement("div");
+                var g = document.createElement("span");
+                g.className = "gutter";
+                g.textContent = gutter;
+                var span = document.createElement("span");
+                row.appendChild(g);
+                row.appendChild(span);
+                container.appendChild(row);
+                return span;
+            }
+
+            if (reduce) {
+                line(srcEl, 1).textContent = srcText;
+                var o = line(outEl, 1);
+                o.textContent = outText.slice(0, 64) + "…";
+                return;
+            }
+
+            var srcSpan = line(srcEl, 1);
+            var i = 0;
+            (function typeSrc() {
+                if (i <= srcText.length) {
+                    srcSpan.innerHTML = srcText.slice(0, i) + '<span class="caret"></span>';
+                    i++;
+                    setTimeout(typeSrc, 26);
+                } else {
+                    srcSpan.innerHTML = srcText;
+                    setTimeout(runProtect, 500);
+                }
+            })();
+
+            function runProtect() {
+                var outSpan = line(outEl, 1);
+                var j = 0;
+                var shown = outText.slice(0, 120);
+                (function typeOut() {
+                    if (j <= shown.length) {
+                        outSpan.innerHTML = shown.slice(0, j) + '<span class="caret"></span>';
+                        j += 3;
+                        setTimeout(typeOut, 12);
+                    } else {
+                        outSpan.innerHTML = shown + "…";
+                    }
+                })();
+            }
+        })();
+    </script>
 </body>
 </html>
