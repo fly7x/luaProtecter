@@ -40,20 +40,27 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     std::vector<uint8_t> left(raw.begin(), raw.begin() + mid);
     std::vector<uint8_t> right(raw.begin() + mid, raw.end());
 
+    // Second key material for outer layer (derived, not equal to inner seed display)
+    uint32_t outerMix = seed32() ^ 0xA5A5A5A5u;
+
     std::stringstream s;
     s << "--!nocheck\n";
     s << "--[[\n";
     s << "  ╔══════════════════════════════════════════╗\n";
     s << "  ║     Protected by FŁÝ / FLYX Obfuscator   ║\n";
-    s << "  ║   Custom VM · unique build · keep private ║\n";
+    s << "  ║   Dual-VM · executor-fast · keep private ║\n";
     s << "  ╚══════════════════════════════════════════╝\n";
     s << "]]\n";
+
+    // ── OUTER VM: payload tables + integrity (runs once) ──
     s << "local L=" << bytesToLuaTable(left) << "\n";
     s << "local R=" << bytesToLuaTable(right) << "\n";
     s << "local _B={}\n";
     s << "for i=1,#L do _B[i]=L[i] end\n";
     s << "for i=1,#R do _B[#L+i]=R[i] end\n";
     s << "do local s=0 for i=1,#_B do s+=_B[i] end if s~=" << sum << " then error(\"t\") end end\n";
+    s << "L,R=nil,nil\n"; // drop split copies after merge (tiny anti-dump)
+
     s << "local function dec(buf)\n";
     s << "local function u8(i) return buf[i] or 0 end\n";
     s << "local function u32(i) return u8(i)+u8(i+1)*256+u8(i+2)*65536+u8(i+3)*16777216 end\n";
@@ -63,11 +70,15 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "k=bit32.band(bit32.bxor(k,bit32.band((i-1)*131+17,255),bit32.band(seed,255)),255)\n";
     s << "out[i]=bit32.band(bit32.bxor(u8(16+i),k),255)\n";
     s << "end return out end\n";
-    s << "local data=dec(_B) local pos=1\n";
+
+    // Outer handoff: decrypt once, build INNER state, never re-enter outer
+    s << "local data=dec(_B) _B=nil\n";
+    s << "local pos=1\n";
     s << "local function ru8() local v=data[pos] or 0 pos+=1 return v end\n";
     s << "local function ru32() return ru8()+ru8()*256+ru8()*65536+ru8()*16777216 end\n";
     s << "if ru32()~=0x3252504C then error(\"x\") end\n";
     s << "local ks=ru32() ru8() local nprotos=ru32() local mainId=ru32()\n";
+
     s << "local P={}\n";
     s << "for i=1,nprotos do\n";
     s << "local p={c={},z={},t={},ch={}}\n";
@@ -79,19 +90,29 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif tag==3 then local n=ru32() local raw={} for z=1,n do raw[z]=ru8() end p.z[j]=raw\n";
     s << "else p.z[j]=nil end end\n";
     s << "local nc=ru32() for j=1,nc do p.ch[j]=ru32() end P[i]=p end\n";
+    s << "data,pos,ru8,ru32=nil,nil,nil,nil\n"; // free outer decode state
+
+    // ── INNER helpers: string decrypt once ──
     s << "local function S(raw)\n";
     s << "if type(raw)~=\"table\" then return raw end\n";
     s << "local o={} for i=1,#raw do o[i]=string.char(bit32.band(bit32.bxor(raw[i],bit32.band(ks+(i-1)*13,255)),255)) end\n";
     s << "return table.concat(o)\n";
     s << "end\n";
+
+    // Materialize all string constants once (speed on executors)
+    s << "for i=1,#P do\n";
+    s << "local p=P[i]\n";
+    s << "for j=1,#p.t do\n";
+    s << "if p.t[j]==3 then p.z[j]=S(p.z[j]) p.t[j]=0 end\n";
+    s << "end\n";
+    s << "end\n";
+    s << "S=nil\n";
+
     s << "local function kn(p,word)\n";
     s << "if type(word)~=\"number\" then return word end\n";
     s << "if word>=2147483648 then\n";
     s << "local i=(word-2147483648)+1\n";
-    s << "if p.t[i]~=nil then\n";
-    s << "if p.t[i]==3 then p.z[i]=S(p.z[i]) p.t[i]=0 end\n";
-    s << "return p.z[i]\n";
-    s << "end\n";
+    s << "if p.t[i]~=nil then return p.z[i] end\n";
     s << "return word-4294967296\n";
     s << "end\n";
     s << "return word\n";
@@ -145,6 +166,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "return #out>0 and out or t\n";
     s << "end\n";
 
+    // ── INNER VM: run() ──
     s << "local function run(pid,args,ups)\n";
     s << "local p=P[pid+1] if not p then error(\"p\") end\n";
     s << "local reg={} local top=0\n";
@@ -278,7 +300,11 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "pc+=1\n";
     s << "end\n";
     s << "end\n";
+
+    // OUTER → INNER handoff (single entry)
     s << "return run(mainId)\n";
+
+    (void)outerMix; // reserved for future outer-key polymorphism
     return s.str();
 }
 
