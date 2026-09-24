@@ -45,7 +45,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "--[[\n";
     s << "  ╔══════════════════════════════════════════╗\n";
     s << "  ║     Protected by FŁÝ / FLYX Obfuscator   ║\n";
-    s << "  ║   Dual-VM · Clyde CALL/top · keep private ║\n";
+    s << "  ║   Dual-VM · Clyde CALL · seq filter      ║\n";
     s << "  ╚══════════════════════════════════════════╝\n";
     s << "]]\n";
 
@@ -140,6 +140,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "local tpack=table.pack\n";
     s << "local tunpack=table.unpack\n";
 
+    // Keep only valid keypoints (fixes ColorSequence.new index errors)
     s << "local function filterSeqTable(t, wantType)\n";
     s << "if type(t)~=\"table\" then return t end\n";
     s << "local out={}\n";
@@ -151,15 +152,23 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "return #out>0 and out or t\n";
     s << "end\n";
 
+    // Sanitize first arg if it looks like a keypoint list
+    s << "local function sanitizeArgs(argv, narg)\n";
+    s << "if narg<1 then return end\n";
+    s << "local a1=argv[1]\n";
+    s << "if type(a1)~=\"table\" then return end\n";
+    s << "local f=filterSeqTable(a1,\"ColorSequenceKeypoint\")\n";
+    s << "if f~=a1 then argv[1]=f return end\n";
+    s << "f=filterSeqTable(a1,\"NumberSequenceKeypoint\")\n";
+    s << "if f~=a1 then argv[1]=f end\n";
+    s << "end\n";
+
     s << "local function run(pid,args,ups)\n";
     s << "local p=P[pid+1] if not p then error(\"p\") end\n";
     s << "local reg={} local top=0\n";
     s << "if args then for i=1,#args do reg[i]=args[i] if i>top then top=i end end end\n";
     s << "ups=ups or {}\n";
-    s << "local function setR(i,v)\n";
-    s << "reg[i]=v\n";
-    s << "if i>top then top=i end\n";
-    s << "end\n";
+    s << "local function setR(i,v) reg[i]=v if i>top then top=i end end\n";
     s << "local pc=1 local code=p.c\n";
     s << "while pc<=#code do\n";
     s << "local inst=code[pc]\n";
@@ -215,50 +224,53 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "local start=code[pc] or 1\n";
     s << "local t=reg[Ra]\n";
     s << "local n=B\n";
-    s << "if n==0 then n=math.max(0,top-Ra) end\n";
-    s << "if type(t)==\"table\" then for i=1,n do t[start+i-1]=reg[Ra+i] end end\n";
+    s << "if n==0 then\n";
+    s << "n=0\n";
+    s << "while reg[Ra+n+1]~=nil do n+=1 if n>64 then break end end\n";
+    s << "end\n";
+    s << "if type(t)==\"table\" then\n";
+    s << "for i=1,n do t[start+i-1]=reg[Ra+i] end\n";
+    // clear any leftover slots past n (stops index-4 garbage)
+    s << "for i=n+1,n+8 do t[start+i-1]=nil end\n";
+    s << "end\n";
 
-    // ── CALL: Clyde-style (table.pack + top shrink) ──
+    // CALL — Clyde top + ARG filter before invoke
     s << "elseif op==" << n(Op::CALL) << " then\n";
     s << "local fn=reg[Ra]\n";
+    s << "local argv={}\n";
+    s << "local narg\n";
+    s << "if B==0 then\n";
+    s << "local hi=top\n";
+    s << "if hi<Ra then hi=Ra end\n";
+    s << "narg=math.max(0,hi-Ra)\n";
+    s << "if narg>16 then narg=16 end\n";
+    s << "for i=1,narg do argv[i]=reg[Ra+i] end\n";
+    s << "elseif B==1 then\n";
+    s << "narg=0\n";
+    s << "else\n";
+    s << "narg=B-1\n";
+    s << "for i=1,narg do argv[i]=reg[Ra+i] end\n";
+    s << "end\n";
+    s << "sanitizeArgs(argv,narg)\n";
     s << "local r\n";
     s << "if type(fn)~=\"function\" then\n";
-    s << "local a1,a2,a3=reg[Ra+1],reg[Ra+2],reg[Ra+3]\n";
+    s << "local a1,a2,a3=argv[1],argv[2],argv[3]\n";
     s << "if type(a1)==\"number\" and type(a2)==\"number\" and type(a3)==\"number\" then\n";
     s << "local x,lo,hi=a1,a2,a3\n";
     s << "if x<lo then x=lo elseif x>hi then x=hi end\n";
     s << "r=tpack(x)\n";
-    s << "elseif type(a1)==\"number\" and (B==0 or B<=2) then\n";
+    s << "elseif type(a1)==\"number\" and narg<=1 then\n";
     s << "r=tpack(math.floor(a1))\n";
     s << "else\n";
     s << "error(\"bad call \"..tostring(fn)..\" at pc \"..tostring(pc)..\" pid \"..tostring(pid))\n";
     s << "end\n";
     s << "else\n";
-    s << "if B==1 then\n";
-    s << "r=tpack(fn())\n";
-    s << "elseif B==2 then\n";
-    s << "r=tpack(fn(reg[Ra+1]))\n";
-    s << "elseif B==3 then\n";
-    s << "r=tpack(fn(reg[Ra+1],reg[Ra+2]))\n";
-    s << "elseif B==4 then\n";
-    s << "r=tpack(fn(reg[Ra+1],reg[Ra+2],reg[Ra+3]))\n";
-    s << "elseif B==0 then\n";
-    s << "local hi=top\n";
-    s << "if hi<Ra then hi=Ra end\n";
-    s << "r=tpack(fn(tunpack(reg,Ra+1,hi)))\n";
-    s << "else\n";
-    s << "r=tpack(fn(tunpack(reg,Ra+1,Ra+(B-1))))\n";
+    s << "r=tpack(fn(tunpack(argv,1,narg)))\n";
     s << "end\n";
-    s << "if r.n>=1 and type(r[1])==\"table\" then\n";
-    s << "local filtered=filterSeqTable(r[1],\"ColorSequenceKeypoint\")\n";
-    s << "if filtered==r[1] then filtered=filterSeqTable(r[1],\"NumberSequenceKeypoint\") end\n";
-    s << "end\n";
-    s << "end\n";
-    // store results + ALWAYS shrink/set top (Clyde pattern)
     s << "if C==0 then\n";
     s << "for i=1,r.n do setR(Ra+i-1,r[i]) end\n";
-    s << "top=Ra+r.n-1\n";
-    s << "if top<Ra-1 then top=math.max(0,Ra-1) end\n";
+    s << "top=Ra+math.max(r.n,0)-1\n";
+    s << "if top<0 then top=0 end\n";
     s << "elseif C==1 then\n";
     s << "top=math.max(0,Ra-1)\n";
     s << "else\n";
