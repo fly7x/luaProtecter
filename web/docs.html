@@ -3,39 +3,53 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Docs · ƒŁ¥</title>
+    <title>Docs · fly::protect()</title>
     <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-    <header class="nav">
-        <a class="brand" href="/home">ƒŁ¥</a>
-        <nav>
-            <a href="/home">Home</a>
-            <a href="/obfuscator">Obfuscator</a>
-            <a class="active" href="/docs">Docs</a>
-            <a href="/pricing">Pricing</a>
+    <canvas id="bg-grid" aria-hidden="true"></canvas>
+
+    <div class="chrome">
+        <div class="titlebar">
+            <div class="dots"><span></span><span></span><span></span></div>
+            <span class="path">fly@protect:~/docs</span>
+            <a class="brand" href="/home"><span class="p1">fly::</span>protect<span class="p2">()</span></a>
+        </div>
+        <nav class="tabs">
+            <a class="tab" href="/home"><span class="dot"></span>home.lua</a>
+            <a class="tab" href="/obfuscator"><span class="dot"></span>obfuscator.lua</a>
+            <a class="tab active" href="/docs"><span class="dot"></span>docs.md</a>
+            <a class="tab" href="/pricing"><span class="dot"></span>pricing.json</a>
         </nav>
-    </header>
+    </div>
+
     <main class="wrap">
-        <p class="kicker">Docs</p>
-        <h2>How to use it</h2>
-        <div class="card" style="margin-top:20px">
-            <ol style="padding-left:18px;line-height:1.9">
-                <li>Open <a href="/obfuscator">/obfuscator</a>.</li>
-                <li>Paste Luau. Start with <code>print("hi")</code>.</li>
-                <li>Protect, copy the output, put it in a Script or LocalScript.</li>
-                <li>Do not wrap the output in another obfuscator until this one is stable.</li>
-            </ol>
+        <p class="eyebrow">Docs</p>
+        <h2 style="margin-bottom:26px">How to use it</h2>
+
+        <ol class="ol-steps panel">
+            <li>Open <code>/obfuscator</code>.</li>
+            <li>Paste Luau. Start with <code>print("hi")</code> if you just want to see it work.</li>
+            <li>Click Protect, copy the output, and put it in a Script or LocalScript.</li>
+            <li>Don't wrap the output in another obfuscator until this one is stable for you.</li>
+        </ol>
+
+        <div class="panel" style="margin-top:16px">
+            <div class="comment">// what it emits</div>
+            <p>A plain Luau file. No native binaries. Uses bit32, string, table, and a VM generated for that build. Compatible with Roblox and with Run on luau.org.</p>
         </div>
-        <div class="card" style="margin-top:16px">
-            <h3>What it emits</h3>
-            <p>A Luau file. No native binaries. Uses bit32, string, table, and a generated VM. Compatible with Roblox and luau.org Run.</p>
-        </div>
-        <div class="card" style="margin-top:16px">
-            <h3>Honesty</h3>
-            <p>No public VM is undecompilable. ƒŁ¥ raises time-to-recover. It is not Luraph and will not become Luraph by stacking fake layer counts.</p>
+
+        <div class="panel">
+            <div class="comment">// honesty</div>
+            <p>No public VM is undecompilable. fly::protect() raises time-to-recover, not the difficulty to zero. It isn't Luraph and won't become Luraph by stacking fake layer counts.</p>
         </div>
     </main>
-    <footer>ƒŁ¥ docs</footer>
+
+    <footer>
+        <span>fly::protect() — custom VM pipeline for Luau</span>
+        <span>Questions belong in the repo, not a support queue.</span>
+    </footer>
+
+    <script src="/bg.js"></script>
 </body>
 </html>
