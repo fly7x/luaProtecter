@@ -12,9 +12,8 @@ public:
         bool decoys = true;
         bool antiDebug = true;
         bool polymorphic = true;
-        bool wrapOpaque = true;       // outer opaque shell
-        bool useAstPipeline = true;   // native path (primary)
-        bool virtualize = false;      // OFF — broken too often
+        bool virtualize = true;        // MAX VM ON
+        bool useAstPipeline = false;
         bool renameIdentifiers = false;
         uint64_t seed = 0;
     };
@@ -28,11 +27,8 @@ public:
 private:
     uint64_t seed_;
     uint64_t generateSeed() const;
-
     std::string removeComments(const std::string& source) const;
     std::string encodeStringLiterals(const std::string& source, uint32_t seed) const;
     std::string injectDecoys(const std::string& source, uint32_t seed) const;
     std::string injectAntiDebug(const std::string& source, uint32_t seed) const;
-    std::string wrapOpaqueShell(const std::string& source, uint32_t seed) const;
-    std::string emitNativeProtected(const std::string& source, uint32_t seed, const Options& options) const;
 };
