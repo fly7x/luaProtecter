@@ -6,14 +6,15 @@
 class Transformer {
 public:
     struct Options {
-        bool renameIdentifiers = true;
-        bool encodeStrings = true;
-        bool encodeNumbers = true;
+        bool renameIdentifiers = false;
+        bool encodeStrings = false;
+        bool encodeNumbers = false;
         bool removeComments = true;
-        bool virtualize = true;
+        bool useAstPipeline = true;   // primary path
+        bool virtualize = false;      // legacy VM path (off)
         bool polymorphic = true;
-        bool decoys = true;
-        bool antiDebug = true;
+        bool decoys = false;
+        bool antiDebug = false;
         uint64_t seed = 0;
     };
 
@@ -26,9 +27,5 @@ public:
 private:
     uint64_t seed_;
     uint64_t generateSeed() const;
-    std::string renameLocals(const std::string& source) const;
-    std::string encodeStringLiterals(const std::string& source) const;
-    std::string encodeNumberLiterals(const std::string& source) const;
     std::string removeComments(const std::string& source) const;
-    std::string injectDecoys(const std::string& source) const;
 };
