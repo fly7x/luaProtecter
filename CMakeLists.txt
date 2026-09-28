@@ -18,11 +18,12 @@ add_executable(luaProtecter
     src/virtualizer.cpp
     src/vm.cpp
     src/translator.cpp
+    src/ast_pipeline.cpp
 )
 
 target_include_directories(luaProtecter PRIVATE
-		${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/VM/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/VM/src
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/VM/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Compiler/include
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Bytecode/include
@@ -30,7 +31,12 @@ target_include_directories(luaProtecter PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/luau/Common/include
 )
 
-target_link_libraries(luaProtecter PRIVATE Luau.Compiler Luau.VM)
+target_link_libraries(luaProtecter PRIVATE
+    Luau.Compiler
+    Luau.Ast
+    Luau.VM
+)
+
 if(UNIX AND NOT APPLE)
     target_link_libraries(luaProtecter PRIVATE pthread)
 endif()
