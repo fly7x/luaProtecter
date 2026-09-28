@@ -16,7 +16,8 @@ const std::string WEB_ROOT = "web/";
 
 std::string readFile(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) return "";
+    if (!file.is_open())
+        return "";
     return std::string((std::istreambuf_iterator<char>(file)),
                        std::istreambuf_iterator<char>());
 }
@@ -36,29 +37,35 @@ std::string jsonEscape(const std::string& s) {
                     char buf[8];
                     std::snprintf(buf, sizeof(buf), "\\u%04x", c);
                     out += buf;
-                } else out += char(c);
+                } else {
+                    out += char(c);
+                }
         }
     }
     return out;
 }
 
 static std::string toLower(std::string s) {
-    for (char& c : s) c = char(std::tolower((unsigned char)c));
+    for (char& c : s)
+        c = char(std::tolower(static_cast<unsigned char>(c)));
     return s;
 }
 
 static size_t headerEnd(const std::string& req) {
     size_t p = req.find("\r\n\r\n");
-    if (p != std::string::npos) return p;
+    if (p != std::string::npos)
+        return p;
     return req.find("\n\n");
 }
 
 static int contentLengthOf(const std::string& headers) {
     std::string h = toLower(headers);
     size_t p = h.find("content-length:");
-    if (p == std::string::npos) return 0;
+    if (p == std::string::npos)
+        return 0;
     p += 15;
-    while (p < h.size() && (h[p] == ' ' || h[p] == '\t')) ++p;
+    while (p < h.size() && (h[p] == ' ' || h[p] == '\t'))
+        ++p;
     return std::atoi(h.c_str() + p);
 }
 
@@ -67,22 +74,27 @@ static std::string readRequest(int fd) {
     char buf[4096];
     while (headerEnd(req) == std::string::npos) {
         ssize_t n = ::read(fd, buf, sizeof(buf));
-        if (n <= 0) break;
+        if (n <= 0)
+            break;
         req.append(buf, size_t(n));
-        if (req.size() > 8 * 1024 * 1024) break;
+        if (req.size() > 8 * 1024 * 1024)
+            break;
     }
     size_t he = headerEnd(req);
-    if (he == std::string::npos) return req;
+    if (he == std::string::npos)
+        return req;
     std::string sep = (req.find("\r\n\r\n") != std::string::npos) ? "\r\n\r\n" : "\n\n";
     int need = contentLengthOf(req.substr(0, he));
     size_t bodyStart = he + sep.size();
     int have = int(req.size() - bodyStart);
     while (have < need) {
         ssize_t n = ::read(fd, buf, sizeof(buf));
-        if (n <= 0) break;
+        if (n <= 0)
+            break;
         req.append(buf, size_t(n));
         have += int(n);
-        if (req.size() > 8 * 1024 * 1024) break;
+        if (req.size() > 8 * 1024 * 1024)
+            break;
     }
     return req;
 }
@@ -90,31 +102,39 @@ static std::string readRequest(int fd) {
 static std::string extractJsonString(const std::string& json, const std::string& key) {
     std::string search = "\"" + key + "\"";
     size_t keyPos = json.find(search);
-    if (keyPos == std::string::npos) return "";
+    if (keyPos == std::string::npos)
+        return "";
     size_t colon = json.find(':', keyPos + search.size());
-    if (colon == std::string::npos) return "";
+    if (colon == std::string::npos)
+        return "";
     size_t start = colon + 1;
-    while (start < json.size() && std::isspace((unsigned char)json[start])) start++;
-    if (start >= json.size() || json[start] != '"') return "";
-    start++;
+    while (start < json.size() && std::isspace(static_cast<unsigned char>(json[start])))
+        ++start;
+    if (start >= json.size() || json[start] != '"')
+        return "";
+    ++start;
     std::string result;
     bool escaped = false;
     for (size_t i = start; i < json.size(); ++i) {
         char c = json[i];
         if (escaped) {
             switch (c) {
-                case 'n': result += '\n'; break;
-                case 'r': result += '\r'; break;
-                case 't': result += '\t'; break;
-                case '"': result += '"'; break;
+                case 'n':  result += '\n'; break;
+                case 'r':  result += '\r'; break;
+                case 't':  result += '\t'; break;
+                case '"':  result += '"';  break;
                 case '\\': result += '\\'; break;
-                default: result += c; break;
+                default:   result += c;     break;
             }
             escaped = false;
             continue;
         }
-        if (c == '\\') { escaped = true; continue; }
-        if (c == '"') break;
+        if (c == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (c == '"')
+            break;
         result += c;
     }
     return result;
@@ -125,29 +145,33 @@ void sendAll(int fd, const std::string& s) {
     size_t left = s.size();
     while (left) {
         ssize_t n = ::write(fd, p, left);
-        if (n <= 0) break;
+        if (n <= 0)
+            break;
         p += n;
         left -= size_t(n);
     }
 }
 
+// Hybrid: whole-script encrypt + loadstring (no custom VM)
 static Transformer::Options hybridOpts() {
     Transformer::Options opts;
-    opts.useAstPipeline = true;
+    opts.wholeScriptEncrypt = true;
     opts.virtualize = false;
-    opts.encodeStrings = true;
-    opts.encodeNumbers = true;
-    opts.decoys = true;
-    opts.antiDebug = true;
-    opts.wrapOpaque = true;
-    opts.polymorphic = true;
     opts.removeComments = true;
+    opts.polymorphic = true;
+    opts.encodeStrings = false;
+    opts.decoys = false;
+    opts.antiDebug = false;
+    opts.wrapOpaque = false;
     return opts;
 }
 
 void handleClient(int clientFd) {
     std::string request = readRequest(clientFd);
-    if (request.empty()) { close(clientFd); return; }
+    if (request.empty()) {
+        close(clientFd);
+        return;
+    }
 
     std::string method = request.substr(0, request.find(' '));
     std::string path;
@@ -157,7 +181,8 @@ void handleClient(int clientFd) {
         path = request.substr(sp1 + 1, sp2 - sp1 - 1);
     }
     size_t q = path.find('?');
-    if (q != std::string::npos) path = path.substr(0, q);
+    if (q != std::string::npos)
+        path = path.substr(0, q);
 
     std::string response;
     int status = 200;
@@ -166,16 +191,20 @@ void handleClient(int clientFd) {
     try {
         if (path == "/" || path == "/home" || path == "/index.html") {
             response = readFile(WEB_ROOT + "index.html");
-            if (response.empty()) throw std::runtime_error("index.html missing");
+            if (response.empty())
+                throw std::runtime_error("index.html missing");
         } else if (path == "/docs" || path == "/docs.html") {
             response = readFile(WEB_ROOT + "docs.html");
-            if (response.empty()) throw std::runtime_error("docs.html missing");
+            if (response.empty())
+                throw std::runtime_error("docs.html missing");
         } else if (path == "/pricing" || path == "/pricing.html") {
             response = readFile(WEB_ROOT + "pricing.html");
-            if (response.empty()) throw std::runtime_error("pricing.html missing");
+            if (response.empty())
+                throw std::runtime_error("pricing.html missing");
         } else if (path == "/obfuscator" || path == "/obfuscator.html") {
             response = readFile(WEB_ROOT + "obfuscator.html");
-            if (response.empty()) throw std::runtime_error("obfuscator.html missing");
+            if (response.empty())
+                throw std::runtime_error("obfuscator.html missing");
         } else if (path == "/style.css") {
             response = readFile(WEB_ROOT + "style.css");
             contentType = "text/css";
@@ -187,8 +216,10 @@ void handleClient(int clientFd) {
             std::string sep = (request.find("\r\n\r\n") != std::string::npos) ? "\r\n\r\n" : "\n\n";
             std::string body = (he == std::string::npos) ? "" : request.substr(he + sep.size());
             std::string code = extractJsonString(body, "code");
-            if (code.empty()) code = extractJsonString(body, "source");
-            if (code.empty()) throw std::runtime_error("Missing or empty 'code' field");
+            if (code.empty())
+                code = extractJsonString(body, "source");
+            if (code.empty())
+                throw std::runtime_error("Missing or empty 'code' field");
 
             Transformer transformer;
             std::string protectedCode = transformer.protect(code, hybridOpts());
@@ -226,29 +257,40 @@ int main(int argc, char* argv[]) {
         std::string inputFile = argv[1];
         std::string outputFile = (argc >= 3) ? argv[2] : "output/protected.lua";
         std::ifstream in(inputFile);
-        if (!in.is_open()) return 1;
-        std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (!in.is_open())
+            return 1;
+        std::string source((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
         Transformer transformer;
         std::ofstream out(outputFile);
         out << transformer.protect(source, hybridOpts());
         return 0;
     }
+
     std::cout << "FLY hybrid on " << PORT << std::endl;
     int serverFd = socket(AF_INET, SOCK_STREAM, 0);
-    if (serverFd < 0) return 1;
+    if (serverFd < 0)
+        return 1;
     int opt = 1;
     setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
     addr.sin_port = htons(PORT);
-    if (bind(serverFd, (sockaddr*)&addr, sizeof(addr)) < 0) { close(serverFd); return 1; }
-    if (listen(serverFd, BACKLOG) < 0) { close(serverFd); return 1; }
+    if (bind(serverFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        close(serverFd);
+        return 1;
+    }
+    if (listen(serverFd, BACKLOG) < 0) {
+        close(serverFd);
+        return 1;
+    }
     for (;;) {
         sockaddr_in clientAddr{};
         socklen_t len = sizeof(clientAddr);
-        int clientFd = accept(serverFd, (sockaddr*)&clientAddr, &len);
-        if (clientFd < 0) continue;
+        int clientFd = accept(serverFd, reinterpret_cast<sockaddr*>(&clientAddr), &len);
+        if (clientFd < 0)
+            continue;
         handleClient(clientFd);
     }
 }
