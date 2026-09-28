@@ -184,14 +184,15 @@ void handleClient(int clientFd) {
 
             Transformer transformer;
             Transformer::Options opts;
-            opts.virtualize = true;
-            opts.polymorphic = true;
-            opts.renameIdentifiers = true;
-            opts.encodeStrings = true;
-            opts.encodeNumbers = true;
+            opts.useAstPipeline = true;
+            opts.virtualize = false;
             opts.removeComments = true;
-            opts.decoys = true;
-            opts.antiDebug = true;
+            opts.renameIdentifiers = false;
+            opts.encodeStrings = false;
+            opts.encodeNumbers = false;
+            opts.decoys = false;
+            opts.antiDebug = false;
+            opts.polymorphic = true;
             std::string protectedCode = transformer.protect(code, opts);
             response = std::string("{\"success\":true,\"code\":\"") + jsonEscape(protectedCode) + "\"}";
             contentType = "application/json";
@@ -231,9 +232,9 @@ int main(int argc, char* argv[]) {
         std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         Transformer transformer;
         Transformer::Options opts;
-        opts.virtualize = true;
-        opts.polymorphic = true;
-        opts.antiDebug = true;
+        opts.useAstPipeline = true;
+        opts.virtualize = false;
+        opts.removeComments = true;
         std::ofstream out(outputFile);
         out << transformer.protect(source, opts);
         return 0;
