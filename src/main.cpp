@@ -15,11 +15,6 @@ constexpr int PORT = 10000;
 constexpr int BACKLOG = 32;
 const std::string WEB_ROOT = "web/";
 
-static bool hasSuffix(const std::string& str, const std::string& suffix) {
-    if (str.size() < suffix.size()) return false;
-    return str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
 std::string readFile(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) return "";
@@ -137,6 +132,20 @@ void sendAll(int fd, const std::string& s) {
     }
 }
 
+static Transformer::Options maxSecurityOpts() {
+    Transformer::Options opts;
+    opts.virtualize = true;
+    opts.useAstPipeline = false;
+    opts.encodeStrings = true;
+    opts.encodeNumbers = true;
+    opts.decoys = true;
+    opts.antiDebug = true;
+    opts.polymorphic = true;
+    opts.removeComments = true;
+    opts.renameIdentifiers = false;
+    return opts;
+}
+
 void handleClient(int clientFd) {
     std::string request = readRequest(clientFd);
     if (request.empty()) { close(clientFd); return; }
@@ -183,17 +192,7 @@ void handleClient(int clientFd) {
             if (code.empty()) throw std::runtime_error("Missing or empty 'code' field");
 
             Transformer transformer;
-            Transformer::Options opts;
-            opts.useAstPipeline = true;
-            opts.virtualize = false;
-            opts.removeComments = true;
-            opts.renameIdentifiers = false;
-            opts.encodeStrings = false;
-            opts.encodeNumbers = false;
-            opts.decoys = false;
-            opts.antiDebug = false;
-            opts.polymorphic = true;
-            std::string protectedCode = transformer.protect(code, opts);
+            std::string protectedCode = transformer.protect(code, maxSecurityOpts());
             response = std::string("{\"success\":true,\"code\":\"") + jsonEscape(protectedCode) + "\"}";
             contentType = "application/json";
         } else if (method == "OPTIONS" || method == "options") {
@@ -231,12 +230,8 @@ int main(int argc, char* argv[]) {
         if (!in.is_open()) return 1;
         std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         Transformer transformer;
-        Transformer::Options opts;
-        opts.useAstPipeline = true;
-        opts.virtualize = false;
-        opts.removeComments = true;
         std::ofstream out(outputFile);
-        out << transformer.protect(source, opts);
+        out << transformer.protect(source, maxSecurityOpts());
         return 0;
     }
     std::cout << "FLY on " << PORT << std::endl;
