@@ -1,4 +1,5 @@
 #include "transformer.hpp"
+#include "ast_pipeline.hpp"
 #include "compiler.hpp"
 #include "translator.hpp"
 #include "obfuscator.hpp"
@@ -15,7 +16,7 @@ uint64_t Transformer::generateSeed() const {
     if (seed_)
         return seed_;
     std::random_device rd;
-    uint64_t s = uint64_t(rd()) << 32 ^ uint64_t(rd());
+    uint64_t s = (uint64_t(rd()) << 32) ^ uint64_t(rd());
     s ^= uint64_t(std::chrono::high_resolution_clock::now().time_since_epoch().count());
     if (!s)
         s = 0xA341316C9E3779B9ULL;
@@ -32,9 +33,12 @@ std::string Transformer::removeComments(const std::string& source) const {
         char c = source[i];
         if (inStr) {
             out += c;
-            if (esc) esc = false;
-            else if (c == '\\') esc = true;
-            else if (c == quote) inStr = false;
+            if (esc)
+                esc = false;
+            else if (c == '\\')
+                esc = true;
+            else if (c == quote)
+                inStr = false;
             continue;
         }
         if (c == '"' || c == '\'') {
@@ -63,22 +67,6 @@ std::string Transformer::removeComments(const std::string& source) const {
     return out;
 }
 
-std::string Transformer::renameLocals(const std::string& source) const {
-    return source;
-}
-
-std::string Transformer::encodeStringLiterals(const std::string& source) const {
-    return source;
-}
-
-std::string Transformer::encodeNumberLiterals(const std::string& source) const {
-    return source;
-}
-
-std::string Transformer::injectDecoys(const std::string& source) const {
-    return source;
-}
-
 std::string Transformer::protect(const std::string& source) const {
     Options opts;
     return protect(source, opts);
@@ -89,6 +77,18 @@ std::string Transformer::protect(const std::string& source, const Options& optio
     if (options.removeComments)
         processed = removeComments(processed);
 
+    // ── Primary: AST pipeline → native Luau ──
+    if (options.useAstPipeline && !options.virtualize) {
+        Protect::AstOptions aopts;
+        aopts.validateCompile = true;
+        aopts.addBanner = true;
+        Protect::AstResult result = Protect::astPassThrough(processed, aopts);
+        if (!result.success)
+            throw std::runtime_error(result.error);
+        return result.code;
+    }
+
+    // ── Legacy max-tier: custom VM (only if virtualize=true) ──
     uint32_t seed = options.polymorphic
         ? uint32_t(generateSeed())
         : (options.seed ? uint32_t(options.seed) : 0xA341316Cu);
