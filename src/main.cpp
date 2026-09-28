@@ -9,7 +9,6 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <sstream>
-#include <algorithm>
 
 constexpr int PORT = 10000;
 constexpr int BACKLOG = 32;
@@ -132,17 +131,17 @@ void sendAll(int fd, const std::string& s) {
     }
 }
 
-static Transformer::Options maxSecurityOpts() {
+static Transformer::Options hybridOpts() {
     Transformer::Options opts;
-    opts.virtualize = true;
-    opts.useAstPipeline = false;
+    opts.useAstPipeline = true;
+    opts.virtualize = false;
     opts.encodeStrings = true;
     opts.encodeNumbers = true;
     opts.decoys = true;
     opts.antiDebug = true;
+    opts.wrapOpaque = true;
     opts.polymorphic = true;
     opts.removeComments = true;
-    opts.renameIdentifiers = false;
     return opts;
 }
 
@@ -192,7 +191,7 @@ void handleClient(int clientFd) {
             if (code.empty()) throw std::runtime_error("Missing or empty 'code' field");
 
             Transformer transformer;
-            std::string protectedCode = transformer.protect(code, maxSecurityOpts());
+            std::string protectedCode = transformer.protect(code, hybridOpts());
             response = std::string("{\"success\":true,\"code\":\"") + jsonEscape(protectedCode) + "\"}";
             contentType = "application/json";
         } else if (method == "OPTIONS" || method == "options") {
@@ -231,10 +230,10 @@ int main(int argc, char* argv[]) {
         std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         Transformer transformer;
         std::ofstream out(outputFile);
-        out << transformer.protect(source, maxSecurityOpts());
+        out << transformer.protect(source, hybridOpts());
         return 0;
     }
-    std::cout << "FLY on " << PORT << std::endl;
+    std::cout << "FLY hybrid on " << PORT << std::endl;
     int serverFd = socket(AF_INET, SOCK_STREAM, 0);
     if (serverFd < 0) return 1;
     int opt = 1;
