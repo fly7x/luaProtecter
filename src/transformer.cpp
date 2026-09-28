@@ -1,8 +1,5 @@
 #include "transformer.hpp"
 #include "compiler.hpp"
-#include "translator.hpp"
-#include "obfuscator.hpp"
-#include "virtualizer.hpp"
 
 #include <chrono>
 #include <random>
@@ -33,9 +30,12 @@ std::string Transformer::removeComments(const std::string& source) const {
         char c = source[i];
         if (inStr) {
             out += c;
-            if (esc) esc = false;
-            else if (c == '\\') esc = true;
-            else if (c == quote) inStr = false;
+            if (esc)
+                esc = false;
+            else if (c == '\\')
+                esc = true;
+            else if (c == quote)
+                inStr = false;
             continue;
         }
         if (c == '"' || c == '\'') {
@@ -78,7 +78,8 @@ std::string Transformer::encodeStringLiterals(const std::string& source, uint32_
     auto flushString = [&]() {
         body += "FLYS({";
         for (size_t i = 0; i < current.size(); ++i) {
-            if (i) body += ',';
+            if (i)
+                body += ',';
             body += std::to_string(int(uint8_t(current[i]) ^ xorKey(i)));
         }
         body += "})";
@@ -130,18 +131,68 @@ std::string Transformer::injectDecoys(const std::string& source, uint32_t seed) 
     uint32_t a = seed % 9973u;
     uint32_t b = (seed >> 8) % 7919u;
     std::ostringstream j;
-    j << "do local _a=" << a << " local _b=" << b << "\n";
+    j << "do\n";
+    j << "local _a=" << a << "\n";
+    j << "local _b=" << b << "\n";
+    j << "local _c=_a*_a-_b*_b\n";
     j << "if _a*_a<0 then error(\"x\") end\n";
-    j << "if (_a+_b)*(_a-_b)~=(_a*_a-_b*_b) then return end end\n";
+    j << "if (_a+_b)*(_a-_b)~=_c then return end\n";
+    j << "end\n";
     return j.str() + source;
 }
 
+// No numeric for-loop (avoids fragile patterns); while only
 std::string Transformer::injectAntiDebug(const std::string& source, uint32_t seed) const {
     (void)seed;
     std::ostringstream a;
-    a << "do local _t=os.clock() local _n=0 for _i=1,40 do _n+=_i end\n";
-    a << "if os.clock()-_t>3 then return end if _n~=820 then return end end\n";
+    a << "do\n";
+    a << "local _t=os.clock()\n";
+    a << "local _n=0\n";
+    a << "local _i=1\n";
+    a << "while _i<=40 do\n";
+    a << "_n=_n+_i\n";
+    a << "_i=_i+1\n";
+    a << "end\n";
+    a << "if os.clock()-_t>3 then return end\n";
+    a << "if _n~=820 then return end\n";
+    a << "end\n";
     return a.str() + source;
+}
+
+std::string Transformer::wrapOpaqueShell(const std::string& source, uint32_t seed) const {
+    uint32_t x = (seed % 1000u) + 3u;
+    std::ostringstream o;
+    o << "do\n";
+    o << "local _x=" << x << "\n";
+    o << "if (_x*_x)>=0 then\n";
+    o << source;
+    if (!source.empty() && source.back() != '\n')
+        o << "\n";
+    o << "end\n";
+    o << "end\n";
+    return o.str();
+}
+
+std::string Transformer::emitNativeProtected(const std::string& body, uint32_t seed) const {
+    (void)seed;
+    // Must still be valid Luau
+    Compiler compiler;
+    auto compiled = compiler.compile(body);
+    if (!compiled.success)
+        throw std::runtime_error(std::string("Hybrid compile failed: ") + compiled.error);
+
+    std::ostringstream out;
+    out << "--!nocheck\n";
+    out << "--[[\n";
+    out << "  ╔══════════════════════════════════════════╗\n";
+    out << "  ║     Protected by FŁÝ / FLYX Obfuscator   ║\n";
+    out << "  ║   Hybrid · native · fast · layered       ║\n";
+    out << "  ╚══════════════════════════════════════════╝\n";
+    out << "]]\n";
+    out << body;
+    if (!body.empty() && body.back() != '\n')
+        out << "\n";
+    return out.str();
 }
 
 std::string Transformer::protect(const std::string& source) const {
@@ -159,30 +210,23 @@ std::string Transformer::protect(const std::string& source, const Options& optio
     if (!seed)
         seed = 0xA341316C;
 
-    std::string processed = source;
+    std::string body = source;
     if (options.removeComments)
-        processed = removeComments(processed);
-    if (options.encodeStrings)
-        processed = encodeStringLiterals(processed, seed);
-    if (options.decoys)
-        processed = injectDecoys(processed, seed);
-    if (options.antiDebug)
-        processed = injectAntiDebug(processed, seed);
+        body = removeComments(body);
 
-    Compiler compiler;
-    auto compiled = compiler.compile(processed);
-    if (!compiled.success)
-        throw std::runtime_error(std::string("Compilation failed: ") + compiled.error);
+    // ── HYBRID PRIMARY: native Luau + security layers ──
+    if (!options.virtualize) {
+        if (options.encodeStrings)
+            body = encodeStringLiterals(body, seed);
+        if (options.decoys)
+            body = injectDecoys(body, seed);
+        if (options.antiDebug)
+            body = injectAntiDebug(body, seed);
+        if (options.wrapOpaque)
+            body = wrapOpaqueShell(body, seed);
+        return emitNativeProtected(body, seed);
+    }
 
-    Translator translator(seed);
-    auto translated = translator.translate(compiled.bytecode);
-    if (!translated.success)
-        throw std::runtime_error(std::string("Translate failed: ") + translated.error);
-
-    Obfuscator obfuscator(seed);
-    Bytecode encrypted = obfuscator.obfuscate(translated.encoded);
-
-    Protect::Virtualizer::Options vopts;
-    Protect::Virtualizer virtualizer(seed);
-    return virtualizer.emitVirtualizedScript(encrypted, vopts);
+    // ── Optional VM (off by default) — not used in hybrid mode ──
+    throw std::runtime_error("VM path disabled in hybrid build; set virtualize=false");
 }
