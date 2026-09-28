@@ -10,8 +10,6 @@
 #include <stdexcept>
 #include <sstream>
 #include <cctype>
-#include <vector>
-#include <algorithm>
 
 Transformer::Transformer() : seed_(0) {}
 Transformer::Transformer(uint64_t seed) : seed_(seed) {}
@@ -71,24 +69,18 @@ std::string Transformer::removeComments(const std::string& source) const {
     return out;
 }
 
-// Encrypt "..." and '...' into FLYS({bytes}) calls; inject decoder once.
 std::string Transformer::encodeStringLiterals(const std::string& source, uint32_t seed) const {
     auto xorKey = [&](size_t i) -> uint8_t {
-        return uint8_t((seed + i * 131u + 17u) & 0xFFu);
+        return uint8_t((seed + uint32_t(i) * 131u + 17u) & 0xFFu);
     };
 
     std::string body;
     body.reserve(source.size() * 2);
     bool inStr = false;
     char quote = 0;
-    bool esc = false;
     std::string current;
 
     auto flushString = [&]() {
-        if (current.empty() && quote) {
-            body += "FLYS({})";
-            return;
-        }
         body += "FLYS({";
         for (size_t i = 0; i < current.size(); ++i) {
             if (i)
@@ -102,38 +94,28 @@ std::string Transformer::encodeStringLiterals(const std::string& source, uint32_
     for (size_t i = 0; i < source.size(); ++i) {
         char c = source[i];
         if (inStr) {
-            if (esc) {
-                current.push_back(c);
-                esc = false;
-                continue;
-            }
-            if (c == '\\') {
-                // keep escape semantics in decrypted string
-                if (i + 1 < source.size()) {
-                    char n = source[i + 1];
-                    if (n == 'n') {
-                        current.push_back('\n');
-                        ++i;
-                        continue;
-                    }
-                    if (n == 't') {
-                        current.push_back('\t');
-                        ++i;
-                        continue;
-                    }
-                    if (n == 'r') {
-                        current.push_back('\r');
-                        ++i;
-                        continue;
-                    }
-                    if (n == '\\' || n == '"' || n == '\'') {
-                        current.push_back(n);
-                        ++i;
-                        continue;
-                    }
+            if (c == '\\' && i + 1 < source.size()) {
+                char n = source[i + 1];
+                if (n == 'n') {
+                    current.push_back('\n');
+                    ++i;
+                    continue;
                 }
-                current.push_back(c);
-                continue;
+                if (n == 't') {
+                    current.push_back('\t');
+                    ++i;
+                    continue;
+                }
+                if (n == 'r') {
+                    current.push_back('\r');
+                    ++i;
+                    continue;
+                }
+                if (n == '\\' || n == '"' || n == '\'') {
+                    current.push_back(n);
+                    ++i;
+                    continue;
+                }
             }
             if (c == quote) {
                 flushString();
@@ -169,15 +151,15 @@ std::string Transformer::encodeStringLiterals(const std::string& source, uint32_
 
 std::string Transformer::injectDecoys(const std::string& source, uint32_t seed) const {
     std::ostringstream junk;
+    uint32_t a = seed % 9973u;
+    uint32_t b = (seed >> 8) % 7919u;
     junk << "do\n";
-    junk << "local _a=" << (seed % 9973) << "\n";
-    junk << "local _b=" << ((seed >> 8) % 7919) << "\n";
-    junk << "if _a*_a<0 then\n";
-    junk << "error(FLYS and FLYS({1,2,3}) or \"x\")\n";
-    junk << "end\n";
-    junk << "if (_a+_b)*(_a-_b)~=(_a*_a-_b*_b) then\n";
-    junk << "return nil\n";
-    junk << "end\n";
+    junk << "local _a=" << a << " local _b=" << b << "\n";
+    junk << "local _c=_a*_a-_b*_b\n";
+    junk << "if _a*_a<0 then error(\"x\") end\n";
+    junk << "if (_a+_b)*(_a-_b)~=_c then return end\n";
+    junk << "local function _d(_) return _ end\n";
+    junk << "if _d(0)~=0 then return end\n";
     junk << "end\n";
     return junk.str() + source;
 }
@@ -186,13 +168,62 @@ std::string Transformer::injectAntiDebug(const std::string& source, uint32_t see
     std::ostringstream ad;
     ad << "do\n";
     ad << "local _t=os.clock()\n";
-    ad << "local _n=0\n";
-    ad << "for _i=1,50 do _n=_n+_i end\n";
-    ad << "if os.clock()-_t>2.5 then return end\n";
-    ad << "if _n~=" << (50 * 51 / 2) << " then return end\n";
+    ad << "local _n=0 for _i=1,40 do _n+=_i end\n";
+    ad << "if os.clock()-_t>3 then return end\n";
+    ad << "if _n~=820 then return end\n";
     ad << "end\n";
     (void)seed;
     return ad.str() + source;
+}
+
+std::string Transformer::wrapOpaqueShell(const std::string& source, uint32_t seed) const {
+    // Always-true predicate; body is the real script
+    uint32_t x = (seed % 1000) + 3;
+    std::ostringstream o;
+    o << "do\n";
+    o << "local _x=" << x << "\n";
+    o << "if (_x*_x)>=0 then\n";
+    o << source;
+    if (!source.empty() && source.back() != '\n')
+        o << "\n";
+    o << "end\n";
+    o << "end\n";
+    return o.str();
+}
+
+std::string Transformer::emitNativeProtected(const std::string& source, uint32_t seed, const Options& options) const {
+    std::string body = source;
+
+    if (options.encodeStrings)
+        body = encodeStringLiterals(body, seed);
+
+    if (options.decoys)
+        body = injectDecoys(body, seed);
+
+    if (options.antiDebug)
+        body = injectAntiDebug(body, seed);
+
+    if (options.wrapOpaque)
+        body = wrapOpaqueShell(body, seed);
+
+    // Validate still compiles as real Luau
+    Compiler compiler;
+    auto compiled = compiler.compile(body);
+    if (!compiled.success)
+        throw std::runtime_error(std::string("Native protect compile failed: ") + compiled.error);
+
+    std::ostringstream out;
+    out << "--!nocheck\n";
+    out << "--[[\n";
+    out << "  ╔══════════════════════════════════════════╗\n";
+    out << "  ║     Protected by FŁÝ / FLYX Obfuscator   ║\n";
+    out << "  ║   Hybrid · native Luau · max layers      ║\n";
+    out << "  ╚══════════════════════════════════════════╝\n";
+    out << "]]\n";
+    out << body;
+    if (!body.empty() && body.back() != '\n')
+        out << "\n";
+    return out.str();
 }
 
 std::string Transformer::protect(const std::string& source) const {
@@ -211,46 +242,48 @@ std::string Transformer::protect(const std::string& source, const Options& optio
         seed = 0xA341316C;
 
     std::string processed = source;
-
     if (options.removeComments)
         processed = removeComments(processed);
 
-    // Optional light AST path (not max security)
+    // ── PRIMARY: hybrid native (reliable + layered security) ──
     if (options.useAstPipeline && !options.virtualize) {
+        // Optional parse gate
         Protect::AstOptions aopts;
         aopts.validateCompile = true;
-        aopts.addBanner = true;
-        auto result = Protect::astPassThrough(processed, aopts);
-        if (!result.success)
-            throw std::runtime_error(result.error);
-        return result.code;
+        aopts.addBanner = false;
+        auto gate = Protect::astPassThrough(processed, aopts);
+        if (!gate.success)
+            throw std::runtime_error(gate.error);
+
+        return emitNativeProtected(processed, seed, options);
     }
 
-    // ── MAX SECURITY LAYERS ──
-    if (options.encodeStrings)
-        processed = encodeStringLiterals(processed, seed);
+    // ── OPTIONAL: full VM (off by default — fails often) ──
+    if (options.virtualize) {
+        if (options.encodeStrings)
+            processed = encodeStringLiterals(processed, seed);
+        if (options.decoys)
+            processed = injectDecoys(processed, seed);
+        if (options.antiDebug)
+            processed = injectAntiDebug(processed, seed);
 
-    if (options.decoys)
-        processed = injectDecoys(processed, seed);
+        Compiler compiler;
+        auto compiled = compiler.compile(processed);
+        if (!compiled.success)
+            throw std::runtime_error(std::string("Compilation failed: ") + compiled.error);
 
-    if (options.antiDebug)
-        processed = injectAntiDebug(processed, seed);
+        Translator translator(seed);
+        auto translated = translator.translate(compiled.bytecode);
+        if (!translated.success)
+            throw std::runtime_error(std::string("Translate failed: ") + translated.error);
 
-    // Compile → private ISA → encrypt → VM
-    Compiler compiler;
-    auto compiled = compiler.compile(processed);
-    if (!compiled.success)
-        throw std::runtime_error(std::string("Compilation failed: ") + compiled.error);
+        Obfuscator obfuscator(seed);
+        Bytecode encrypted = obfuscator.obfuscate(translated.encoded);
 
-    Translator translator(seed);
-    auto translated = translator.translate(compiled.bytecode);
-    if (!translated.success)
-        throw std::runtime_error(std::string("Translate failed: ") + translated.error);
+        Protect::Virtualizer::Options vopts;
+        Protect::Virtualizer virtualizer(seed);
+        return virtualizer.emitVirtualizedScript(encrypted, vopts);
+    }
 
-    Obfuscator obfuscator(seed);
-    Bytecode encrypted = obfuscator.obfuscate(translated.encoded);
-
-    Protect::Virtualizer::Options vopts;
-    Protect::Virtualizer virtualizer(seed);
-    return virtualizer.emitVirtualizedScript(encrypted, vopts);
+    return emitNativeProtected(processed, seed, options);
 }
