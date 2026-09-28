@@ -6,15 +6,16 @@
 class Transformer {
 public:
     struct Options {
-        bool renameIdentifiers = false;
-        bool encodeStrings = false;
-        bool encodeNumbers = false;
+        // Max security defaults
         bool removeComments = true;
-        bool useAstPipeline = true;   // primary path
-        bool virtualize = false;      // legacy VM path (off)
+        bool encodeStrings = true;
+        bool encodeNumbers = true;
+        bool decoys = true;
+        bool antiDebug = true;
         bool polymorphic = true;
-        bool decoys = false;
-        bool antiDebug = false;
+        bool virtualize = true;       // full custom VM ON
+        bool useAstPipeline = false;  // off when max VM
+        bool renameIdentifiers = false; // needs real AST renamer later
         uint64_t seed = 0;
     };
 
@@ -27,5 +28,9 @@ public:
 private:
     uint64_t seed_;
     uint64_t generateSeed() const;
+
     std::string removeComments(const std::string& source) const;
+    std::string encodeStringLiterals(const std::string& source, uint32_t seed) const;
+    std::string injectDecoys(const std::string& source, uint32_t seed) const;
+    std::string injectAntiDebug(const std::string& source, uint32_t seed) const;
 };
