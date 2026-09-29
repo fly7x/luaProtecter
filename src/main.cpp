@@ -152,17 +152,18 @@ void sendAll(int fd, const std::string& s) {
     }
 }
 
-// Hybrid: whole-script encrypt + loadstring (no custom VM)
-static Transformer::Options hybridOpts() {
+// Double-head VM defaults (minimal layers until print works)
+static Transformer::Options vmOpts() {
     Transformer::Options opts;
-    opts.wholeScriptEncrypt = true;
-    opts.virtualize = false;
-    opts.removeComments = true;
-    opts.polymorphic = true;
+    opts.virtualize = true;
+    opts.wholeScriptEncrypt = false;
+    opts.useAstPipeline = false;
     opts.encodeStrings = false;
+    opts.encodeNumbers = false;
     opts.decoys = false;
     opts.antiDebug = false;
-    opts.wrapOpaque = false;
+    opts.polymorphic = true;
+    opts.removeComments = true;
     return opts;
 }
 
@@ -222,7 +223,7 @@ void handleClient(int clientFd) {
                 throw std::runtime_error("Missing or empty 'code' field");
 
             Transformer transformer;
-            std::string protectedCode = transformer.protect(code, hybridOpts());
+            std::string protectedCode = transformer.protect(code, vmOpts());
             response = std::string("{\"success\":true,\"code\":\"") + jsonEscape(protectedCode) + "\"}";
             contentType = "application/json";
         } else if (method == "OPTIONS" || method == "options") {
@@ -263,11 +264,11 @@ int main(int argc, char* argv[]) {
                            std::istreambuf_iterator<char>());
         Transformer transformer;
         std::ofstream out(outputFile);
-        out << transformer.protect(source, hybridOpts());
+        out << transformer.protect(source, vmOpts());
         return 0;
     }
 
-    std::cout << "FLY hybrid on " << PORT << std::endl;
+    std::cout << "FLY double-head VM on " << PORT << std::endl;
     int serverFd = socket(AF_INET, SOCK_STREAM, 0);
     if (serverFd < 0)
         return 1;
