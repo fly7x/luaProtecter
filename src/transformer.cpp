@@ -1,12 +1,13 @@
 #include "transformer.hpp"
 #include "compiler.hpp"
+#include "translator.hpp"
+#include "obfuscator.hpp"
+#include "virtualizer.hpp"
 
 #include <chrono>
 #include <random>
 #include <stdexcept>
 #include <sstream>
-#include <vector>
-#include <cstdint>
 
 Transformer::Transformer() : seed_(0) {}
 Transformer::Transformer(uint64_t seed) : seed_(seed) {}
@@ -32,9 +33,12 @@ std::string Transformer::removeComments(const std::string& source) const {
         char c = source[i];
         if (inStr) {
             out += c;
-            if (esc) esc = false;
-            else if (c == '\\') esc = true;
-            else if (c == quote) inStr = false;
+            if (esc)
+                esc = false;
+            else if (c == '\\')
+                esc = true;
+            else if (c == quote)
+                inStr = false;
             continue;
         }
         if (c == '"' || c == '\'') {
@@ -63,57 +67,67 @@ std::string Transformer::removeComments(const std::string& source) const {
     return out;
 }
 
-std::string Transformer::emitLoadstringBootstrap(const std::string& payload, uint32_t seed) const {
-    // XOR payload bytes
-    std::vector<uint8_t> enc;
-    enc.reserve(payload.size());
-    for (size_t i = 0; i < payload.size(); ++i) {
-        uint8_t k = uint8_t((seed + uint32_t(i) * 131u + 17u) & 0xFFu);
-        enc.push_back(uint8_t(payload[i]) ^ k);
+std::string Transformer::encodeStringLiterals(const std::string& source, uint32_t seed) const {
+    auto xorKey = [&](size_t i) -> uint8_t {
+        return uint8_t((seed + uint32_t(i) * 131u + 17u) & 0xFFu);
+    };
+
+    std::string body;
+    body.reserve(source.size() * 2);
+    bool inStr = false;
+    char quote = 0;
+    std::string current;
+
+    auto flushString = [&]() {
+        body += "FLYS({";
+        for (size_t i = 0; i < current.size(); ++i) {
+            if (i)
+                body += ',';
+            body += std::to_string(int(uint8_t(current[i]) ^ xorKey(i)));
+        }
+        body += "})";
+    };
+
+    for (size_t i = 0; i < source.size(); ++i) {
+        char c = source[i];
+        if (inStr) {
+            if (c == '\\' && i + 1 < source.size()) {
+                char n = source[i + 1];
+                if (n == 'n') { current.push_back('\n'); ++i; continue; }
+                if (n == 't') { current.push_back('\t'); ++i; continue; }
+                if (n == 'r') { current.push_back('\r'); ++i; continue; }
+                if (n == '\\' || n == '"' || n == '\'') { current.push_back(n); ++i; continue; }
+            }
+            if (c == quote) {
+                flushString();
+                inStr = false;
+                current.clear();
+                continue;
+            }
+            current.push_back(c);
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            inStr = true;
+            quote = c;
+            current.clear();
+            continue;
+        }
+        body += c;
     }
 
-    uint32_t sum = 0;
-    for (uint8_t b : enc)
-        sum += b;
-
-    std::ostringstream bytes;
-    bytes << "{";
-    for (size_t i = 0; i < enc.size(); ++i) {
-        if (i) bytes << ",";
-        if ((i % 16) == 0) bytes << "\n";
-        bytes << int(enc[i]);
-    }
-    bytes << "}";
-
-    std::ostringstream o;
-    o << "--!nocheck\n";
-    o << "--[[\n";
-    o << "  ╔══════════════════════════════════════════╗\n";
-    o << "  ║     Protected by FŁÝ / FLYX Obfuscator   ║\n";
-    o << "  ║   Hybrid · encrypted payload · native    ║\n";
-    o << "  ╚══════════════════════════════════════════╝\n";
-    o << "]]\n";
-    o << "local _B=" << bytes.str() << "\n";
-    o << "do local s=0 for i=1,#_B do s+=_B[i] end if s~=" << sum << " then return end end\n";
-    o << "local _s=" << seed << "\n";
-    o << "local function _dec()\n";
-    o << "local o={}\n";
-    o << "for i=1,#_B do\n";
-    o << "local k=bit32.band(_s+(i-1)*131+17,255)\n";
-    o << "o[i]=string.char(bit32.band(bit32.bxor(_B[i],k),255))\n";
-    o << "end\n";
-    o << "return table.concat(o)\n";
-    o << "end\n";
-    o << "local _src=_dec()\n";
-    o << "_B,_dec=nil,nil\n";
-    // Executor-safe load
-    o << "local _ld=loadstring or load\n";
-    o << "if type(_ld)~=\"function\" then error(\"no loadstring\") end\n";
-    o << "local _fn,err=_ld(_src)\n";
-    o << "_src=nil\n";
-    o << "if not _fn then error(tostring(err)) end\n";
-    o << "return _fn()\n";
-    return o.str();
+    std::ostringstream out;
+    out << "local function FLYS(t)\n";
+    out << "local s=" << seed << "\n";
+    out << "local o={}\n";
+    out << "for i=1,#t do\n";
+    out << "local k=bit32.band(s+(i-1)*131+17,255)\n";
+    out << "o[i]=string.char(bit32.band(bit32.bxor(t[i],k),255))\n";
+    out << "end\n";
+    out << "return table.concat(o)\n";
+    out << "end\n";
+    out << body;
+    return out.str();
 }
 
 std::string Transformer::protect(const std::string& source) const {
@@ -131,21 +145,30 @@ std::string Transformer::protect(const std::string& source, const Options& optio
     if (!seed)
         seed = 0xA341316C;
 
-    std::string payload = source;
+    std::string processed = source;
     if (options.removeComments)
-        payload = removeComments(payload);
+        processed = removeComments(processed);
 
-    // Soften _G writes for stricter sandboxes (still mainly for executors)
-    // Users can keep source as-is; bootstrap doesn't change payload semantics.
+    if (options.encodeStrings)
+        processed = encodeStringLiterals(processed, seed);
 
-    if (options.wholeScriptEncrypt) {
-        // Validate payload is valid Luau before encrypting
-        Compiler compiler;
-        auto compiled = compiler.compile(payload);
-        if (!compiled.success)
-            throw std::runtime_error(std::string("Compile failed: ") + compiled.error);
-        return emitLoadstringBootstrap(payload, seed);
-    }
+    // Double-head custom VM path
+    Compiler compiler;
+    auto compiled = compiler.compile(processed);
+    if (!compiled.success)
+        throw std::runtime_error(std::string("Compilation failed: ") + compiled.error);
 
-    throw std::runtime_error("wholeScriptEncrypt must be true for hybrid protection");
+    Translator translator(seed);
+    auto translated = translator.translate(compiled.bytecode);
+    if (!translated.success)
+        throw std::runtime_error(std::string("Translate failed: ") + translated.error);
+
+    Obfuscator obfuscator(seed);
+    Bytecode encrypted = obfuscator.obfuscate(translated.encoded);
+
+    Protect::Virtualizer::Options vopts;
+    vopts.doubleHead = true;
+    vopts.watchdog = true;
+    Protect::Virtualizer virtualizer(seed);
+    return virtualizer.emitVirtualizedScript(encrypted, vopts);
 }
