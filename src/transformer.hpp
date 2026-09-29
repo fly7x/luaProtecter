@@ -7,15 +7,15 @@ class Transformer {
 public:
     struct Options {
         bool removeComments = true;
-        bool polymorphic = true;
-        // Whole-script encrypt + load (real hybrid protection)
-        bool wholeScriptEncrypt = true;
-        // Light extras inside payload before encrypt
-        bool encodeStrings = false;
+        bool encodeStrings = false;   // off until print works
+        bool encodeNumbers = false;
         bool decoys = false;
         bool antiDebug = false;
-        bool wrapOpaque = false;
-        bool virtualize = false;  // keep off
+        bool polymorphic = true;
+        bool virtualize = true;       // double-head VM ON
+        bool wholeScriptEncrypt = false;
+        bool useAstPipeline = false;
+        bool renameIdentifiers = false;
         uint64_t seed = 0;
     };
 
@@ -29,5 +29,5 @@ private:
     uint64_t seed_;
     uint64_t generateSeed() const;
     std::string removeComments(const std::string& source) const;
-    std::string emitLoadstringBootstrap(const std::string& payload, uint32_t seed) const;
+    std::string encodeStringLiterals(const std::string& source, uint32_t seed) const;
 };
