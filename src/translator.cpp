@@ -469,6 +469,8 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_JUMPIFNOT:
             emitJump(Op::JMPIFNOT, A, nextOld + D);
             break;
+
+        // Compare then JMP: C=0 means skip JMP when false; C=1 inverts
         case LOP_JUMPIFEQ:
             emitABC(Op::EQ, A, uint8_t(aux), 0);
             emitJump(Op::JMP, 0, nextOld + D);
@@ -482,16 +484,16 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitJump(Op::JMP, 0, nextOld + D);
             break;
         case LOP_JUMPIFNOTEQ:
-            emitABC(Op::EQ, A, uint8_t(aux), 0);
-            emitJump(Op::JMPIFNOT, A, nextOld + D);
+            emitABC(Op::EQ, A, uint8_t(aux), 1);
+            emitJump(Op::JMP, 0, nextOld + D);
             break;
         case LOP_JUMPIFNOTLE:
-            emitABC(Op::LE, A, uint8_t(aux), 0);
-            emitJump(Op::JMPIFNOT, A, nextOld + D);
+            emitABC(Op::LE, A, uint8_t(aux), 1);
+            emitJump(Op::JMP, 0, nextOld + D);
             break;
         case LOP_JUMPIFNOTLT:
-            emitABC(Op::LT, A, uint8_t(aux), 0);
-            emitJump(Op::JMPIFNOT, A, nextOld + D);
+            emitABC(Op::LT, A, uint8_t(aux), 1);
+            emitJump(Op::JMP, 0, nextOld + D);
             break;
 
 #ifdef LOP_JUMPXEQKNIL
@@ -502,11 +504,8 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             if (proto.maxstack < 250)
                 proto.maxstack = uint8_t(proto.maxstack + 1);
             emitABC(Op::LOADNIL, tmp, tmp, 0);
-            emitABC(Op::EQ, A, tmp, 0);
-            if (isNot)
-                emitJump(Op::JMPIFNOT, A, nextOld + D);
-            else
-                emitJump(Op::JMP, 0, nextOld + D);
+            emitABC(Op::EQ, A, tmp, isNot ? 1 : 0);
+            emitJump(Op::JMP, 0, nextOld + D);
             break;
         }
         case LOP_JUMPXEQKB: {
@@ -517,11 +516,8 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             if (proto.maxstack < 250)
                 proto.maxstack = uint8_t(proto.maxstack + 1);
             emitABC(Op::LOADBOOL, tmp, val ? 1 : 0, 0);
-            emitABC(Op::EQ, A, tmp, 0);
-            if (isNot)
-                emitJump(Op::JMPIFNOT, A, nextOld + D);
-            else
-                emitJump(Op::JMP, 0, nextOld + D);
+            emitABC(Op::EQ, A, tmp, isNot ? 1 : 0);
+            emitJump(Op::JMP, 0, nextOld + D);
             break;
         }
         case LOP_JUMPXEQKN:
@@ -534,11 +530,8 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
                 proto.maxstack = uint8_t(proto.maxstack + 1);
             emitABC(Op::LOADK, tmp, 0, 0);
             emitK(kidx);
-            emitABC(Op::EQ, A, tmp, 0);
-            if (isNot)
-                emitJump(Op::JMPIFNOT, A, nextOld + D);
-            else
-                emitJump(Op::JMP, 0, nextOld + D);
+            emitABC(Op::EQ, A, tmp, isNot ? 1 : 0);
+            emitJump(Op::JMP, 0, nextOld + D);
             break;
         }
 #endif
@@ -597,8 +590,12 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::VARARG, A, B, 0);
             break;
 
-        default:
-            break;
+        default: {
+            std::ostringstream os;
+            os << "unhandled LOP_" << int(op) << " at pc " << pc;
+            err = os.str();
+            return false;
+        }
         }
         pc += size_t(len);
     }
