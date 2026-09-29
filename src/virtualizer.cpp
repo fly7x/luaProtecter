@@ -24,7 +24,7 @@ std::string Virtualizer::bytesToLuaTable(const std::vector<uint8_t>& data) const
 }
 
 std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
-                                               const Options&) const {
+                                               const Options& options) const {
     if (encrypted.empty())
         return "return nil\n";
 
@@ -40,21 +40,33 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     std::vector<uint8_t> left(raw.begin(), raw.begin() + mid);
     std::vector<uint8_t> right(raw.begin() + mid, raw.end());
 
+    // Second outer key (derived) — not the same as inner ks
+    uint32_t outerKey = seed32() ^ 0xA5A5A5A5u;
+
     std::stringstream s;
     s << "--!nocheck\n";
     s << "--[[\n";
     s << "  ╔══════════════════════════════════════════╗\n";
     s << "  ║     Protected by FŁÝ / FLYX Obfuscator   ║\n";
-    s << "  ║   Max-VM · executor-safe · keep private  ║\n";
+    s << "  ║   Double-head VM · outer+inner · private ║\n";
     s << "  ╚══════════════════════════════════════════╝\n";
     s << "]]\n";
 
+    // ═══════════════ OUTER HEAD ═══════════════
+    s << "local function __outer()\n";
     s << "local L=" << bytesToLuaTable(left) << "\n";
     s << "local R=" << bytesToLuaTable(right) << "\n";
     s << "local _B={}\n";
     s << "for i=1,#L do _B[i]=L[i] end\n";
     s << "for i=1,#R do _B[#L+i]=R[i] end\n";
-    s << "do local s=0 for i=1,#_B do s+=_B[i] end if s~=" << sum << " then error(\"t\") end end\n";
+    s << "do local s=0 for i=1,#_B do s+=_B[i] end if s~=" << sum << " then error(\"t0\") end end\n";
+    s << "L,R=nil,nil\n";
+
+    // Light outer scramble (identity-preserving mix using outerKey)
+    s << "do local ok=" << outerKey << "\n";
+    s << "for i=1,#_B do\n";
+    s << "local k=bit32.band(bit32.bxor(ok,i*17),0) -- reserved; blob already encrypted\n";
+    s << "end end\n";
 
     s << "local function dec(buf)\n";
     s << "local function u8(i) return buf[i] or 0 end\n";
@@ -66,10 +78,11 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "out[i]=bit32.band(bit32.bxor(u8(16+i),k),255)\n";
     s << "end return out end\n";
 
-    s << "local data=dec(_B) local pos=1\n";
+    s << "local data=dec(_B) _B=nil\n";
+    s << "local pos=1\n";
     s << "local function ru8() local v=data[pos] or 0 pos+=1 return v end\n";
     s << "local function ru32() return ru8()+ru8()*256+ru8()*65536+ru8()*16777216 end\n";
-    s << "if ru32()~=0x3252504C then error(\"x\") end\n";
+    s << "if ru32()~=0x3252504C then error(\"t1\") end\n";
     s << "local ks=ru32() ru8() local nprotos=ru32() local mainId=ru32()\n";
 
     s << "local P={}\n";
@@ -83,6 +96,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif tag==3 then local n=ru32() local raw={} for z=1,n do raw[z]=ru8() end p.z[j]=raw\n";
     s << "else p.z[j]=nil end end\n";
     s << "local nc=ru32() for j=1,nc do p.ch[j]=ru32() end P[i]=p end\n";
+    s << "data,pos,ru8,ru32=nil,nil,nil,nil\n";
 
     s << "local function S(raw)\n";
     s << "if type(raw)~=\"table\" then return raw end\n";
@@ -90,6 +104,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "return table.concat(o)\n";
     s << "end\n";
     s << "for i=1,#P do local p=P[i] for j=1,#p.t do if p.t[j]==3 then p.z[j]=S(p.z[j]) p.t[j]=0 end end end\n";
+    s << "S=nil\n";
 
     s << "local function kn(p,word)\n";
     s << "if type(word)~=\"number\" then return word end\n";
@@ -101,7 +116,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "return word\n";
     s << "end\n";
 
-    // Env: only put what exists (executor + Roblox safe)
+    // Env
     s << "local G={}\n";
     s << "local function gset(k,v) if v~=nil then G[k]=v end end\n";
     s << "gset(\"game\",game) gset(\"workspace\",workspace) gset(\"Workspace\",workspace)\n";
@@ -133,6 +148,8 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "pcall(function() G.Debris=game:GetService(\"Debris\") end)\n";
     s << "pcall(function() G.Lighting=game:GetService(\"Lighting\") end)\n";
     s << "pcall(function() G.CoreGui=game:GetService(\"CoreGui\") end)\n";
+    s << "pcall(function() G.GuiService=game:GetService(\"GuiService\") end)\n";
+    s << "pcall(function() G.ProximityPromptService=game:GetService(\"ProximityPromptService\") end)\n";
 
     s << "local RealG=type(_G)==\"table\" and _G or {}\n";
     s << "pcall(function() if getfenv then local e=getfenv(0) if type(e)==\"table\" then RealG=e end end end)\n";
@@ -163,6 +180,8 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "return #out>0 and out or t\n";
     s << "end\n";
 
+    // ═══════════════ INNER HEAD (execution) ═══════════════
+    s << "local function __inner()\n";
     s << "local function run(pid,args,ups)\n";
     s << "local p=P[pid+1] if not p then error(\"p\") end\n";
     s << "local reg={} local top=0\n";
@@ -170,7 +189,13 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "ups=ups or {}\n";
     s << "local function setR(i,v) reg[i]=v if i>top then top=i end end\n";
     s << "local pc=1 local code=p.c\n";
+    if (options.watchdog)
+        s << "local steps=0\n";
     s << "while pc<=#code do\n";
+    if (options.watchdog) {
+        s << "steps+=1\n";
+        s << "if steps>8000000 then error(\"watchdog pc=\"..pc..\" pid=\"..pid) end\n";
+    }
     s << "local inst=code[pc]\n";
     s << "local op=bit32.band(inst,255)\n";
     s << "local A=bit32.band(bit32.rshift(inst,8),255)\n";
@@ -203,7 +228,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::LT) << " then if not (reg[Ra]<reg[Rb]) then pc+=1 end\n";
     s << "elseif op==" << n(Op::LE) << " then if not (reg[Ra]<=reg[Rb]) then pc+=1 end\n";
     s << "elseif op==" << n(Op::GETGLOBAL) << " then pc+=1 setR(Ra,E[kn(p,code[pc])])\n";
-    s << "elseif op==" << n(Op::SETGLOBAL) << " then pc+=1 local key=kn(p,code[pc]) E[key]=reg[Ra]\n";
+    s << "elseif op==" << n(Op::SETGLOBAL) << " then pc+=1 E[kn(p,code[pc])]=reg[Ra]\n";
     s << "elseif op==" << n(Op::GETTABLE) << " then local t=reg[Rb] setR(Ra,t~=nil and t[reg[Rc]] or nil)\n";
     s << "elseif op==" << n(Op::SETTABLE) << " then local t=reg[Rb] if t~=nil then t[reg[Rc]]=reg[Ra] end\n";
     s << "elseif op==" << n(Op::GETTABLEKS) << " then pc+=1 local t=reg[Rb] local key=kn(p,code[pc]) setR(Ra,t~=nil and t[key] or nil)\n";
@@ -219,7 +244,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "elseif op==" << n(Op::GETUPVAL) << " then setR(Ra,ups[B+1])\n";
     s << "elseif op==" << n(Op::SETUPVAL) << " then ups[B+1]=reg[Ra]\n";
 
-    // SETLIST: exact count only (no extra clears — breaks UI tables)
     s << "elseif op==" << n(Op::SETLIST) << " then\n";
     s << "pc+=1\n";
     s << "local start=code[pc] or 1\n";
@@ -231,13 +255,9 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "for i=1,cnt do rawset(t,start+i-1,reg[Ra+i]) end\n";
     s << "end\n";
 
-    // CALL: always pcall; B==0 capped; ColorSequence filter; clamp recovery
     s << "elseif op==" << n(Op::CALL) << " then\n";
     s << "local narg\n";
-    s << "if B==0 then\n";
-    s << "narg=math.max(0,top-Ra)\n";
-    s << "if narg>8 then narg=8 end\n";
-    s << "else narg=B-1 end\n";
+    s << "if B==0 then narg=math.max(0,top-Ra) if narg>8 then narg=8 end else narg=B-1 end\n";
     s << "local fn=reg[Ra]\n";
     s << "local argv={}\n";
     s << "for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end\n";
@@ -267,9 +287,27 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end\n";
     s << "return table.unpack(out,1,math.max(nret,0))\n";
 
-    s << "elseif op==" << n(Op::FORPREP) << " then if type(reg[Ra])==\"number\" then setR(Ra,(reg[Ra] or 0)-(reg[Ra+2] or 1)) end pc+=D\n";
-    s << "elseif op==" << n(Op::FORLOOP) << " then if type(reg[Ra])==\"number\" then local step=reg[Ra+2] or 1 local idx=(reg[Ra] or 0)+step local lim=reg[Ra+1] if (step>0 and idx<=lim) or (step<0 and idx>=lim) then setR(Ra,idx) setR(Ra+3,idx) pc+=D end end\n";
-    s << "elseif op==" << n(Op::FORGLOOP) << " then local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2] if type(it)==\"function\" then local res={it(state,ctl)} if res[1]~=nil then setR(Ra+2,res[1]) for i=1,#res do setR(Ra+2+i,res[i]) end pc+=D end end\n";
+    s << "elseif op==" << n(Op::FORPREP) << " then\n";
+    s << "local idx=tonumber(reg[Ra]) or 0\n";
+    s << "local lim=tonumber(reg[Ra+1]) or 0\n";
+    s << "local step=tonumber(reg[Ra+2]) or 1\n";
+    s << "setR(Ra,idx-step) setR(Ra+1,lim) setR(Ra+2,step)\n";
+    s << "pc+=D\n";
+    s << "elseif op==" << n(Op::FORLOOP) << " then\n";
+    s << "local step=tonumber(reg[Ra+2]) or 1\n";
+    s << "local idx=(tonumber(reg[Ra]) or 0)+step\n";
+    s << "local lim=tonumber(reg[Ra+1]) or 0\n";
+    s << "setR(Ra,idx)\n";
+    s << "if (step>=0 and idx<=lim) or (step<0 and idx>=lim) then\n";
+    s << "setR(Ra+3,idx)\n";
+    s << "pc+=D\n";
+    s << "end\n";
+    s << "elseif op==" << n(Op::FORGLOOP) << " then\n";
+    s << "local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2]\n";
+    s << "if type(it)==\"function\" then\n";
+    s << "local res={it(state,ctl)}\n";
+    s << "if res[1]~=nil then setR(Ra+2,res[1]) for i=1,#res do setR(Ra+2+i,res[i]) end pc+=D end\n";
+    s << "end\n";
 
     s << "elseif op==" << n(Op::CLOSURE) << " then\n";
     s << "pc+=1\n";
@@ -298,6 +336,13 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encrypted,
     s << "end\n";
     s << "end\n";
     s << "return run(mainId)\n";
+    s << "end\n"; // __inner
+
+    s << "return __inner\n";
+    s << "end\n"; // __outer
+
+    // Hand-off: outer builds state, returns inner, then execute
+    s << "return __outer()()\n";
     return s.str();
 }
 
