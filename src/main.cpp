@@ -71,13 +71,13 @@ static int contentLengthOf(const std::string& headers) {
 
 static std::string readRequest(int fd) {
     std::string req;
-    char buf[4096];
+    char buf[8192];
     while (headerEnd(req) == std::string::npos) {
         ssize_t n = ::read(fd, buf, sizeof(buf));
         if (n <= 0)
             break;
         req.append(buf, size_t(n));
-        if (req.size() > 8 * 1024 * 1024)
+        if (req.size() > 16 * 1024 * 1024)
             break;
     }
     size_t he = headerEnd(req);
@@ -93,7 +93,7 @@ static std::string readRequest(int fd) {
             break;
         req.append(buf, size_t(n));
         have += int(n);
-        if (req.size() > 8 * 1024 * 1024)
+        if (req.size() > 16 * 1024 * 1024)
             break;
     }
     return req;
@@ -152,18 +152,28 @@ void sendAll(int fd, const std::string& s) {
     }
 }
 
-// Double-head VM defaults (minimal layers until print works)
-static Transformer::Options vmOpts() {
+static Transformer::Options optsFromMode(const std::string& mode) {
     Transformer::Options opts;
-    opts.virtualize = true;
-    opts.wholeScriptEncrypt = false;
-    opts.useAstPipeline = false;
-    opts.encodeStrings = false;
-    opts.encodeNumbers = false;
-    opts.decoys = false;
-    opts.antiDebug = false;
     opts.polymorphic = true;
     opts.removeComments = true;
+    opts.encodeStrings = false;
+    opts.decoys = false;
+    opts.antiDebug = false;
+
+    if (mode == "hybrid") {
+        opts.virtualize = false;
+        opts.wholeScriptEncrypt = true;
+        opts.tripleHead = false;
+    } else if (mode == "max") {
+        opts.virtualize = true;
+        opts.wholeScriptEncrypt = false;
+        opts.tripleHead = true;
+    } else {
+        // "vm" default — heavy double-head
+        opts.virtualize = true;
+        opts.wholeScriptEncrypt = false;
+        opts.tripleHead = false;
+    }
     return opts;
 }
 
@@ -212,6 +222,9 @@ void handleClient(int clientFd) {
         } else if (path == "/app.js") {
             response = readFile(WEB_ROOT + "app.js");
             contentType = "application/javascript";
+        } else if (path == "/bg.js") {
+            response = readFile(WEB_ROOT + "bg.js");
+            contentType = "application/javascript";
         } else if (path == "/api/obfuscate" && (method == "POST" || method == "post")) {
             size_t he = headerEnd(request);
             std::string sep = (request.find("\r\n\r\n") != std::string::npos) ? "\r\n\r\n" : "\n\n";
@@ -222,9 +235,15 @@ void handleClient(int clientFd) {
             if (code.empty())
                 throw std::runtime_error("Missing or empty 'code' field");
 
+            std::string mode = extractJsonString(body, "mode");
+            if (mode.empty())
+                mode = "vm";
+            mode = toLower(mode);
+
             Transformer transformer;
-            std::string protectedCode = transformer.protect(code, vmOpts());
-            response = std::string("{\"success\":true,\"code\":\"") + jsonEscape(protectedCode) + "\"}";
+            std::string protectedCode = transformer.protect(code, optsFromMode(mode));
+            response = std::string("{\"success\":true,\"mode\":\"") + jsonEscape(mode) +
+                       "\",\"code\":\"" + jsonEscape(protectedCode) + "\"}";
             contentType = "application/json";
         } else if (method == "OPTIONS" || method == "options") {
             response = "";
@@ -257,6 +276,7 @@ int main(int argc, char* argv[]) {
     if (argc >= 2) {
         std::string inputFile = argv[1];
         std::string outputFile = (argc >= 3) ? argv[2] : "output/protected.lua";
+        std::string mode = (argc >= 4) ? toLower(argv[3]) : "vm";
         std::ifstream in(inputFile);
         if (!in.is_open())
             return 1;
@@ -264,11 +284,11 @@ int main(int argc, char* argv[]) {
                            std::istreambuf_iterator<char>());
         Transformer transformer;
         std::ofstream out(outputFile);
-        out << transformer.protect(source, vmOpts());
+        out << transformer.protect(source, optsFromMode(mode));
         return 0;
     }
 
-    std::cout << "FLY double-head VM on " << PORT << std::endl;
+    std::cout << "FLY protect on :" << PORT << " (modes: vm|max|hybrid)" << std::endl;
     int serverFd = socket(AF_INET, SOCK_STREAM, 0);
     if (serverFd < 0)
         return 1;
