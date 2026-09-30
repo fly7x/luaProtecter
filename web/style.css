@@ -258,6 +258,38 @@ h1, h2, h3 { font-family: Manrope, sans-serif; font-weight: 800; letter-spacing:
 }
 
 /* ---------- obfuscator ---------- */
+.mode-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 16px;
+    flex-wrap: wrap;
+}
+.mode-label {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    color: var(--muted);
+}
+.mode-select {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12.5px;
+    color: var(--ink);
+    background: var(--panel);
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    padding: 10px 16px;
+    outline: none;
+    cursor: pointer;
+    max-width: 100%;
+}
+.mode-select:focus {
+    border-color: var(--out);
+}
+.mode-select option {
+    background: var(--panel);
+    color: var(--ink);
+}
+
 .editor { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); overflow: hidden; margin-top: 24px; }
 .editor-row { display: grid; grid-template-columns: 1fr 1fr; }
 .editor-pane + .editor-pane { border-left: 1px solid var(--line); }
@@ -333,4 +365,5 @@ footer {
     .tabs { padding: 10px 5vw 0; }
     .wrap { width: 90vw; padding: 44px 0 64px; }
     footer { padding: 26px 5vw 40px; }
+    .mode-select { width: 100%; }
 }
