@@ -21,7 +21,6 @@ uint32_t Translator::Reader::u32() { return 0; }
 uint32_t Translator::Reader::varint() { return 0; }
 std::string Translator::Reader::bytes(uint32_t) { return {}; }
 
-// Official Luau getOpLength
 static int luauInsnLength(uint8_t op) {
     switch (op) {
     case LOP_GETGLOBAL:
@@ -55,7 +54,7 @@ static int luauInsnLength(uint8_t op) {
 #endif
         return 2;
     default:
-        return 1; // FASTCALL + FASTCALL1 = 1
+        return 1;
     }
 }
 
@@ -148,38 +147,107 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         return uint32_t(proto.constants.size() - 1);
     };
 
+    // Official LuauBuiltinFunction (Bytecode.h), LBF_NONE=0
     auto emitBuiltinLoad = [&](uint8_t callA, uint32_t builtinId) {
         const char* lib = nullptr;
         const char* fn = nullptr;
+        const char* g = nullptr;
+
         switch (builtinId) {
+        case 1:  g = "assert"; break;
         case 2:  lib = "math"; fn = "abs"; break;
+        case 3:  lib = "math"; fn = "acos"; break;
+        case 4:  lib = "math"; fn = "asin"; break;
+        case 5:  lib = "math"; fn = "atan2"; break;
+        case 6:  lib = "math"; fn = "atan"; break;
         case 7:  lib = "math"; fn = "ceil"; break;
+        case 8:  lib = "math"; fn = "cosh"; break;
         case 9:  lib = "math"; fn = "cos"; break;
+        case 10: lib = "math"; fn = "deg"; break;
         case 11: lib = "math"; fn = "exp"; break;
         case 12: lib = "math"; fn = "floor"; break;
+        case 13: lib = "math"; fn = "fmod"; break;
+        case 14: lib = "math"; fn = "frexp"; break;
+        case 15: lib = "math"; fn = "ldexp"; break;
+        case 16: lib = "math"; fn = "log10"; break;
         case 17: lib = "math"; fn = "log"; break;
         case 18: lib = "math"; fn = "max"; break;
         case 19: lib = "math"; fn = "min"; break;
+        case 20: lib = "math"; fn = "modf"; break;
         case 21: lib = "math"; fn = "pow"; break;
+        case 22: lib = "math"; fn = "rad"; break;
+        case 23: lib = "math"; fn = "sinh"; break;
         case 24: lib = "math"; fn = "sin"; break;
         case 25: lib = "math"; fn = "sqrt"; break;
+        case 26: lib = "math"; fn = "tanh"; break;
         case 27: lib = "math"; fn = "tan"; break;
-        case 46: lib = "math"; fn = "clamp"; break;
-        case 47: lib = "math"; fn = "sign"; break;
-        case 48: lib = "math"; fn = "round"; break;
+        case 28: lib = "bit32"; fn = "arshift"; break;
         case 29: lib = "bit32"; fn = "band"; break;
         case 30: lib = "bit32"; fn = "bnot"; break;
         case 31: lib = "bit32"; fn = "bor"; break;
         case 32: lib = "bit32"; fn = "bxor"; break;
+        case 33: lib = "bit32"; fn = "btest"; break;
+        case 34: lib = "bit32"; fn = "extract"; break;
+        case 35: lib = "bit32"; fn = "lrotate"; break;
         case 36: lib = "bit32"; fn = "lshift"; break;
+        case 37: lib = "bit32"; fn = "replace"; break;
+        case 38: lib = "bit32"; fn = "rrotate"; break;
         case 39: lib = "bit32"; fn = "rshift"; break;
+        case 40: g = "type"; break;
         case 41: lib = "string"; fn = "byte"; break;
         case 42: lib = "string"; fn = "char"; break;
+        case 43: lib = "string"; fn = "len"; break;
+        case 44: g = "typeof"; break;
         case 45: lib = "string"; fn = "sub"; break;
+        case 46: lib = "math"; fn = "clamp"; break;
+        case 47: lib = "math"; fn = "sign"; break;
+        case 48: lib = "math"; fn = "round"; break;
+        case 49: g = "rawset"; break;
+        case 50: g = "rawget"; break;
+        case 51: g = "rawequal"; break;
         case 52: lib = "table"; fn = "insert"; break;
         case 53: lib = "table"; fn = "unpack"; break;
-        default: break;
+        case 54: g = "vector"; break; // LBF_VECTOR
+        case 55: lib = "bit32"; fn = "countlz"; break;
+        case 56: lib = "bit32"; fn = "countrz"; break;
+        case 57: g = "select"; break; // LBF_SELECT_VARARG
+        case 58: g = "rawlen"; break;
+        case 59: lib = "bit32"; fn = "extract"; break; // EXTRACTK
+        case 60: g = "getmetatable"; break;
+        case 61: g = "setmetatable"; break;
+        case 62: g = "tonumber"; break;
+        case 63: g = "tostring"; break;
+        case 64: lib = "bit32"; fn = "byteswap"; break;
+        case 65: lib = "buffer"; fn = "readi8"; break;
+        case 66: lib = "buffer"; fn = "readu8"; break;
+        case 67: lib = "buffer"; fn = "writeu8"; break;
+        case 68: lib = "buffer"; fn = "readi16"; break;
+        case 69: lib = "buffer"; fn = "readu16"; break;
+        case 70: lib = "buffer"; fn = "writeu16"; break;
+        case 71: lib = "buffer"; fn = "readi32"; break;
+        case 72: lib = "buffer"; fn = "readu32"; break;
+        case 73: lib = "buffer"; fn = "writeu32"; break;
+        case 74: lib = "buffer"; fn = "readf32"; break;
+        case 75: lib = "buffer"; fn = "writef32"; break;
+        case 76: lib = "buffer"; fn = "readf64"; break;
+        case 77: lib = "buffer"; fn = "writef64"; break;
+        case 78: lib = "vector"; fn = "magnitude"; break;
+        case 79: lib = "vector"; fn = "normalize"; break;
+        case 80: lib = "vector"; fn = "cross"; break;
+        case 81: lib = "vector"; fn = "dot"; break;
+        case 82: lib = "vector"; fn = "floor"; break;
+        case 83: lib = "vector"; fn = "ceil"; break;
+        case 84: lib = "vector"; fn = "abs"; break;
+        case 85: lib = "vector"; fn = "sign"; break;
+        case 86: lib = "vector"; fn = "clamp"; break;
+        case 87: lib = "vector"; fn = "min"; break;
+        case 88: lib = "vector"; fn = "max"; break;
+        case 89: lib = "math"; fn = "lerp"; break;
+        case 90: lib = "vector"; fn = "lerp"; break;
+        default:
+            break;
         }
+
         if (lib && fn) {
             uint32_t kLib = addStr(lib);
             uint32_t kFn = addStr(fn);
@@ -189,13 +257,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitK(kFn);
             return;
         }
-        const char* g = nullptr;
-        if (builtinId == 1) g = "assert";
-        else if (builtinId == 40) g = "type";
-        else if (builtinId == 44) g = "typeof";
-        else if (builtinId == 49) g = "rawset";
-        else if (builtinId == 50) g = "rawget";
-        else if (builtinId == 51) g = "rawequal";
         if (g) {
             uint32_t k = addStr(g);
             emitABC(Op::GETGLOBAL, callA, 0, 0);
@@ -470,7 +531,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitJump(Op::JMPIFNOT, A, nextOld + D);
             break;
 
-        // Compare then JMP: C=0 means skip JMP when false; C=1 inverts
         case LOP_JUMPIFEQ:
             emitABC(Op::EQ, A, uint8_t(aux), 0);
             emitJump(Op::JMP, 0, nextOld + D);
