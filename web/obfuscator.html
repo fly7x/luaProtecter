@@ -27,6 +27,15 @@
         <p class="eyebrow">Obfuscator</p>
         <h2>Protect a script</h2>
 
+        <div class="mode-bar">
+            <label class="mode-label" for="mode">mode</label>
+            <select id="mode" class="mode-select">
+                <option value="vm" selected>Heavy VM — high security, slower</option>
+                <option value="max">Max VM — triple-head, max security</option>
+                <option value="hybrid">Hybrid — native speed, encrypted payload</option>
+            </select>
+        </div>
+
         <div class="editor">
             <div class="editor-row">
                 <div class="editor-pane">
@@ -46,7 +55,7 @@
                 <span id="status">Ready</span>
             </div>
         </div>
-        <p class="hint" style="margin-top:14px">vm: true · polymorphic: true · POST /api/obfuscate</p>
+        <p class="hint" style="margin-top:14px" id="modeHint">mode: vm · double-head private ISA · POST /api/obfuscate</p>
     </main>
 
     <footer>
