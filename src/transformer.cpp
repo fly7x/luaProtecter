@@ -13,13 +13,11 @@ Transformer::Transformer() : seed_(0) {}
 Transformer::Transformer(uint64_t seed) : seed_(seed) {}
 
 uint64_t Transformer::generateSeed() const {
-    if (seed_)
-        return seed_;
+    if (seed_) return seed_;
     std::random_device rd;
     uint64_t s = (uint64_t(rd()) << 32) ^ uint64_t(rd());
     s ^= uint64_t(std::chrono::high_resolution_clock::now().time_since_epoch().count());
-    if (!s)
-        s = 0xA341316C9E3779B9ULL;
+    if (!s) s = 0xA341316C9E3779B9ULL;
     return s;
 }
 
@@ -33,12 +31,9 @@ std::string Transformer::removeComments(const std::string& source) const {
         char c = source[i];
         if (inStr) {
             out += c;
-            if (esc)
-                esc = false;
-            else if (c == '\\')
-                esc = true;
-            else if (c == quote)
-                inStr = false;
+            if (esc) esc = false;
+            else if (c == '\\') esc = true;
+            else if (c == quote) inStr = false;
             continue;
         }
         if (c == '"' || c == '\'') {
@@ -52,14 +47,11 @@ std::string Transformer::removeComments(const std::string& source) const {
                 i += 3;
                 while (i + 1 < source.size() && !(source[i] == ']' && source[i + 1] == ']'))
                     ++i;
-                if (i + 1 < source.size())
-                    ++i;
+                if (i + 1 < source.size()) ++i;
                 continue;
             }
-            while (i < source.size() && source[i] != '\n')
-                ++i;
-            if (i < source.size())
-                out += '\n';
+            while (i < source.size() && source[i] != '\n') ++i;
+            if (i < source.size()) out += '\n';
             continue;
         }
         out += c;
@@ -67,67 +59,45 @@ std::string Transformer::removeComments(const std::string& source) const {
     return out;
 }
 
-std::string Transformer::encodeStringLiterals(const std::string& source, uint32_t seed) const {
-    auto xorKey = [&](size_t i) -> uint8_t {
-        return uint8_t((seed + uint32_t(i) * 131u + 17u) & 0xFFu);
-    };
+std::string Transformer::emitHybrid(const std::string& source, uint32_t seed) const {
+    std::vector<uint8_t> bytes(source.begin(), source.end());
+    uint32_t sum = 0;
+    for (uint8_t b : bytes) sum += b;
 
-    std::string body;
-    body.reserve(source.size() * 2);
-    bool inStr = false;
-    char quote = 0;
-    std::string current;
-
-    auto flushString = [&]() {
-        body += "FLYS({";
-        for (size_t i = 0; i < current.size(); ++i) {
-            if (i)
-                body += ',';
-            body += std::to_string(int(uint8_t(current[i]) ^ xorKey(i)));
-        }
-        body += "})";
-    };
-
-    for (size_t i = 0; i < source.size(); ++i) {
-        char c = source[i];
-        if (inStr) {
-            if (c == '\\' && i + 1 < source.size()) {
-                char n = source[i + 1];
-                if (n == 'n') { current.push_back('\n'); ++i; continue; }
-                if (n == 't') { current.push_back('\t'); ++i; continue; }
-                if (n == 'r') { current.push_back('\r'); ++i; continue; }
-                if (n == '\\' || n == '"' || n == '\'') { current.push_back(n); ++i; continue; }
-            }
-            if (c == quote) {
-                flushString();
-                inStr = false;
-                current.clear();
-                continue;
-            }
-            current.push_back(c);
-            continue;
-        }
-        if (c == '"' || c == '\'') {
-            inStr = true;
-            quote = c;
-            current.clear();
-            continue;
-        }
-        body += c;
+    std::ostringstream o;
+    o << "--!nocheck\n";
+    o << "--[[\n";
+    o << "  ╔══════════════════════════════════════════╗\n";
+    o << "  ║     Protected by FŁÝ / FLYX Obfuscator   ║\n";
+    o << "  ║   Hybrid · encrypted payload · native    ║\n";
+    o << "  ╚══════════════════════════════════════════╝\n";
+    o << "]]\n";
+    o << "local _B={";
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        if (i) o << ",";
+        if ((i % 16) == 0) o << "\n";
+        o << int(bytes[i]);
     }
-
-    std::ostringstream out;
-    out << "local function FLYS(t)\n";
-    out << "local s=" << seed << "\n";
-    out << "local o={}\n";
-    out << "for i=1,#t do\n";
-    out << "local k=bit32.band(s+(i-1)*131+17,255)\n";
-    out << "o[i]=string.char(bit32.band(bit32.bxor(t[i],k),255))\n";
-    out << "end\n";
-    out << "return table.concat(o)\n";
-    out << "end\n";
-    out << body;
-    return out.str();
+    o << "}\n";
+    o << "do local s=0 for i=1,#_B do s+=_B[i] end if s~=" << sum << " then return end end\n";
+    o << "local _s=" << seed << "\n";
+    o << "local function _dec()\n";
+    o << "local o={}\n";
+    o << "for i=1,#_B do\n";
+    o << "local k=bit32.band(_s+(i-1)*131+17,255)\n";
+    o << "o[i]=string.char(bit32.band(bit32.bxor(_B[i],k),255))\n";
+    o << "end\n";
+    o << "return table.concat(o)\n";
+    o << "end\n";
+    o << "local _src=_dec()\n";
+    o << "_B,_dec=nil,nil\n";
+    o << "local _ld=loadstring or load\n";
+    o << "if type(_ld)~=\"function\" then error(\"no loadstring\") end\n";
+    o << "local _fn,err=_ld(_src)\n";
+    o << "_src=nil\n";
+    o << "if not _fn then error(tostring(err)) end\n";
+    o << "return _fn()\n";
+    return o.str();
 }
 
 std::string Transformer::protect(const std::string& source) const {
@@ -142,17 +112,17 @@ std::string Transformer::protect(const std::string& source, const Options& optio
     uint32_t seed = options.polymorphic
         ? uint32_t(generateSeed())
         : (options.seed ? uint32_t(options.seed) : 0xA341316Cu);
-    if (!seed)
-        seed = 0xA341316C;
+    if (!seed) seed = 0xA341316C;
 
     std::string processed = source;
     if (options.removeComments)
         processed = removeComments(processed);
 
-    if (options.encodeStrings)
-        processed = encodeStringLiterals(processed, seed);
+    // HYBRID: native speed, whole-script encrypt
+    if (options.wholeScriptEncrypt || !options.virtualize)
+        return emitHybrid(processed, seed);
 
-    // Double-head custom VM path
+    // HEAVY / MAX VM
     Compiler compiler;
     auto compiled = compiler.compile(processed);
     if (!compiled.success)
@@ -168,6 +138,7 @@ std::string Transformer::protect(const std::string& source, const Options& optio
 
     Protect::Virtualizer::Options vopts;
     vopts.doubleHead = true;
+    vopts.tripleHead = options.tripleHead;
     vopts.watchdog = true;
     Protect::Virtualizer virtualizer(seed);
     return virtualizer.emitVirtualizedScript(encrypted, vopts);
