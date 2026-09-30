@@ -12,6 +12,7 @@ class Virtualizer {
 public:
     struct Options {
         bool doubleHead = true;
+        bool tripleHead = false; // extra outer shell when max security
         bool watchdog = true;
     };
 
