@@ -11,8 +11,7 @@ namespace Protect {
 class Virtualizer {
 public:
     struct Options {
-        bool doubleHead = true;
-        bool tripleHead = false; // extra outer shell when max security
+        int heads = 2;      // 1 = single VM, 2 = outer+inner
         bool watchdog = true;
     };
 
