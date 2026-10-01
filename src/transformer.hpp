@@ -8,15 +8,12 @@ public:
     struct Options {
         bool removeComments = true;
         bool encodeStrings = false;
-        bool encodeNumbers = false;
         bool decoys = false;
         bool antiDebug = false;
         bool polymorphic = true;
-        bool virtualize = true;          // heavy VM
-        bool wholeScriptEncrypt = false; // hybrid
-        bool tripleHead = false;         // max VM shell
-        bool useAstPipeline = false;
-        bool renameIdentifiers = false;
+        bool virtualize = true;
+        bool wholeScriptEncrypt = false;
+        int vmHeads = 2;   // 1 or 2 only
         uint64_t seed = 0;
     };
 
