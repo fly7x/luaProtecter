@@ -8,6 +8,7 @@
 #include <random>
 #include <stdexcept>
 #include <sstream>
+#include <vector>
 
 Transformer::Transformer() : seed_(0) {}
 Transformer::Transformer(uint64_t seed) : seed_(seed) {}
@@ -63,40 +64,24 @@ std::string Transformer::emitHybrid(const std::string& source, uint32_t seed) co
     std::vector<uint8_t> bytes(source.begin(), source.end());
     uint32_t sum = 0;
     for (uint8_t b : bytes) sum += b;
-
     std::ostringstream o;
-    o << "--!nocheck\n";
-    o << "--[[\n";
-    o << "  ╔══════════════════════════════════════════╗\n";
-    o << "  ║     Protected by FŁÝ / FLYX Obfuscator   ║\n";
-    o << "  ║   Hybrid · encrypted payload · native    ║\n";
-    o << "  ╚══════════════════════════════════════════╝\n";
-    o << "]]\n";
+    o << "--!nocheck\n--[[ FŁÝ hybrid ]]\n";
     o << "local _B={";
     for (size_t i = 0; i < bytes.size(); ++i) {
         if (i) o << ",";
         if ((i % 16) == 0) o << "\n";
-        o << int(bytes[i]);
+        uint8_t k = uint8_t((seed + uint32_t(i) * 131u + 17u) & 0xFFu);
+        o << int(uint8_t(bytes[i] ^ k));
     }
     o << "}\n";
-    o << "do local s=0 for i=1,#_B do s+=_B[i] end if s~=" << sum << " then return end end\n";
+    o << "do local s=0 for i=1,#_B do s+=_B[i] end end\n";
     o << "local _s=" << seed << "\n";
-    o << "local function _dec()\n";
-    o << "local o={}\n";
-    o << "for i=1,#_B do\n";
+    o << "local function _dec()\nlocal o={}\nfor i=1,#_B do\n";
     o << "local k=bit32.band(_s+(i-1)*131+17,255)\n";
-    o << "o[i]=string.char(bit32.band(bit32.bxor(_B[i],k),255))\n";
-    o << "end\n";
-    o << "return table.concat(o)\n";
-    o << "end\n";
-    o << "local _src=_dec()\n";
-    o << "_B,_dec=nil,nil\n";
-    o << "local _ld=loadstring or load\n";
-    o << "if type(_ld)~=\"function\" then error(\"no loadstring\") end\n";
-    o << "local _fn,err=_ld(_src)\n";
-    o << "_src=nil\n";
-    o << "if not _fn then error(tostring(err)) end\n";
-    o << "return _fn()\n";
+    o << "o[i]=string.char(bit32.band(bit32.bxor(_B[i],k),255))\nend\nreturn table.concat(o)\nend\n";
+    o << "local _src=_dec() _B,_dec=nil,nil\n";
+    o << "local _ld=loadstring or load\nif type(_ld)~=\"function\" then error(\"no loadstring\") end\n";
+    o << "local _fn,err=_ld(_src) _src=nil\nif not _fn then error(tostring(err)) end\nreturn _fn()\n";
     return o.str();
 }
 
@@ -118,11 +103,9 @@ std::string Transformer::protect(const std::string& source, const Options& optio
     if (options.removeComments)
         processed = removeComments(processed);
 
-    // HYBRID: native speed, whole-script encrypt
     if (options.wholeScriptEncrypt || !options.virtualize)
         return emitHybrid(processed, seed);
 
-    // HEAVY / MAX VM
     Compiler compiler;
     auto compiled = compiler.compile(processed);
     if (!compiled.success)
@@ -137,8 +120,7 @@ std::string Transformer::protect(const std::string& source, const Options& optio
     Bytecode encrypted = obfuscator.obfuscate(translated.encoded);
 
     Protect::Virtualizer::Options vopts;
-    vopts.doubleHead = true;
-    vopts.tripleHead = options.tripleHead;
+    vopts.heads = (options.vmHeads <= 1) ? 1 : 2;
     vopts.watchdog = true;
     Protect::Virtualizer virtualizer(seed);
     return virtualizer.emitVirtualizedScript(encrypted, vopts);
