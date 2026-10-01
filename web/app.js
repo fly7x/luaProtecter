@@ -14,11 +14,11 @@ function updateHint() {
     if (!modeHint || !modeEl) return;
     const m = modeEl.value;
     if (m === "hybrid") {
-        modeHint.textContent = "mode: hybrid · encrypted payload + loadstring · fast · POST /api/obfuscate";
-    } else if (m === "max") {
-        modeHint.textContent = "mode: max · triple-head private ISA · max security · POST /api/obfuscate";
+        modeHint.textContent = "mode: hybrid · encrypted payload · loadstring · POST /api/obfuscate";
+    } else if (m === "1") {
+        modeHint.textContent = "mode: 1-VM · single interpreter · private ISA · POST /api/obfuscate";
     } else {
-        modeHint.textContent = "mode: vm · double-head private ISA · high security · POST /api/obfuscate";
+        modeHint.textContent = "mode: 2-VM · outer+inner nested · private ISA · POST /api/obfuscate";
     }
 }
 
@@ -33,13 +33,13 @@ if (source) {
             setStatus("Paste source first", "error");
             return;
         }
-        const mode = (modeEl && modeEl.value) || "vm";
+        const mode = (modeEl && modeEl.value) || "2";
         setStatus("Protecting (" + mode + ")…", "busy");
         try {
             const res = await fetch("/api/obfuscate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ code: source.value, mode })
+                body: JSON.stringify({ code: source.value, mode: mode })
             });
             const text = await res.text();
             let data;
@@ -71,7 +71,8 @@ if (source) {
     source.addEventListener("keydown", (e) => {
         if (e.key === "Tab") {
             e.preventDefault();
-            const start = source.selectionStart, end = source.selectionEnd;
+            const start = source.selectionStart;
+            const end = source.selectionEnd;
             source.value = source.value.slice(0, start) + "    " + source.value.slice(end);
             source.selectionStart = source.selectionEnd = start + 4;
         }
