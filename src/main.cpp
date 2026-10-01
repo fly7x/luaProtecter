@@ -152,7 +152,9 @@ void sendAll(int fd, const std::string& s) {
     }
 }
 
-static Transformer::Options optsFromMode(const std::string& mode) {
+// mode: "1" | "2" | "hybrid" (also accepts aliases)
+static Transformer::Options optsFromMode(const std::string& modeIn) {
+    std::string mode = toLower(modeIn);
     Transformer::Options opts;
     opts.polymorphic = true;
     opts.removeComments = true;
@@ -163,16 +165,16 @@ static Transformer::Options optsFromMode(const std::string& mode) {
     if (mode == "hybrid") {
         opts.virtualize = false;
         opts.wholeScriptEncrypt = true;
-        opts.tripleHead = false;
-    } else if (mode == "max") {
+        opts.vmHeads = 1;
+    } else if (mode == "1" || mode == "vm1" || mode == "single") {
         opts.virtualize = true;
         opts.wholeScriptEncrypt = false;
-        opts.tripleHead = true;
+        opts.vmHeads = 1;
     } else {
-        // "vm" default — heavy double-head
+        // "2", "vm2", "double", default
         opts.virtualize = true;
         opts.wholeScriptEncrypt = false;
-        opts.tripleHead = false;
+        opts.vmHeads = 2;
     }
     return opts;
 }
@@ -229,6 +231,7 @@ void handleClient(int clientFd) {
             size_t he = headerEnd(request);
             std::string sep = (request.find("\r\n\r\n") != std::string::npos) ? "\r\n\r\n" : "\n\n";
             std::string body = (he == std::string::npos) ? "" : request.substr(he + sep.size());
+
             std::string code = extractJsonString(body, "code");
             if (code.empty())
                 code = extractJsonString(body, "source");
@@ -237,12 +240,12 @@ void handleClient(int clientFd) {
 
             std::string mode = extractJsonString(body, "mode");
             if (mode.empty())
-                mode = "vm";
-            mode = toLower(mode);
+                mode = "2";
 
             Transformer transformer;
             std::string protectedCode = transformer.protect(code, optsFromMode(mode));
-            response = std::string("{\"success\":true,\"mode\":\"") + jsonEscape(mode) +
+
+            response = std::string("{\"success\":true,\"mode\":\"") + jsonEscape(toLower(mode)) +
                        "\",\"code\":\"" + jsonEscape(protectedCode) + "\"}";
             contentType = "application/json";
         } else if (method == "OPTIONS" || method == "options") {
@@ -276,19 +279,28 @@ int main(int argc, char* argv[]) {
     if (argc >= 2) {
         std::string inputFile = argv[1];
         std::string outputFile = (argc >= 3) ? argv[2] : "output/protected.lua";
-        std::string mode = (argc >= 4) ? toLower(argv[3]) : "vm";
+        std::string mode = (argc >= 4) ? argv[3] : "2";
+
         std::ifstream in(inputFile);
-        if (!in.is_open())
+        if (!in.is_open()) {
+            std::cerr << "cannot open " << inputFile << std::endl;
             return 1;
+        }
         std::string source((std::istreambuf_iterator<char>(in)),
                            std::istreambuf_iterator<char>());
-        Transformer transformer;
-        std::ofstream out(outputFile);
-        out << transformer.protect(source, optsFromMode(mode));
+        try {
+            Transformer transformer;
+            std::ofstream out(outputFile);
+            out << transformer.protect(source, optsFromMode(mode));
+            std::cout << "ok mode=" << toLower(mode) << " -> " << outputFile << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << e.what() << std::endl;
+            return 1;
+        }
         return 0;
     }
 
-    std::cout << "FLY protect on :" << PORT << " (modes: vm|max|hybrid)" << std::endl;
+    std::cout << "FLY protect on :" << PORT << " modes: 1 | 2 | hybrid" << std::endl;
     int serverFd = socket(AF_INET, SOCK_STREAM, 0);
     if (serverFd < 0)
         return 1;
