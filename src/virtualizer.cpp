@@ -4,7 +4,6 @@
 #include <vector>
 #include <cstdint>
 #include <cstring>
-#include <random>
 
 namespace Protect {
 
@@ -19,13 +18,16 @@ static std::vector<uint8_t> xorBlob(const std::vector<uint8_t>& in, uint32_t see
     return out;
 }
 
+std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob) const {
+    return emitVirtualizedScript(encryptedBlob, Options{});
+}
+
 std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
                                                const Options& options) const {
     const auto& raw = encryptedBlob.data();
     if (raw.empty())
         return "error(\"empty blob\")\n";
 
-    // Re-xor with emit seed so runtime dec matches (blob may already be obfuscator-encoded)
     uint32_t s = seed_;
     std::vector<uint8_t> bytes = xorBlob(raw, s);
     uint32_t sum = 0;
@@ -35,12 +37,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     size_t mid = bytes.size() / 2;
     int heads = (options.heads <= 1) ? 1 : 2;
     bool watchdog = options.watchdog;
-
-    // Opcode numbers must match your Translator / isa map for this seed.
-    // These are placeholders resolved via the same makeOpcodeMap(seed) scheme
-    // if you emit n(Op::*) — for a fixed fast path we embed a decode of the
-    // private map. Here we emit a self-contained interpreter that reads the
-    // LPR2 blob format from encodeCustom (magic, seed, protos...).
 
     std::ostringstream o;
 
@@ -74,7 +70,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "o[i]=bit32.band(bit32.bxor(B[i],k),255)\n";
     o << "end L,R,B=nil,nil,nil return o end\n";
 
-    // ---- Blob reader + proto build (LPR2) ----
     o << "local function build(buf)\n";
     o << "local p=1\n";
     o << "local function u8() local v=buf[p] p+=1 return v end\n";
@@ -94,7 +89,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "elseif t==1 then K[i]=(u8()~=0)\n";
     o << "elseif t==2 then\n";
     o << "local b0,b1,b2,b3,b4,b5,b6,b7=u8(),u8(),u8(),u8(),u8(),u8(),u8(),u8()\n";
-    // reconstruct double from LE bytes via string.pack if available else approximate number path
     o << "local ok,num=pcall(function()\n";
     o << "return string.unpack(\"<d\", string.char(b0,b1,b2,b3,b4,b5,b6,b7))\n";
     o << "end)\n";
@@ -112,18 +106,19 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "end\n";
     o << "return P,mainId,bseed end\n";
 
-    // ---- Opcode map from seed (must match Translator::makeOpcodeMap) ----
-    // We embed the same scramble: shuffle 0..255 with mt19937(seed)
     o << "local function makeMap(seed)\n";
     o << "local m={}\n";
     o << "for i=0,255 do m[i]=i end\n";
     o << "local s=seed\n";
     o << "local function rnd()\n";
-    o << "s=bit32.bxor(s,bit32.lshift(s,13)) s=bit32.bxor(s,bit32.rshift(s,17)) s=bit32.bxor(s,bit32.lshift(s,5)) return s end\n";
+    o << "s=bit32.bxor(s,bit32.lshift(s,13))\n";
+    o << "s=bit32.bxor(s,bit32.rshift(s,17))\n";
+    o << "s=bit32.bxor(s,bit32.lshift(s,5))\n";
+    o << "return s end\n";
     o << "for i=255,1,-1 do local j=bit32.band(rnd(),0x7FFFFFFF)%(i+1) m[i],m[j]=m[j],m[i] end\n";
     o << "local inv={} for i=0,255 do inv[m[i]]=i end return inv end\n";
 
-    // Private Op enum order MUST match isa.hpp Op enum used by Translator
+    // Op order must match isa.hpp / Translator:
     // 0 NOP 1 MOVE 2 LOADNIL 3 LOADBOOL 4 LOADK 5 GETGLOBAL 6 SETGLOBAL
     // 7 GETUPVAL 8 SETUPVAL 9 GETTABLE 10 SETTABLE 11 GETTABLEKS 12 SETTABLEKS
     // 13 GETTABLEN 14 SETTABLEN 15 NEWTABLE 16 SETLIST 17 ADD 18 SUB 19 MUL
@@ -180,7 +175,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "if bit32.band(word,0x80000000)~=0 then\n";
     o << "local idx=bit32.band(word,0x7FFFFFFF)+1 return proto.k[idx]\n";
     o << "end\n";
-    // signed immediate for LOADN-style
     o << "if word>=0x80000000 then return word-0x100000000 end\n";
     o << "return word end\n";
 
@@ -209,11 +203,10 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "local D=bit32.band(bit32.rshift(inst,16),65535) if D>=32768 then D-=65536 end\n";
     o << "local Ra,Rb,Rc=A+1,B+1,C+1\n";
 
-    // FAST PATH — no pcall on these
-    o << "if op==1 then setR(Ra,reg[Rb])\n"; // MOVE
-    o << "elseif op==2 then setR(Ra,nil)\n"; // LOADNIL
-    o << "elseif op==3 then setR(Ra,B~=0)\n"; // LOADBOOL
-    o << "elseif op==4 then pc+=1 setR(Ra,kn(proto,code[pc]))\n"; // LOADK
+    o << "if op==1 then setR(Ra,reg[Rb])\n";
+    o << "elseif op==2 then setR(Ra,nil)\n";
+    o << "elseif op==3 then setR(Ra,B~=0)\n";
+    o << "elseif op==4 then pc+=1 setR(Ra,kn(proto,code[pc]))\n";
     o << "elseif op==17 then setR(Ra,(reg[Rb] or 0)+(reg[Rc] or 0))\n";
     o << "elseif op==18 then setR(Ra,(reg[Rb] or 0)-(reg[Rc] or 0))\n";
     o << "elseif op==19 then setR(Ra,(reg[Rb] or 0)*(reg[Rc] or 0))\n";
@@ -245,25 +238,21 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "elseif op==7 then setR(Ra,uvget(B+1))\n";
     o << "elseif op==8 then uvset(B+1,reg[Ra])\n";
 
-    // NAMECALL
     o << "elseif op==44 then\n";
     o << "pc+=1 local key=kn(proto,code[pc]) local obj=reg[Rb]\n";
     o << "setR(Ra+1,obj) local meth=obj and obj[key] or nil setR(Ra,meth)\n";
     o << "if top<Ra+1 then top=Ra+1 end\n";
 
-    // SETLIST
     o << "elseif op==16 then\n";
     o << "pc+=1 local start=code[pc] or 1 if type(start)~=\"number\" or start<1 then start=1 end\n";
     o << "local t=reg[Ra] local cnt=B if cnt==0 then cnt=math.max(0,top-Ra) end\n";
     o << "if type(t)==\"table\" then for i=1,cnt do rawset(t,start+i-1,reg[Ra+i]) end end\n";
 
-    // VARARG
     o << "elseif op==43 then\n";
     o << "if B==0 then for i=1,#varargs do setR(Ra+i-1,varargs[i]) end top=Ra+#varargs-1 if top<0 then top=0 end\n";
     o << "elseif B==1 then top=math.max(0,Ra-1)\n";
     o << "else local n=B-1 for i=1,n do setR(Ra+i-1,varargs[i]) end top=Ra+n-1 end\n";
 
-    // CALL — only place we pcall
     o << "elseif op==36 then\n";
     o << "local narg if B==0 then narg=math.max(0,top-Ra) if narg>24 then narg=24 end else narg=B-1 end\n";
     o << "local fn=reg[Ra] local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end\n";
@@ -282,13 +271,11 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "elseif C==1 then top=math.max(0,Ra-1)\n";
     o << "else for i=1,C-1 do setR(Ra+i-1,ret[i]) end top=Ra+(C-1)-1 end\n";
 
-    // RETURN
     o << "elseif op==37 then\n";
     o << "local nret=if B==0 then math.max(0,top-Ra+1) else (B-1)\n";
     o << "local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end\n";
     o << "return table.unpack(out,1,math.max(nret,0))\n";
 
-    // FORPREP / FORLOOP
     o << "elseif op==38 then\n";
     o << "local limit=tonumber(reg[Ra]) or 0 local step=tonumber(reg[Ra+1]) or 1 local idx=tonumber(reg[Ra+2]) or 0\n";
     o << "if (step>=0 and idx>limit) or (step<0 and idx<limit) then pc+=D else setR(Ra+3,idx) end\n";
@@ -297,14 +284,12 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "local idx=(tonumber(reg[Ra+2]) or 0)+step setR(Ra+2,idx)\n";
     o << "if (step>=0 and idx<=limit) or (step<0 and idx>=limit) then setR(Ra+3,idx) pc+=D end\n";
 
-    // FORGLOOP
     o << "elseif op==40 then\n";
     o << "local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2]\n";
     o << "if type(it)==\"function\" then\n";
     o << "local ok,res=pcall(function() return table.pack(it(state,ctl)) end)\n";
     o << "if ok and res[1]~=nil then setR(Ra+2,res[1]) for i=1,res.n do setR(Ra+2+i,res[i]) end pc+=D end end\n";
 
-    // CLOSURE + CAPTURE
     o << "elseif op==41 then\n";
     o << "pc+=1 local child=code[pc] or 0 local cid=proto.ch[child+1] or 0\n";
     o << "local parentReg,parentUps=reg,ups\n";
@@ -323,14 +308,13 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "ui+=1 if ui>128 then break end end\n";
     o << "setR(Ra,function(...) return exec(cid,{...},stored) end)\n";
 
-    o << "elseif op==42 then end\n"; // CAPTURE alone no-op
-    o << "elseif op==0 then end\n"; // NOP
+    o << "elseif op==42 then end\n";
+    o << "elseif op==0 then end\n";
     o << "else error(\"bad op \"..tostring(op)..\" pc=\"..pc) end\n";
     o << "pc+=1 end end\n";
 
     o << "return exec(mainId) end\n";
 
-    // ---- bootstrap ----
     if (heads == 2) {
         o << "local function __outer()\n";
         o << "local buf=dec()\n";
