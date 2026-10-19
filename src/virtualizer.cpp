@@ -1,9 +1,10 @@
 #include "virtualizer.hpp"
+#include "isa.hpp"
 
 #include <sstream>
 #include <vector>
 #include <cstdint>
-#include <cstring>
+#include <array>
 
 namespace Protect {
 
@@ -37,6 +38,15 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     size_t mid = bytes.size() / 2;
     int heads = (options.heads <= 1) ? 1 : 2;
     bool watchdog = options.watchdog;
+
+    // map[logical Op] = raw byte  → inv[raw] = logical
+    auto map = makeOpcodeMap(s);
+    std::array<int, 256> inv{};
+    for (int i = 0; i < 256; ++i)
+        inv[i] = -1;
+    for (size_t logical = 0; logical < map.size(); ++logical) {
+        inv[map[logical]] = int(logical);
+    }
 
     std::ostringstream o;
 
@@ -106,28 +116,25 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "end\n";
     o << "return P,mainId,bseed end\n";
 
-    o << "local function makeMap(seed)\n";
-    o << "local m={}\n";
-    o << "for i=0,255 do m[i]=i end\n";
-    o << "local s=seed\n";
-    o << "local function rnd()\n";
-    o << "s=bit32.bxor(s,bit32.lshift(s,13))\n";
-    o << "s=bit32.bxor(s,bit32.rshift(s,17))\n";
-    o << "s=bit32.bxor(s,bit32.lshift(s,5))\n";
-    o << "return s end\n";
-    o << "for i=255,1,-1 do local j=bit32.band(rnd(),0x7FFFFFFF)%(i+1) m[i],m[j]=m[j],m[i] end\n";
-    o << "local inv={} for i=0,255 do inv[m[i]]=i end return inv end\n";
+    // inv[0..255] from C++ makeOpcodeMap(seed_) — 0-based logical Op
+    o << "local inv={";
+    for (int i = 0; i < 256; ++i) {
+        if (i) o << ",";
+        if ((i % 16) == 0) o << "\n";
+        o << inv[i];
+    }
+    o << "}\n";
 
-    // Op order must match isa.hpp / Translator:
-    // 0 NOP 1 MOVE 2 LOADNIL 3 LOADBOOL 4 LOADK 5 GETGLOBAL 6 SETGLOBAL
-    // 7 GETUPVAL 8 SETUPVAL 9 GETTABLE 10 SETTABLE 11 GETTABLEKS 12 SETTABLEKS
-    // 13 GETTABLEN 14 SETTABLEN 15 NEWTABLE 16 SETLIST 17 ADD 18 SUB 19 MUL
-    // 20 DIV 21 MOD 22 POW 23 IDIV 24 UNM 25 NOT 26 LEN 27 CONCAT 28 JMP
-    // 29 JMPIF 30 JMPIFNOT 31 EQ 32 LT 33 LE 34 AND 35 OR 36 CALL 37 RETURN
-    // 38 FORPREP 39 FORLOOP 40 FORGLOOP 41 CLOSURE 42 CAPTURE 43 VARARG 44 NAMECALL
+    // ---- run() : Op enum matches isa.hpp ----
+    // 0 MOVE 1 LOADK 2 LOADNIL 3 LOADBOOL 4 ADD 5 SUB 6 MUL 7 DIV 8 MOD 9 POW
+    // 10 UNM 11 NOT 12 LEN 13 CONCAT 14 JMP 15 JMPIF 16 JMPIFNOT 17 EQ 18 LT 19 LE
+    // 20 GETGLOBAL 21 SETGLOBAL 22 GETTABLE 23 SETTABLE 24 GETTABLEKS 25 SETTABLEKS
+    // 26 NEWTABLE 27 CALL 28 RETURN 29 FORLOOP 30 FORPREP 31 CLOSURE 32 VARARG
+    // 33 NAMECALL 34 GETUPVAL 35 SETUPVAL 36 SETLIST 37 FORGLOOP 38 CAPTURE
+    // 39 AND 40 OR 41 GETTABLEN 42 SETTABLEN 43 IDIV 44 JUMPXEQ
 
     o << "local function run(P, mainId, inv, seed)\n";
-    o << "local CAP=inv[42] or 42\n";
+    o << "local CAP=38\n"; // Op::CAPTURE
     o << "local G={}\n";
     o << "G.print=print G.warn=warn G.error=error G.pcall=pcall G.xpcall=xpcall\n";
     o << "G.typeof=typeof G.type=type G.tostring=tostring G.tonumber=tonumber\n";
@@ -175,7 +182,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "if bit32.band(word,0x80000000)~=0 then\n";
     o << "local idx=bit32.band(word,0x7FFFFFFF)+1 return proto.k[idx]\n";
     o << "end\n";
-    o << "if word>=0x80000000 then return word-0x100000000 end\n";
     o << "return word end\n";
 
     o << "local function exec(pid, args, ups)\n";
@@ -196,108 +202,105 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "steps+=1 if steps>lim then error(\"watchdog\") end\n";
     o << "local inst=code[pc]\n";
     o << "local rawop=bit32.band(inst,255)\n";
-    o << "local op=inv[rawop] or rawop\n";
+    o << "local op=inv[rawop]\n";
+    o << "if op==nil or op<0 then error(\"bad raw op \"..tostring(rawop)..\" pc=\"..pc) end\n";
     o << "local A=bit32.band(bit32.rshift(inst,8),255)\n";
     o << "local B=bit32.band(bit32.rshift(inst,16),255)\n";
     o << "local C=bit32.band(bit32.rshift(inst,24),255)\n";
     o << "local D=bit32.band(bit32.rshift(inst,16),65535) if D>=32768 then D-=65536 end\n";
     o << "local Ra,Rb,Rc=A+1,B+1,C+1\n";
 
-    o << "if op==1 then setR(Ra,reg[Rb])\n";
-    o << "elseif op==2 then setR(Ra,nil)\n";
-    o << "elseif op==3 then setR(Ra,B~=0)\n";
-    o << "elseif op==4 then pc+=1 setR(Ra,kn(proto,code[pc]))\n";
-    o << "elseif op==17 then setR(Ra,(reg[Rb] or 0)+(reg[Rc] or 0))\n";
-    o << "elseif op==18 then setR(Ra,(reg[Rb] or 0)-(reg[Rc] or 0))\n";
-    o << "elseif op==19 then setR(Ra,(reg[Rb] or 0)*(reg[Rc] or 0))\n";
-    o << "elseif op==20 then setR(Ra,(reg[Rb] or 0)/(reg[Rc] or 1))\n";
-    o << "elseif op==21 then setR(Ra,(reg[Rb] or 0)%(reg[Rc] or 1))\n";
-    o << "elseif op==22 then setR(Ra,(reg[Rb] or 0)^(reg[Rc] or 1))\n";
-    o << "elseif op==23 then setR(Ra,math.floor((reg[Rb] or 0)/(reg[Rc] or 1)))\n";
-    o << "elseif op==24 then setR(Ra,-(reg[Rb] or 0))\n";
-    o << "elseif op==25 then setR(Ra,not reg[Rb])\n";
-    o << "elseif op==26 then local t=reg[Rb] setR(Ra,type(t)==\"table\" and #t or (type(t)==\"string\" and #t or 0))\n";
-    o << "elseif op==27 then local t=\"\" for i=Rb,Rc do t..=tostring(reg[i] or \"\") end setR(Ra,t)\n";
-    o << "elseif op==34 then if reg[Rb] then setR(Ra,reg[Rc]) else setR(Ra,reg[Rb]) end\n";
-    o << "elseif op==35 then if reg[Rb] then setR(Ra,reg[Rb]) else setR(Ra,reg[Rc]) end\n";
-    o << "elseif op==28 then pc+=D\n";
-    o << "elseif op==29 then if reg[Ra] then pc+=D end\n";
-    o << "elseif op==30 then if not reg[Ra] then pc+=D end\n";
-    o << "elseif op==31 then local ok=(reg[Ra]==reg[Rb]) if C~=0 then ok=not ok end if not ok then pc+=1 end\n";
-    o << "elseif op==32 then local ok=(reg[Ra] or 0)<(reg[Rb] or 0) if C~=0 then ok=not ok end if not ok then pc+=1 end\n";
-    o << "elseif op==33 then local ok=(reg[Ra] or 0)<=(reg[Rb] or 0) if C~=0 then ok=not ok end if not ok then pc+=1 end\n";
-    o << "elseif op==5 then pc+=1 setR(Ra,E[kn(proto,code[pc])])\n";
-    o << "elseif op==6 then pc+=1 E[kn(proto,code[pc])]=reg[Ra]\n";
-    o << "elseif op==9 then local t=reg[Rb] setR(Ra,t and t[reg[Rc]] or nil)\n";
-    o << "elseif op==10 then local t=reg[Rb] if t then t[reg[Rc]]=reg[Ra] end\n";
-    o << "elseif op==11 then pc+=1 local t=reg[Rb] local key=kn(proto,code[pc]) setR(Ra,t and t[key] or nil)\n";
-    o << "elseif op==12 then pc+=1 local t=reg[Rb] local key=kn(proto,code[pc]) if t then t[key]=reg[Ra] end\n";
-    o << "elseif op==13 then local t=reg[Rb] setR(Ra,t and t[C+1] or nil)\n";
-    o << "elseif op==14 then local t=reg[Rb] if t then t[C+1]=reg[Ra] end\n";
-    o << "elseif op==15 then setR(Ra,{})\n";
-    o << "elseif op==7 then setR(Ra,uvget(B+1))\n";
-    o << "elseif op==8 then uvset(B+1,reg[Ra])\n";
+    o << "if op==0 then setR(Ra,reg[Rb])\n";                          // MOVE
+    o << "elseif op==1 then pc+=1 setR(Ra,kn(proto,code[pc]))\n";     // LOADK
+    o << "elseif op==2 then setR(Ra,nil)\n";                         // LOADNIL
+    o << "elseif op==3 then setR(Ra,B~=0)\n";                        // LOADBOOL
+    o << "elseif op==4 then setR(Ra,(reg[Rb] or 0)+(reg[Rc] or 0))\n";
+    o << "elseif op==5 then setR(Ra,(reg[Rb] or 0)-(reg[Rc] or 0))\n";
+    o << "elseif op==6 then setR(Ra,(reg[Rb] or 0)*(reg[Rc] or 0))\n";
+    o << "elseif op==7 then setR(Ra,(reg[Rb] or 0)/(reg[Rc] or 1))\n";
+    o << "elseif op==8 then setR(Ra,(reg[Rb] or 0)%(reg[Rc] or 1))\n";
+    o << "elseif op==9 then setR(Ra,(reg[Rb] or 0)^(reg[Rc] or 1))\n";
+    o << "elseif op==10 then setR(Ra,-(reg[Rb] or 0))\n";
+    o << "elseif op==11 then setR(Ra,not reg[Rb])\n";
+    o << "elseif op==12 then local t=reg[Rb] setR(Ra,type(t)==\"table\" and #t or (type(t)==\"string\" and #t or 0))\n";
+    o << "elseif op==13 then local t=\"\" for i=Rb,Rc do t..=tostring(reg[i] or \"\") end setR(Ra,t)\n";
+    o << "elseif op==14 then pc+=D\n";
+    o << "elseif op==15 then if reg[Ra] then pc+=D end\n";
+    o << "elseif op==16 then if not reg[Ra] then pc+=D end\n";
+    o << "elseif op==17 then local ok=(reg[Ra]==reg[Rb]) if C~=0 then ok=not ok end if not ok then pc+=1 end\n";
+    o << "elseif op==18 then local ok=(reg[Ra] or 0)<(reg[Rb] or 0) if C~=0 then ok=not ok end if not ok then pc+=1 end\n";
+    o << "elseif op==19 then local ok=(reg[Ra] or 0)<=(reg[Rb] or 0) if C~=0 then ok=not ok end if not ok then pc+=1 end\n";
+    o << "elseif op==20 then pc+=1 setR(Ra,E[kn(proto,code[pc])])\n";
+    o << "elseif op==21 then pc+=1 E[kn(proto,code[pc])]=reg[Ra]\n";
+    o << "elseif op==22 then local t=reg[Rb] setR(Ra,t and t[reg[Rc]] or nil)\n";
+    o << "elseif op==23 then local t=reg[Rb] if t then t[reg[Rc]]=reg[Ra] end\n";
+    o << "elseif op==24 then pc+=1 local t=reg[Rb] local key=kn(proto,code[pc]) setR(Ra,t and t[key] or nil)\n";
+    o << "elseif op==25 then pc+=1 local t=reg[Rb] local key=kn(proto,code[pc]) if t then t[key]=reg[Ra] end\n";
+    o << "elseif op==26 then setR(Ra,{})\n";
+    o << "elseif op==41 then local t=reg[Rb] setR(Ra,t and t[C+1] or nil)\n";
+    o << "elseif op==42 then local t=reg[Rb] if t then t[C+1]=reg[Ra] end\n";
+    o << "elseif op==34 then setR(Ra,uvget(B+1))\n";
+    o << "elseif op==35 then uvset(B+1,reg[Ra])\n";
+    o << "elseif op==39 then if reg[Rb] then setR(Ra,reg[Rc]) else setR(Ra,reg[Rb]) end\n";
+    o << "elseif op==40 then if reg[Rb] then setR(Ra,reg[Rb]) else setR(Ra,reg[Rc]) end\n";
+    o << "elseif op==43 then setR(Ra,math.floor((reg[Rb] or 0)/(reg[Rc] or 1)))\n";
 
-    o << "elseif op==44 then\n";
+    o << "elseif op==33 then\n"; // NAMECALL
     o << "pc+=1 local key=kn(proto,code[pc]) local obj=reg[Rb]\n";
-    o << "setR(Ra+1,obj) local meth=obj and obj[key] or nil setR(Ra,meth)\n";
+    o << "setR(Ra+1,obj) setR(Ra,obj and obj[key] or nil)\n";
     o << "if top<Ra+1 then top=Ra+1 end\n";
 
-    o << "elseif op==16 then\n";
+    o << "elseif op==36 then\n"; // SETLIST
     o << "pc+=1 local start=code[pc] or 1 if type(start)~=\"number\" or start<1 then start=1 end\n";
     o << "local t=reg[Ra] local cnt=B if cnt==0 then cnt=math.max(0,top-Ra) end\n";
     o << "if type(t)==\"table\" then for i=1,cnt do rawset(t,start+i-1,reg[Ra+i]) end end\n";
 
-    o << "elseif op==43 then\n";
+    o << "elseif op==32 then\n"; // VARARG
     o << "if B==0 then for i=1,#varargs do setR(Ra+i-1,varargs[i]) end top=Ra+#varargs-1 if top<0 then top=0 end\n";
     o << "elseif B==1 then top=math.max(0,Ra-1)\n";
     o << "else local n=B-1 for i=1,n do setR(Ra+i-1,varargs[i]) end top=Ra+n-1 end\n";
 
-    o << "elseif op==36 then\n";
+    o << "elseif op==27 then\n"; // CALL
     o << "local narg if B==0 then narg=math.max(0,top-Ra) if narg>24 then narg=24 end else narg=B-1 end\n";
     o << "local fn=reg[Ra] local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end\n";
     o << "if type(fn)==\"function\" and narg>=1 and type(argv[1])==\"table\" then\n";
     o << "if CSNew and fn==CSNew then argv[1]=onlyKeypoints(argv[1],\"ColorSequenceKeypoint\")\n";
     o << "elseif NSNew and fn==NSNew then argv[1]=onlyKeypoints(argv[1],\"NumberSequenceKeypoint\") end end\n";
-    o << "if type(fn)~=\"function\" then\n";
-    o << "local a1,a2,a3=argv[1],argv[2],argv[3]\n";
-    o << "if type(a1)==\"number\" and type(a2)==\"number\" and type(a3)==\"number\" then\n";
-    o << "local x=a1 if x<a2 then x=a2 elseif x>a3 then x=a3 end fn=function() return x end narg=0\n";
-    o << "elseif type(a1)==\"number\" and narg<=1 then local x=math.floor(a1) fn=function() return x end narg=0\n";
-    o << "else error(\"bad call\") end end\n";
+    o << "if type(fn)~=\"function\" then error(\"bad call\") end\n";
     o << "local ok,ret=pcall(function() return table.pack(fn(table.unpack(argv,1,math.max(narg,0)))) end)\n";
     o << "if not ok then error(tostring(ret)) end\n";
     o << "if C==0 then for i=1,ret.n do setR(Ra+i-1,ret[i]) end top=Ra+math.max(ret.n,0)-1 if top<0 then top=0 end\n";
     o << "elseif C==1 then top=math.max(0,Ra-1)\n";
     o << "else for i=1,C-1 do setR(Ra+i-1,ret[i]) end top=Ra+(C-1)-1 end\n";
 
-    o << "elseif op==37 then\n";
+    o << "elseif op==28 then\n"; // RETURN
     o << "local nret=if B==0 then math.max(0,top-Ra+1) else (B-1)\n";
     o << "local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end\n";
     o << "return table.unpack(out,1,math.max(nret,0))\n";
 
-    o << "elseif op==38 then\n";
+    o << "elseif op==30 then\n"; // FORPREP
     o << "local limit=tonumber(reg[Ra]) or 0 local step=tonumber(reg[Ra+1]) or 1 local idx=tonumber(reg[Ra+2]) or 0\n";
     o << "if (step>=0 and idx>limit) or (step<0 and idx<limit) then pc+=D else setR(Ra+3,idx) end\n";
-    o << "elseif op==39 then\n";
+    o << "elseif op==29 then\n"; // FORLOOP
     o << "local limit=tonumber(reg[Ra]) or 0 local step=tonumber(reg[Ra+1]) or 1\n";
     o << "local idx=(tonumber(reg[Ra+2]) or 0)+step setR(Ra+2,idx)\n";
     o << "if (step>=0 and idx<=limit) or (step<0 and idx>=limit) then setR(Ra+3,idx) pc+=D end\n";
 
-    o << "elseif op==40 then\n";
+    o << "elseif op==37 then\n"; // FORGLOOP
     o << "local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2]\n";
     o << "if type(it)==\"function\" then\n";
     o << "local ok,res=pcall(function() return table.pack(it(state,ctl)) end)\n";
     o << "if ok and res[1]~=nil then setR(Ra+2,res[1]) for i=1,res.n do setR(Ra+2+i,res[i]) end pc+=D end end\n";
 
-    o << "elseif op==41 then\n";
+    o << "elseif op==31 then\n"; // CLOSURE
     o << "pc+=1 local child=code[pc] or 0 local cid=proto.ch[child+1] or 0\n";
     o << "local parentReg,parentUps=reg,ups\n";
     o << "if not parentReg.__boxes then parentReg.__boxes={} end local boxes=parentReg.__boxes\n";
     o << "local stored={} local ui=1\n";
     o << "while pc+1<=#code do\n";
     o << "local nextInst=code[pc+1] local rop=bit32.band(nextInst,255)\n";
-    o << "if (inv[rop] or rop)~=42 and rop~=CAP then break end\n";
+    o << "local lop=inv[rop]\n";
+    o << "if lop~=CAP then break end\n";
     o << "pc+=1\n";
     o << "local ca=bit32.band(bit32.rshift(nextInst,8),255)\n";
     o << "local cb=bit32.band(bit32.rshift(nextInst,16),255)\n";
@@ -308,8 +311,9 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "ui+=1 if ui>128 then break end end\n";
     o << "setR(Ra,function(...) return exec(cid,{...},stored) end)\n";
 
-    o << "elseif op==42 then end\n";
-    o << "elseif op==0 then end\n";
+    o << "elseif op==38 then end\n"; // CAPTURE no-op alone
+    o << "elseif op==44 then\n"; // JUMPXEQ — treat as EQ + skip helper
+    o << "local ok=(reg[Ra]==reg[Rb]) if C~=0 then ok=not ok end if not ok then pc+=1 end\n";
     o << "else error(\"bad op \"..tostring(op)..\" pc=\"..pc) end\n";
     o << "pc+=1 end end\n";
 
@@ -319,14 +323,11 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
         o << "local function __outer()\n";
         o << "local buf=dec()\n";
         o << "local P,mainId,bseed=build(buf)\n";
-        o << "local inv=makeMap(bseed)\n";
         o << "return run(P,mainId,inv,bseed)\n";
-        o << "end\n";
-        o << "return __outer()\n";
+        o << "end\nreturn __outer()\n";
     } else {
         o << "local buf=dec()\n";
         o << "local P,mainId,bseed=build(buf)\n";
-        o << "local inv=makeMap(bseed)\n";
         o << "return run(P,mainId,inv,bseed)\n";
     }
 
