@@ -55,6 +55,9 @@ enum class Op : uint8_t {
     COUNT
 };
 
+// FLY3 magic (little-endian 'FLY3')
+constexpr uint32_t FLY_MAGIC = 0x33594C46u;
+
 inline std::array<uint8_t, static_cast<size_t>(Op::COUNT)>
 makeOpcodeMap(uint32_t seed) {
     std::array<uint8_t, static_cast<size_t>(Op::COUNT)> map{};
@@ -65,6 +68,31 @@ makeOpcodeMap(uint32_t seed) {
     for (size_t i = 0; i < map.size(); ++i)
         map[i] = pool[i];
     return map;
+}
+
+// Per-seed instruction seal (not plain ABC exposure)
+inline uint32_t insnKey(uint32_t seed, uint32_t index) {
+    uint32_t k = seed ^ (index * 0x9E3779B9u);
+    k ^= (k << 13);
+    k ^= (k >> 17);
+    k ^= (k << 5);
+    return k;
+}
+
+inline uint32_t sealInsn(uint32_t insn, uint32_t seed, uint32_t index) {
+    uint32_t k = insnKey(seed, index);
+    insn ^= k;
+    // rotate left by 1..8 bits from seed
+    unsigned r = (seed % 7u) + 1u;
+    insn = (insn << r) | (insn >> (32u - r));
+    return insn;
+}
+
+inline uint32_t unsealInsn(uint32_t insn, uint32_t seed, uint32_t index) {
+    unsigned r = (seed % 7u) + 1u;
+    insn = (insn >> r) | (insn << (32u - r));
+    insn ^= insnKey(seed, index);
+    return insn;
 }
 
 inline uint32_t packABC(uint8_t op, uint8_t a, uint8_t b, uint8_t c) {
