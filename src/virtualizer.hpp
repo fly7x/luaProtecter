@@ -9,7 +9,7 @@ namespace Protect {
 class Virtualizer {
 public:
     struct Options {
-        int heads = 1;
+        int heads = 1;       // 1 = single VM, 2 = outer shell + same VM
         bool watchdog = true;
     };
 
