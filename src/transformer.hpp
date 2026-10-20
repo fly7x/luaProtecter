@@ -14,7 +14,9 @@ public:
         bool polymorphic = true;
         bool virtualize = true;
         bool wholeScriptEncrypt = false; // hybrid path
-        int vmHeads = 2;                 // 1 = single VM, 2 = outer+inner
+        int vmHeads = 1;                 // 1 = single, 2 = outer shell
+        bool strictEnv = true;
+        bool safeParse = true;
         uint64_t seed = 0;
     };
 
