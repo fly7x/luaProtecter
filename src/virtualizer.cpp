@@ -108,10 +108,12 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     const std::string vSum = hid(30), vSeed = hid(31), vIsk = hid(32);
 
     std::ostringstream o;
-    o << "--[[\n  ╔══════════════════════════════════════════╗\n"
+    o << "--[[\n"
+         "  ╔══════════════════════════════════════════╗\n"
          "  ║          FŁÝ  ·  FLYX  Protection         ║\n"
          "  ║   Fast-VM  ·  FLY3  ·  safe-parse        ║\n"
-         "  ╚══════════════════════════════════════════╝\n]]\n";
+         "  ╚══════════════════════════════════════════╝\n"
+         "]]\n";
 
     auto emitArr = [&](const std::string& name, size_t off, size_t len) {
         o << "local " << name << "={";
@@ -138,7 +140,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "local " << vSum << "=" << sum << " local " << vSeed << "=" << s
       << " local " << vIsk << "=" << invSeal << "\n";
 
-    // --- BOOT with safe-parse caps ---
+    // BOOT
     o << "local function " << nBoot << "()\n";
     o << "local e={} local n=0\n";
     o << "for i=1,#" << A << " do n+=1 e[n]=" << A << "[i] end\n";
@@ -185,9 +187,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "local P={}\n";
     o << "for pi=1,nproto do\n";
     o << "local ms=u8() local np=u8() local nu=u8() local iv=u8() if iv~=0 then iv=1 end\n";
-    if (safeParse) {
-        o << "if ms>250 or np>200 or nu>128 then error(\"x\") end\n";
-    }
+    if (safeParse) o << "if ms>250 or np>200 or nu>128 then error(\"x\") end\n";
     o << "local ncode=u32()\n";
     if (safeParse) o << "if ncode<1 or ncode>250000 then error(\"x\") end\n";
     o << "local code={}\n";
@@ -235,7 +235,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "return P,mainId,inv\n";
     o << "end\n";
 
-    // --- RUN: strict env + operand checks ---
+    // RUN
     o << "local function " << nGo << "(P,mainId,inv)\n";
     o << "local CAP=38\n";
     o << "local " << nG << "={}\n";
@@ -268,7 +268,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "pcall(function() G.Debris=game:GetService(\"Debris\") end)\n";
 
     if (strictEnv) {
-        // Fixed env only — no _G / RealG fallthrough (Claude high priority)
         o << "local " << nE << "=setmetatable({},{__index=function(_,k) return rawget(G,k) end,"
              "__newindex=function(_,k,v) rawset(G,k,v) end})\n";
     } else {
