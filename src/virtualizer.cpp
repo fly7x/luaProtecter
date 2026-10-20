@@ -44,7 +44,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
                                                const Options& options) const {
     const auto& rawIn = encryptedBlob.data();
     if (rawIn.empty())
-        return "error(\"e\")\n";
+        return "error(\"x\")\n";
 
     std::vector<uint8_t> raw = rawIn;
     if (raw.size() >= 16) {
@@ -83,6 +83,16 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     for (size_t logical = 0; logical < map.size(); ++logical)
         invtbl[map[logical]] = int(logical);
 
+    // Seal inv for emission: store inv[i] xor sealKey (offset so -1 stays distinct)
+    const uint32_t invSeal = mix32(s ^ 0xD00DFEED);
+    std::array<int, 256> invEnc{};
+    for (int i = 0; i < 256; ++i) {
+        int v = invtbl[i];
+        // encode as uint16-ish: (v + 1) so -1 -> 0, then xor
+        uint32_t u = uint32_t(v + 1);
+        invEnc[i] = int(u ^ (invSeal + uint32_t(i) * 17u));
+    }
+
     auto hid = [&](uint32_t tag) {
         uint32_t h = mix32(s ^ tag ^ 0x811C9DC5u);
         char buf[16];
@@ -91,15 +101,14 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     };
     const std::string A = hid(1), B = hid(2), C = hid(3);
     const std::string nD = hid(5), nBld = hid(6), nRun = hid(7), nX = hid(8);
-    const std::string nK = hid(9), nE = hid(10), nG = hid(11);
+    const std::string nK = hid(9), nE = hid(10), nG = hid(11), nOpen = hid(12);
 
     std::ostringstream o;
 
-    // YOUR banner back
     o << "--[[\n";
     o << "  ╔══════════════════════════════════════════╗\n";
     o << "  ║          FŁÝ  ·  FLYX  Protection         ║\n";
-    o << "  ║   Fast-VM  ·  FLY3  ·  private ISA       ║\n";
+    o << "  ║   Fast-VM  ·  FLY3  ·  sealed pool       ║\n";
     o << "  ╚══════════════════════════════════════════╝\n";
     o << "]]\n";
 
@@ -123,6 +132,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "o[i]=bit32.band(bit32.bxor(t[i],k),255)\n";
     o << "end " << A << "," << B << "," << C << ",t=nil,nil,nil,nil return o end\n";
 
+    // build: strings stay as sealed byte tables {__s=true, b={...}, salt=...} not plaintext
     o << "local function " << nBld << "(buf)\n";
     o << "local p=1\n";
     o << "local function u8() local v=buf[p] p+=1 return v end\n";
@@ -153,31 +163,37 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "local ok,num=pcall(function() return string.unpack(\"<d\",string.char(b0,b1,b2,b3,b4,b5,b6,b7)) end)\n";
     o << "K[i]=ok and num or 0\n";
     o << "elseif ty==3 then\n";
-    o << "local len=u32() local chars={}\n";
-    o << "for j=1,len do\n";
-    o << "local ch=u8()\n";
-    o << "local k1=bit32.band(bseed+(j-1)*13,255)\n";
-    o << "local k2=bit32.band(bit32.rshift(bseed,8)+(j-1)*37+91,255)\n";
-    o << "chars[j]=string.char(bit32.band(bit32.bxor(ch,k1,k2),255))\n";
-    o << "end K[i]=table.concat(chars)\n";
+    o << "local len=u32() local bb={}\n";
+    o << "for j=1,len do bb[j]=u8() end\n";
+    // keep sealed — do NOT decrypt here
+    o << "K[i]={__s=1,b=bb,i=i}\n";
     o << "else K[i]=nil end end\n";
     o << "local nc=u32() local ch={}\n";
     o << "for i=1,nc do ch[i]=u32() end\n";
     o << "local csum=0 for i=1,#code do csum=bit32.bxor(csum,code[i]) end\n";
-    o << "P[pi]={a=nparam,c=code,k=K,ch=ch,va=isva~=0,ms=maxstack,cs=csum}\n";
+    o << "P[pi]={a=nparam,c=code,k=K,ch=ch,va=isva~=0,ms=maxstack,cs=csum,bs=bseed}\n";
     o << "end\n";
     o << "return P,mainId,bseed end\n";
 
-    o << "local inv={";
+    // sealed inv table
+    o << "local _ie={";
     for (int i = 0; i < 256; ++i) {
         if (i) o << ",";
         if ((i % 16) == 0) o << "\n";
-        o << invtbl[i];
+        o << invEnc[i];
     }
     o << "}\n";
+    o << "local _isk=" << invSeal << "\n";
 
-    o << "local function " << nRun << "(P,mainId,inv,seed)\n";
+    o << "local function " << nRun << "(P,mainId,_ie,_isk,seed)\n";
+    o << "local inv={}\n";
+    o << "for i=0,255 do\n";
+    o << "local u=bit32.bxor(_ie[i+1],_isk+i*17)\n";
+    o << "inv[i]=u-1\n"; // -1 if was sealed 0
+    o << "end\n";
+    o << "_ie,_isk=nil,nil\n";
     o << "local CAP=38\n";
+
     o << "local " << nG << "={}\n";
     o << nG << ".print=print " << nG << ".warn=warn " << nG << ".error=error "
       << nG << ".pcall=pcall " << nG << ".xpcall=xpcall\n";
@@ -231,9 +247,27 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "for i=1,64 do local v=rawget(t,i) if v==nil then break end if typeof(v)==kind then out[#out+1]=v end end\n";
     o << "return #out>0 and out or t end\n";
 
+    // open sealed string on demand (matches translator dual-key)
+    o << "local function " << nOpen << "(cell,bseed)\n";
+    o << "if type(cell)~=\"table\" or cell.__s~=1 then return cell end\n";
+    o << "if cell.__c then return cell.__c end\n";
+    o << "local bb=cell.b local chars={}\n";
+    o << "for j=1,#bb do\n";
+    o << "local ch=bb[j]\n";
+    o << "local k1=bit32.band(bseed+(j-1)*13,255)\n";
+    o << "local k2=bit32.band(bit32.rshift(bseed,8)+(j-1)*37+91,255)\n";
+    o << "chars[j]=string.char(bit32.band(bit32.bxor(ch,k1,k2),255))\n";
+    o << "end\n";
+    o << "cell.__c=table.concat(chars)\n";
+    o << "cell.b=nil\n";
+    o << "return cell.__c\n";
+    o << "end\n";
+
     o << "local function " << nK << "(proto,word)\n";
     o << "if bit32.band(word,0x80000000)~=0 then\n";
-    o << "return proto.k[bit32.band(word,0x7FFFFFFF)+1]\n";
+    o << "local idx=bit32.band(word,0x7FFFFFFF)+1\n";
+    o << "local v=proto.k[idx]\n";
+    o << "return " << nOpen << "(v,proto.bs or 0)\n";
     o << "end return word end\n";
 
     o << "local function " << nX << "(pid,args,ups)\n";
@@ -360,12 +394,12 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
         o << "return (function()\n";
         o << "local buf=" << nD << "()\n";
         o << "local P,mainId,bseed=" << nBld << "(buf)\n";
-        o << "return " << nRun << "(P,mainId,inv,bseed)\n";
+        o << "return " << nRun << "(P,mainId,_ie,_isk,bseed)\n";
         o << "end)()\n";
     } else {
         o << "local buf=" << nD << "()\n";
         o << "local P,mainId,bseed=" << nBld << "(buf)\n";
-        o << "return " << nRun << "(P,mainId,inv,bseed)\n";
+        o << "return " << nRun << "(P,mainId,_ie,_isk,bseed)\n";
     }
 
     return o.str();
