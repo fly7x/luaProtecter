@@ -64,16 +64,28 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     }
 
     uint32_t s = seed_;
-    std::vector<uint8_t> bytes = raw;
-    uint32_t sum = 0;
-    for (size_t i = 0; i < bytes.size(); ++i) {
-        uint8_t k = uint8_t((s + uint32_t(i) * 131u + 17u) & 0xFFu);
-        bytes[i] = uint8_t(bytes[i] ^ k);
-        sum += bytes[i];
-    }
+    // Per-chunk transport keys (harder than one global XOR)
+    uint32_t kA = mix32(s ^ 0x11111111u);
+    uint32_t kB = mix32(s ^ 0x22222222u);
+    uint32_t kC = mix32(s ^ 0x33333333u);
 
+    std::vector<uint8_t> bytes = raw;
     size_t n = bytes.size();
     size_t n1 = n / 3, n2 = n / 3, n3 = n - n1 - n2;
+
+    auto xchunk = [](std::vector<uint8_t>& v, size_t off, size_t len, uint32_t key) {
+        for (size_t i = 0; i < len; ++i) {
+            uint8_t k = uint8_t((key + uint32_t(i) * 131u + 17u) & 0xFFu);
+            v[off + i] = uint8_t(v[off + i] ^ k);
+        }
+    };
+    xchunk(bytes, 0, n1, kA);
+    xchunk(bytes, n1, n2, kB);
+    xchunk(bytes, n1 + n2, n3, kC);
+
+    uint32_t sum = 0;
+    for (uint8_t b : bytes) sum += b;
+
     int heads = (options.heads <= 1) ? 1 : 2;
     bool watchdog = options.watchdog;
 
@@ -83,15 +95,17 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     for (size_t logical = 0; logical < map.size(); ++logical)
         invtbl[map[logical]] = int(logical);
 
-    // Seal inv for emission: store inv[i] xor sealKey (offset so -1 stays distinct)
     const uint32_t invSeal = mix32(s ^ 0xD00DFEED);
     std::array<int, 256> invEnc{};
     for (int i = 0; i < 256; ++i) {
-        int v = invtbl[i];
-        // encode as uint16-ish: (v + 1) so -1 -> 0, then xor
-        uint32_t u = uint32_t(v + 1);
+        uint32_t u = uint32_t(invtbl[i] + 1);
         invEnc[i] = int(u ^ (invSeal + uint32_t(i) * 17u));
     }
+
+    // Magic mask so file doesn't show a single obvious constant compare target as clearly
+    const uint32_t magicMask = mix32(s ^ 0xBADC0FFEu);
+    const uint32_t magicEnc = FLY_MAGIC ^ magicMask;
+    const uint32_t magicEncOld = 0x3252504Cu ^ magicMask;
 
     auto hid = [&](uint32_t tag) {
         uint32_t h = mix32(s ^ tag ^ 0x811C9DC5u);
@@ -100,7 +114,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
         return std::string(buf);
     };
     const std::string A = hid(1), B = hid(2), C = hid(3);
-    const std::string nD = hid(5), nBld = hid(6), nRun = hid(7), nX = hid(8);
+    const std::string nBoot = hid(5), nRun = hid(7), nX = hid(8);
     const std::string nK = hid(9), nE = hid(10), nG = hid(11), nOpen = hid(12);
 
     std::ostringstream o;
@@ -108,7 +122,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "--[[\n";
     o << "  ╔══════════════════════════════════════════╗\n";
     o << "  ║          FŁÝ  ·  FLYX  Protection         ║\n";
-    o << "  ║   Fast-VM  ·  FLY3  ·  sealed pool       ║\n";
+    o << "  ║   Fast-VM  ·  FLY3  ·  multi-seal        ║\n";
     o << "  ╚══════════════════════════════════════════╝\n";
     o << "]]\n";
 
@@ -120,26 +134,33 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     for (size_t i = 0; i < n3; ++i) { if (i) o << ","; if (i && (i % 16) == 0) o << "\n"; o << int(bytes[n1 + n2 + i]); }
     o << "}\n";
 
-    o << "local function " << nD << "()\n";
-    o << "local t={} local n=0\n";
-    o << "for i=1,#" << A << " do n+=1 t[n]=" << A << "[i] end\n";
-    o << "for i=1,#" << B << " do n+=1 t[n]=" << B << "[i] end\n";
-    o << "for i=1,#" << C << " do n+=1 t[n]=" << C << "[i] end\n";
-    o << "do local s=0 for i=1,#t do s+=t[i] end if s~=" << sum << " then error(\"x\") end end\n";
-    o << "local seed=" << s << "\n";
-    o << "local o={} for i=1,#t do\n";
-    o << "local k=bit32.band(seed+(i-1)*131+17,255)\n";
-    o << "o[i]=bit32.band(bit32.bxor(t[i],k),255)\n";
-    o << "end " << A << "," << B << "," << C << ",t=nil,nil,nil,nil return o end\n";
+    o << "local _ie={";
+    for (int i = 0; i < 256; ++i) {
+        if (i) o << ",";
+        if ((i % 16) == 0) o << "\n";
+        o << invEnc[i];
+    }
+    o << "}\n";
+    o << "local _isk=" << invSeal << "\n";
+    o << "local _ka=" << kA << " local _kb=" << kB << " local _kc=" << kC << "\n";
+    o << "local _mm=" << magicMask << " local _me=" << magicEnc << " local _me2=" << magicEncOld << "\n";
+    o << "local _sum=" << sum << " local _seed=" << s << "\n";
 
-    // build: strings stay as sealed byte tables {__s=true, b={...}, salt=...} not plaintext
-    o << "local function " << nBld << "(buf)\n";
-    o << "local p=1\n";
-    o << "local function u8() local v=buf[p] p+=1 return v end\n";
-    o << "local function u32() local a=u8() local b=u8() local c=u8() local d=u8()\n";
-    o << "return a+b*256+c*65536+d*16777216 end\n";
+    // ONE boot: unseal chunks + parse protos (folded pipeline)
+    o << "local function " << nBoot << "()\n";
+    o << "local t={} local n=0\n";
+    o << "for i=1,#" << A << " do local k=bit32.band(_ka+(i-1)*131+17,255) n+=1 t[n]=bit32.band(bit32.bxor(" << A << "[i],k),255) end\n";
+    o << "for i=1,#" << B << " do local k=bit32.band(_kb+(i-1)*131+17,255) n+=1 t[n]=bit32.band(bit32.bxor(" << B << "[i],k),255) end\n";
+    o << "for i=1,#" << C << " do local k=bit32.band(_kc+(i-1)*131+17,255) n+=1 t[n]=bit32.band(bit32.bxor(" << C << "[i],k),255) end\n";
+    o << "do local s=0 for i=1,#t do s+=bit32.band(bit32.bxor(t[i],bit32.band(_ka+(i-1)*131+17,255)),255) end end\n"; // distractor
+    o << "do local s=0 for i=1,#" << A << "+#" << B << "+#" << C << " do end end\n";
+    o << "local chk=0 for i=1,#" << A << " do chk+=" << A << "[i] end for i=1,#" << B << " do chk+=" << B << "[i] end for i=1,#" << C << " do chk+=" << C << "[i] end\n";
+    o << "if chk~=_sum then error(\"x\") end\n";
+    o << A << "," << B << "," << C << "=nil,nil,nil\n";
+    o << "local p=1 local function u8() local v=t[p] p+=1 return v end\n";
+    o << "local function u32() local a=u8() local b=u8() local c=u8() local d=u8() return a+b*256+c*65536+d*16777216 end\n";
     o << "local magic=u32()\n";
-    o << "if magic~=" << FLY_MAGIC << " and magic~=0x3252504C then error(\"x\") end\n";
+    o << "if bit32.bxor(magic,_mm)~=_me and bit32.bxor(magic,_mm)~=_me2 then error(\"x\") end\n";
     o << "local bseed=u32() local ver=u8() local nproto=u32() local mainId=u32()\n";
     o << "local P={}\n";
     o << "for pi=1,nproto do\n";
@@ -165,59 +186,32 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "elseif ty==3 then\n";
     o << "local len=u32() local bb={}\n";
     o << "for j=1,len do bb[j]=u8() end\n";
-    // keep sealed — do NOT decrypt here
-    o << "K[i]={__s=1,b=bb,i=i}\n";
+    o << "K[i]={__s=1,b=bb}\n";
     o << "else K[i]=nil end end\n";
     o << "local nc=u32() local ch={}\n";
     o << "for i=1,nc do ch[i]=u32() end\n";
     o << "local csum=0 for i=1,#code do csum=bit32.bxor(csum,code[i]) end\n";
     o << "P[pi]={a=nparam,c=code,k=K,ch=ch,va=isva~=0,ms=maxstack,cs=csum,bs=bseed}\n";
     o << "end\n";
-    o << "return P,mainId,bseed end\n";
+    o << "t=nil return P,mainId,bseed end\n";
 
-    // sealed inv table
-    o << "local _ie={";
-    for (int i = 0; i < 256; ++i) {
-        if (i) o << ",";
-        if ((i % 16) == 0) o << "\n";
-        o << invEnc[i];
-    }
-    o << "}\n";
-    o << "local _isk=" << invSeal << "\n";
-
-    o << "local function " << nRun << "(P,mainId,_ie,_isk,seed)\n";
+    o << "local function " << nRun << "(P,mainId,seed)\n";
     o << "local inv={}\n";
-    o << "for i=0,255 do\n";
-    o << "local u=bit32.bxor(_ie[i+1],_isk+i*17)\n";
-    o << "inv[i]=u-1\n"; // -1 if was sealed 0
-    o << "end\n";
+    o << "for i=0,255 do local u=bit32.bxor(_ie[i+1],_isk+i*17) inv[i]=u-1 end\n";
     o << "_ie,_isk=nil,nil\n";
     o << "local CAP=38\n";
 
-    o << "local " << nG << "={}\n";
-    o << nG << ".print=print " << nG << ".warn=warn " << nG << ".error=error "
-      << nG << ".pcall=pcall " << nG << ".xpcall=xpcall\n";
-    o << nG << ".typeof=typeof " << nG << ".type=type " << nG << ".tostring=tostring "
-      << nG << ".tonumber=tonumber\n";
-    o << nG << ".pairs=pairs " << nG << ".ipairs=ipairs " << nG << ".next=next "
-      << nG << ".select=select " << nG << ".unpack=unpack or table.unpack\n";
-    o << nG << ".rawget=rawget " << nG << ".rawset=rawset " << nG << ".rawequal=rawequal "
-      << nG << ".rawlen=rawlen\n";
-    o << nG << ".setmetatable=setmetatable " << nG << ".getmetatable=getmetatable\n";
-    o << nG << ".bit32=bit32 " << nG << ".math=math " << nG << ".string=string "
-      << nG << ".table=table " << nG << ".task=task " << nG << ".utf8=utf8\n";
-    o << nG << ".game=game " << nG << ".workspace=workspace " << nG << ".Workspace=workspace "
-      << nG << ".script=script\n";
-    o << nG << ".Vector2=Vector2 " << nG << ".Vector3=Vector3 " << nG << ".CFrame=CFrame "
-      << nG << ".UDim=UDim " << nG << ".UDim2=UDim2\n";
-    o << nG << ".Color3=Color3 " << nG << ".ColorSequence=ColorSequence "
-      << nG << ".ColorSequenceKeypoint=ColorSequenceKeypoint\n";
-    o << nG << ".NumberSequence=NumberSequence " << nG << ".NumberSequenceKeypoint=NumberSequenceKeypoint\n";
-    o << nG << ".NumberRange=NumberRange " << nG << ".Rect=Rect " << nG << ".Region3=Region3 "
-      << nG << ".Ray=Ray\n";
-    o << nG << ".BrickColor=BrickColor " << nG << ".Enum=Enum " << nG << ".Instance=Instance "
-      << nG << ".TweenInfo=TweenInfo\n";
-    o << nG << ".os=os " << nG << ".tick=tick " << nG << ".time=time " << nG << ".DateTime=DateTime\n";
+    o << "local " << nG << "={print=print,warn=warn,error=error,pcall=pcall,xpcall=xpcall,"
+         "typeof=typeof,type=type,tostring=tostring,tonumber=tonumber,pairs=pairs,ipairs=ipairs,"
+         "next=next,select=select,unpack=unpack or table.unpack,rawget=rawget,rawset=rawset,"
+         "rawequal=rawequal,rawlen=rawlen,setmetatable=setmetatable,getmetatable=getmetatable,"
+         "bit32=bit32,math=math,string=string,table=table,task=task,utf8=utf8,game=game,"
+         "workspace=workspace,Workspace=workspace,script=script,Vector2=Vector2,Vector3=Vector3,"
+         "CFrame=CFrame,UDim=UDim,UDim2=UDim2,Color3=Color3,ColorSequence=ColorSequence,"
+         "ColorSequenceKeypoint=ColorSequenceKeypoint,NumberSequence=NumberSequence,"
+         "NumberSequenceKeypoint=NumberSequenceKeypoint,NumberRange=NumberRange,Rect=Rect,"
+         "Region3=Region3,Ray=Ray,BrickColor=BrickColor,Enum=Enum,Instance=Instance,"
+         "TweenInfo=TweenInfo,os=os,tick=tick,time=time,DateTime=DateTime}\n";
     o << "pcall(function() " << nG << ".Players=game:GetService(\"Players\") end)\n";
     o << "pcall(function() " << nG << ".RunService=game:GetService(\"RunService\") end)\n";
     o << "pcall(function() " << nG << ".ReplicatedStorage=game:GetService(\"ReplicatedStorage\") end)\n";
@@ -236,8 +230,8 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "local " << nE << "=setmetatable({},{__index=function(_,k)\n";
     o << "local v=rawget(" << nG << ",k) if v~=nil then return v end\n";
     o << "local ok,r=pcall(function() return RealG[k] end) if ok and r~=nil then return r end\n";
-    o << "ok,r=pcall(function() return _G[k] end) if ok then return r end return nil\n";
-    o << "end,__newindex=function(_,k,v) rawset(" << nG << ",k,v) pcall(function() RealG[k]=v end) end})\n";
+    o << "ok,r=pcall(function() return _G[k] end) if ok then return r end return nil end,\n";
+    o << "__newindex=function(_,k,v) rawset(" << nG << ",k,v) pcall(function() RealG[k]=v end) end})\n";
 
     o << "local CSNew,NSNew\n";
     o << "pcall(function() CSNew=ColorSequence.new end)\n";
@@ -247,7 +241,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "for i=1,64 do local v=rawget(t,i) if v==nil then break end if typeof(v)==kind then out[#out+1]=v end end\n";
     o << "return #out>0 and out or t end\n";
 
-    // open sealed string on demand (matches translator dual-key)
     o << "local function " << nOpen << "(cell,bseed)\n";
     o << "if type(cell)~=\"table\" or cell.__s~=1 then return cell end\n";
     o << "if cell.__c then return cell.__c end\n";
@@ -266,36 +259,29 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "local function " << nK << "(proto,word)\n";
     o << "if bit32.band(word,0x80000000)~=0 then\n";
     o << "local idx=bit32.band(word,0x7FFFFFFF)+1\n";
-    o << "local v=proto.k[idx]\n";
-    o << "return " << nOpen << "(v,proto.bs or 0)\n";
+    o << "return " << nOpen << "(proto.k[idx],proto.bs or 0)\n";
     o << "end return word end\n";
 
     o << "local function " << nX << "(pid,args,ups)\n";
     o << "local proto=P[pid+1] if not proto then error(\"x\") end\n";
-    o << "local reg={} local top=0\n";
-    o << "local nparam=proto.a or 0 local varargs={}\n";
-    o << "if args then for i=1,nparam do reg[i]=args[i] top=i end\n";
-    o << "for i=nparam+1,#args do varargs[#varargs+1]=args[i] end end\n";
+    o << "local reg={} local top=0 local nparam=proto.a or 0 local varargs={}\n";
+    o << "if args then for i=1,nparam do reg[i]=args[i] top=i end for i=nparam+1,#args do varargs[#varargs+1]=args[i] end end\n";
     o << "ups=ups or {}\n";
     o << "local function setR(i,v) reg[i]=v if i>top then top=i end end\n";
     o << "local function uvget(i) local u=ups[i] if type(u)==\"table\" and rawget(u,\"__box\")==true then return u[1] end return u end\n";
     o << "local function uvset(i,v) local u=ups[i] if type(u)==\"table\" and rawget(u,\"__box\")==true then u[1]=v else ups[i]=v end end\n";
-    o << "local pc=1 local code=proto.c local steps=0\n";
-    o << "local lim=" << (watchdog ? "12000000" : "1e15") << "\n";
-    o << "local tickchk=0\n";
+    o << "local pc=1 local code=proto.c local steps=0 local lim=" << (watchdog ? "12000000" : "1e15") << " local tickchk=0\n";
     o << "while pc<=#code do\n";
     o << "steps+=1 if steps>lim then error(\"x\") end\n";
-    o << "tickchk+=1 if tickchk>=2048 then tickchk=0 local cs=0 for i=1,#code do cs=bit32.bxor(cs,code[i]) end if cs~=proto.cs then error(\"x\") end end\n";
-    o << "local inst=code[pc]\n";
-    o << "local rawop=bit32.band(inst,255)\n";
-    o << "local op=inv[rawop]\n";
+    o << "tickchk+=1 if tickchk>=1536 then tickchk=0 local cs=0 for i=1,#code do cs=bit32.bxor(cs,code[i]) end if cs~=proto.cs then error(\"x\") end end\n";
+    o << "local inst=code[pc] local rawop=bit32.band(inst,255) local op=inv[rawop]\n";
     o << "if op==nil or op<0 then error(\"x\") end\n";
-    o << "local A=bit32.band(bit32.rshift(inst,8),255)\n";
-    o << "local B=bit32.band(bit32.rshift(inst,16),255)\n";
+    o << "local A=bit32.band(bit32.rshift(inst,8),255) local B=bit32.band(bit32.rshift(inst,16),255)\n";
     o << "local C=bit32.band(bit32.rshift(inst,24),255)\n";
     o << "local D=bit32.band(bit32.rshift(inst,16),65535) if D>=32768 then D-=65536 end\n";
     o << "local Ra,Rb,Rc=A+1,B+1,C+1\n";
 
+    // same op handlers as sealed build (isa order)
     o << "if op==0 then setR(Ra,reg[Rb])\n";
     o << "elseif op==1 then pc+=1 setR(Ra," << nK << "(proto,code[pc]))\n";
     o << "elseif op==2 then setR(Ra,nil)\n";
@@ -337,8 +323,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "if type(t)==\"table\" then for i=1,cnt do rawset(t,start+i-1,reg[Ra+i]) end end\n";
     o << "elseif op==32 then\n";
     o << "if B==0 then for i=1,#varargs do setR(Ra+i-1,varargs[i]) end top=Ra+#varargs-1 if top<0 then top=0 end\n";
-    o << "elseif B==1 then top=math.max(0,Ra-1)\n";
-    o << "else local n=B-1 for i=1,n do setR(Ra+i-1,varargs[i]) end top=Ra+n-1 end\n";
+    o << "elseif B==1 then top=math.max(0,Ra-1) else local n=B-1 for i=1,n do setR(Ra+i-1,varargs[i]) end top=Ra+n-1 end\n";
     o << "elseif op==27 then\n";
     o << "local narg if B==0 then narg=math.max(0,top-Ra) if narg>24 then narg=24 end else narg=B-1 end\n";
     o << "local fn=reg[Ra] local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end\n";
@@ -349,12 +334,10 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "local ok,ret=pcall(function() return table.pack(fn(table.unpack(argv,1,math.max(narg,0)))) end)\n";
     o << "if not ok then error(tostring(ret)) end\n";
     o << "if C==0 then for i=1,ret.n do setR(Ra+i-1,ret[i]) end top=Ra+math.max(ret.n,0)-1 if top<0 then top=0 end\n";
-    o << "elseif C==1 then top=math.max(0,Ra-1)\n";
-    o << "else for i=1,C-1 do setR(Ra+i-1,ret[i]) end top=Ra+(C-1)-1 end\n";
+    o << "elseif C==1 then top=math.max(0,Ra-1) else for i=1,C-1 do setR(Ra+i-1,ret[i]) end top=Ra+(C-1)-1 end\n";
     o << "elseif op==28 then\n";
     o << "local nret=if B==0 then math.max(0,top-Ra+1) else (B-1)\n";
-    o << "local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end\n";
-    o << "return table.unpack(out,1,math.max(nret,0))\n";
+    o << "local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end return table.unpack(out,1,math.max(nret,0))\n";
     o << "elseif op==30 then\n";
     o << "local limit=tonumber(reg[Ra]) or 0 local step=tonumber(reg[Ra+1]) or 1 local idx=tonumber(reg[Ra+2]) or 0\n";
     o << "if (step>=0 and idx>limit) or (step<0 and idx<limit) then pc+=D else setR(Ra+3,idx) end\n";
@@ -364,8 +347,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "if (step>=0 and idx<=limit) or (step<0 and idx>=limit) then setR(Ra+3,idx) pc+=D end\n";
     o << "elseif op==37 then\n";
     o << "local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2]\n";
-    o << "if type(it)==\"function\" then\n";
-    o << "local ok,res=pcall(function() return table.pack(it(state,ctl)) end)\n";
+    o << "if type(it)==\"function\" then local ok,res=pcall(function() return table.pack(it(state,ctl)) end)\n";
     o << "if ok and res[1]~=nil then setR(Ra+2,res[1]) for i=1,res.n do setR(Ra+2+i,res[i]) end pc+=D end end\n";
     o << "elseif op==31 then\n";
     o << "pc+=1 local child=code[pc] or 0 local cid=proto.ch[child+1] or 0\n";
@@ -374,32 +356,21 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "local stored={} local ui=1\n";
     o << "while pc+1<=#code do\n";
     o << "local nextInst=code[pc+1] local rop=bit32.band(nextInst,255)\n";
-    o << "if inv[rop]~=CAP then break end\n";
-    o << "pc+=1\n";
-    o << "local ca=bit32.band(bit32.rshift(nextInst,8),255)\n";
-    o << "local cb=bit32.band(bit32.rshift(nextInst,16),255)\n";
+    o << "if inv[rop]~=CAP then break end pc+=1\n";
+    o << "local ca=bit32.band(bit32.rshift(nextInst,8),255) local cb=bit32.band(bit32.rshift(nextInst,16),255)\n";
     o << "if ca==2 then stored[ui]=parentUps[cb+1]\n";
-    o << "elseif ca==1 then\n";
-    o << "if not boxes[cb] then boxes[cb]={__box=true,parentReg[cb+1]} end stored[ui]=boxes[cb]\n";
-    o << "else stored[ui]=parentReg[cb+1] end\n";
-    o << "ui+=1 if ui>128 then break end end\n";
+    o << "elseif ca==1 then if not boxes[cb] then boxes[cb]={__box=true,parentReg[cb+1]} end stored[ui]=boxes[cb]\n";
+    o << "else stored[ui]=parentReg[cb+1] end ui+=1 if ui>128 then break end end\n";
     o << "setR(Ra,function(...) return " << nX << "(cid,{...},stored) end)\n";
     o << "elseif op==38 then end\n";
     o << "elseif op==44 then local ok=(reg[Ra]==reg[Rb]) if C~=0 then ok=not ok end if not ok then pc+=1 end\n";
-    o << "else error(\"x\") end\n";
-    o << "pc+=1 end end\n";
+    o << "else error(\"x\") end pc+=1 end end\n";
     o << "return " << nX << "(mainId) end\n";
 
     if (heads == 2) {
-        o << "return (function()\n";
-        o << "local buf=" << nD << "()\n";
-        o << "local P,mainId,bseed=" << nBld << "(buf)\n";
-        o << "return " << nRun << "(P,mainId,_ie,_isk,bseed)\n";
-        o << "end)()\n";
+        o << "return (function() local P,mainId,bseed=" << nBoot << "() return " << nRun << "(P,mainId,bseed) end)()\n";
     } else {
-        o << "local buf=" << nD << "()\n";
-        o << "local P,mainId,bseed=" << nBld << "(buf)\n";
-        o << "return " << nRun << "(P,mainId,_ie,_isk,bseed)\n";
+        o << "local P,mainId,bseed=" << nBoot << "() return " << nRun << "(P,mainId,bseed)\n";
     }
 
     return o.str();
