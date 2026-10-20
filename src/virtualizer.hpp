@@ -1,5 +1,4 @@
 #pragma once
-
 #include "bytecode.hpp"
 #include <string>
 #include <cstdint>
@@ -9,15 +8,15 @@ namespace Protect {
 class Virtualizer {
 public:
     struct Options {
-        int heads = 1;       // 1 = single VM, 2 = outer shell + same VM
+        int heads = 1;
         bool watchdog = true;
+        bool strictEnv = true;   // no _G / RealG fallback
+        bool safeParse = true;   // bounds + operand checks
     };
 
     explicit Virtualizer(uint32_t seed = 0);
-
     std::string emitVirtualizedScript(const Bytecode& encryptedBlob) const;
-    std::string emitVirtualizedScript(const Bytecode& encryptedBlob,
-                                      const Options& options) const;
+    std::string emitVirtualizedScript(const Bytecode& encryptedBlob, const Options& options) const;
 
 private:
     uint32_t seed_;
