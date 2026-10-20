@@ -1,4 +1,5 @@
 #include "translator.hpp"
+#include "isa.hpp"
 #include "Luau/Bytecode.h"
 
 #include "lua.h"
@@ -63,16 +64,15 @@ static int luauInsnLength(uint8_t op) {
 #ifdef LOP_NEWCLASSMEMBER
     case LOP_NEWCLASSMEMBER:
 #endif
-    // numeric 2-word ops (official Luau)
-    case 58: // FORGLOOP
-    case 60: // FASTCALL3
-    case 77: // JUMPXEQKNIL
-    case 78: // JUMPXEQKB
-    case 79: // JUMPXEQKN
-    case 80: // JUMPXEQKS
-    case 83: // GETUDATAKS
-    case 84: // SETUDATAKS
-    case 85: // NAMECALLUDATA
+    case 58:
+    case 60:
+    case 77:
+    case 78:
+    case 79:
+    case 80:
+    case 83:
+    case 84:
+    case 85:
         return 2;
     default:
         return 1;
@@ -522,7 +522,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitJump(Op::FORLOOP, A, nextOld + D);
             break;
 
-        // 58 FORGLOOP
 #ifdef LOP_FORGLOOP
         case LOP_FORGLOOP:
 #endif
@@ -530,7 +529,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitJump(Op::FORGLOOP, A, nextOld + D);
             break;
 
-        // 59 FORGPREP_INEXT
 #ifdef LOP_FORGPREP_INEXT
         case LOP_FORGPREP_INEXT:
 #endif
@@ -538,7 +536,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitJump(Op::JMP, 0, nextOld + D);
             break;
 
-        // 61 FORGPREP_NEXT
 #ifdef LOP_FORGPREP_NEXT
         case LOP_FORGPREP_NEXT:
 #endif
@@ -546,7 +543,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitJump(Op::JMP, 0, nextOld + D);
             break;
 
-        // 76 FORGPREP
 #ifdef LOP_FORGPREP
         case LOP_FORGPREP:
 #endif
@@ -554,7 +550,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitJump(Op::JMP, 0, nextOld + D);
             break;
 
-        // 77 JUMPXEQKNIL
 #ifdef LOP_JUMPXEQKNIL
         case LOP_JUMPXEQKNIL:
 #endif
@@ -569,7 +564,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             break;
         }
 
-        // 78 JUMPXEQKB
 #ifdef LOP_JUMPXEQKB
         case LOP_JUMPXEQKB:
 #endif
@@ -585,7 +579,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             break;
         }
 
-        // 79 JUMPXEQKN, 80 JUMPXEQKS
 #ifdef LOP_JUMPXEQKN
         case LOP_JUMPXEQKN:
 #endif
@@ -606,7 +599,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             break;
         }
 
-        // 81 IDIV, 82 IDIVK
 #ifdef LOP_IDIV
         case LOP_IDIV:
 #endif
@@ -633,7 +625,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitBinRK(Op::DIV, A, B, C);
             break;
 
-        // 83–85 userdata field ops → tableks/namecall
 #ifdef LOP_GETUDATAKS
         case LOP_GETUDATAKS:
 #endif
@@ -798,9 +789,9 @@ Bytecode Translator::encodeCustom(const std::vector<FlyProto>& protos, uint32_t 
         blob.push_back(uint8_t(v >> 16));
         blob.push_back(uint8_t(v >> 24));
     };
-    w32(0x3252504C);
+    w32(FLY_MAGIC);   // FLY3
     w32(seed_);
-    w8(1);
+    w8(3);            // format version 3
     w32(uint32_t(protos.size()));
     w32(mainId);
     for (const auto& p : protos) {
@@ -809,8 +800,8 @@ Bytecode Translator::encodeCustom(const std::vector<FlyProto>& protos, uint32_t 
         w8(p.nups);
         w8(p.isvararg);
         w32(uint32_t(p.code.size()));
-        for (uint32_t w : p.code)
-            w32(w);
+        for (uint32_t i = 0; i < p.code.size(); ++i)
+            w32(sealInsn(p.code[i], seed_, i));
         w32(uint32_t(p.constants.size()));
         for (const auto& c : p.constants) {
             w8(uint8_t(c.type));
@@ -825,8 +816,9 @@ Bytecode Translator::encodeCustom(const std::vector<FlyProto>& protos, uint32_t 
                 w32(uint32_t(c.s.size()));
                 for (size_t i = 0; i < c.s.size(); ++i) {
                     uint8_t ch = static_cast<uint8_t>(c.s[i]);
-                    uint8_t key = static_cast<uint8_t>(seed_ + static_cast<uint32_t>(i) * 13u);
-                    w8(static_cast<uint8_t>(ch ^ key));
+                    uint8_t k1 = static_cast<uint8_t>(seed_ + static_cast<uint32_t>(i) * 13u);
+                    uint8_t k2 = static_cast<uint8_t>((seed_ >> 8) + static_cast<uint32_t>(i) * 37u + 91u);
+                    w8(static_cast<uint8_t>(ch ^ k1 ^ k2));
                 }
             }
         }
