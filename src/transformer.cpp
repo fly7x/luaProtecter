@@ -3,6 +3,7 @@
 #include "translator.hpp"
 #include "obfuscator.hpp"
 #include "virtualizer.hpp"
+#include "isa.hpp"
 
 #include <chrono>
 #include <random>
@@ -63,15 +64,6 @@ std::string Transformer::removeComments(const std::string& source) const {
     return out;
 }
 
-static uint32_t mix32(uint32_t x) {
-    x ^= x >> 16;
-    x *= 0x7FEB352Du;
-    x ^= x >> 15;
-    x *= 0x846CA68Bu;
-    x ^= x >> 16;
-    return x;
-}
-
 static std::string flyBanner(const char* modeLine) {
     std::ostringstream o;
     o << "--[[\n";
@@ -83,7 +75,6 @@ static std::string flyBanner(const char* modeLine) {
     return o.str();
 }
 
-// Hard hybrid: multi-pass sealed source + load (weaker than full VM for source recovery)
 std::string Transformer::emitHybrid(const std::string& source, uint32_t seed) const {
     std::vector<uint8_t> plain(source.begin(), source.end());
 
@@ -186,7 +177,6 @@ std::string Transformer::protect(const std::string& source, const Options& optio
     if (source.empty())
         throw std::runtime_error("empty source");
 
-    // ONE seed for Translator + Obfuscator + Virtualizer
     uint32_t seed = options.polymorphic
         ? uint32_t(generateSeed())
         : (options.seed ? uint32_t(options.seed) : 0xA341316Cu);
@@ -196,7 +186,6 @@ std::string Transformer::protect(const std::string& source, const Options& optio
     if (options.removeComments)
         processed = removeComments(processed);
 
-    // Hybrid only when explicitly requested and virtualize is off
     if (options.wholeScriptEncrypt && !options.virtualize)
         return emitHybrid(processed, seed);
 
@@ -218,6 +207,7 @@ std::string Transformer::protect(const std::string& source, const Options& optio
     vopts.watchdog = true;
     vopts.strictEnv = options.strictEnv;
     vopts.safeParse = options.safeParse;
+    vopts.dense = true;
 
     Protect::Virtualizer virtualizer(seed);
     return virtualizer.emitVirtualizedScript(sealed, vopts);
