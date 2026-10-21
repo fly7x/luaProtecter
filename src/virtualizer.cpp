@@ -108,11 +108,10 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "--[[\n"
          "  ╔══════════════════════════════════════════╗\n"
          "  ║          FŁÝ  ·  FLYX  Protection         ║\n"
-         "  ║   Fast-VM  ·  FLY3  ·  fixed-seal        ║\n"
+         "  ║   Fast-VM  ·  FLY3  ·  P1-seal           ║\n"
          "  ╚══════════════════════════════════════════╝\n"
          "]]\n";
 
-    // Exact 32-bit multiply for Luau (avoids double precision bugs)
     o << "local function umul32(a,b)\n"
          "local aL=bit32.band(a,0xFFFF) local aH=bit32.rshift(a,16)\n"
          "local bL=bit32.band(b,0xFFFF) local bH=bit32.rshift(b,16)\n"
@@ -219,7 +218,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "local code={}\n"
          "for i=1,ncode do\n"
          "local w=u32()\n"
-         // *** MATCH isa.hpp unsealInsn ***
          "local r=bit32.band(bit32.rshift(bseed,3),7)+1\n"
          "w=bit32.bor(bit32.rshift(w,r),bit32.lshift(w,32-r))\n"
          "local k=bit32.bxor(bseed,(i-1)*0x9E3779B9)\n"
@@ -424,6 +422,10 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "setR(Ra,function(...) return " << nX << "(P,inv,E,cid,{...},stored) end) end\n"
          "Z[38]=function() end\n"
          "Z[44]=function(A,B,C,Dd,Ra,Rb) local ok=(reg[Ra]==reg[Rb]) if C~=0 then ok=not ok end if not ok then pc+=1 end end\n"
+         // P1 handlers
+         "Z[45]=function(A,B,C,Dd,Ra,Rb) local _=bit32.bxor(A or 0,B or 0,C or 0) end\n"
+         "Z[46]=function(A,B,C,Dd,Ra) pc+=1 if pc>#code then error(\"x\") end setR(Ra,E[" << nKn << "(proto,code[pc])]) end\n"
+         "Z[47]=function(A,B,C,Dd,Ra,Rb) local fn=reg[Ra] if type(fn)~=\"function\" then error(\"x\") end local ok,ret=pcall(fn,reg[Rb]) if not ok then error(tostring(ret)) end if C~=0 then setR(Ra,ret) end end\n"
          "while pc<=#code do\n"
          "steps+=1 if steps>lim then error(\"x\") end\n"
          "tickchk+=1 if tickchk>=1536 then tickchk=0 local cs=0 for i=1,#code do cs=bit32.bxor(cs,code[i]) end if cs~=proto.cs then error(\"x\") end end\n"
