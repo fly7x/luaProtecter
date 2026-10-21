@@ -57,7 +57,11 @@ enum Op : int {
     SETTABLEN = 42,
     IDIV = 43,
     EQK = 44,
-    COUNT = 45
+    // --- P1 ---
+    JUNK = 45,        // must execute; no visible effect
+    SUPER_GETK = 46,  // GETGLOBAL + LOADK into same reg (next word = k idx)
+    SUPER_CALLK = 47, // CALL with 1 string/const arg already in Rb (tight path)
+    COUNT = 48
 };
 
 inline uint32_t mix32(uint32_t x) {
