@@ -7,11 +7,9 @@
 
 namespace Protect {
 
-// FLY3 little-endian: 'F' 'L' 'Y' '3'
-inline constexpr uint32_t FLY_MAGIC = 0x33594C46u;
+inline constexpr uint32_t FLY_MAGIC = 0x33594C46u; // 'F''L''Y''3'
 inline constexpr uint32_t LPR2_MAGIC = 0x3252504Cu;
 
-// Logical opcodes (translator uses these; map remaps to physical bytes)
 enum Op : int {
     OP_MOVE = 0,
     OP_LOADK = 1,
@@ -51,14 +49,14 @@ enum Op : int {
     OP_SETUPVAL = 35,
     OP_SETLIST = 36,
     OP_FORGLOOP = 37,
-    OP_CAPTURE = 38, // CAP — must match virtualizer
+    OP_CAPTURE = 38,
     OP_AND = 39,
     OP_OR = 40,
     OP_GETTABUP = 41,
     OP_SETTABUP = 42,
     OP_IDIV = 43,
     OP_EQK = 44,
-    OP_COUNT = 45
+    COUNT = 45
 };
 
 inline uint32_t mix32(uint32_t x) {
@@ -70,9 +68,8 @@ inline uint32_t mix32(uint32_t x) {
     return x;
 }
 
-// Private opcode map for this seed
-inline std::array<uint8_t, 256> makeOpcodeMap(uint32_t seed) {
-    std::array<uint8_t, 256> map{};
+// map_[logical] = physical byte  (size == Op::COUNT)
+inline std::array<uint8_t, static_cast<size_t>(Op::COUNT)> makeOpcodeMap(uint32_t seed) {
     std::array<uint8_t, 256> pool{};
     for (int i = 0; i < 256; ++i)
         pool[static_cast<size_t>(i)] = static_cast<uint8_t>(i);
@@ -83,7 +80,9 @@ inline std::array<uint8_t, 256> makeOpcodeMap(uint32_t seed) {
         int j = dist(rng);
         std::swap(pool[static_cast<size_t>(i)], pool[static_cast<size_t>(j)]);
     }
-    for (int logical = 0; logical < 256; ++logical)
+
+    std::array<uint8_t, static_cast<size_t>(Op::COUNT)> map{};
+    for (int logical = 0; logical < Op::COUNT; ++logical)
         map[static_cast<size_t>(logical)] = pool[static_cast<size_t>(logical)];
     return map;
 }
@@ -108,9 +107,8 @@ inline uint32_t rotateRight(uint32_t w, uint32_t r) {
     return (w >> r) | (w << (32u - r));
 }
 
-// *** MUST match virtualizer.lua unseal exactly ***
 inline uint32_t insnRotateAmount(uint32_t bseed) {
-    return ((bseed >> 3) & 7u) + 1u; // 1..8
+    return ((bseed >> 3) & 7u) + 1u;
 }
 
 inline uint32_t sealKey(uint32_t bseed, uint32_t index) {
@@ -121,19 +119,16 @@ inline uint32_t sealKey(uint32_t bseed, uint32_t index) {
     return k;
 }
 
-// Encode: XOR then rotate-left
 inline uint32_t sealInsn(uint32_t word, uint32_t bseed, uint32_t index) {
     uint32_t w = word ^ sealKey(bseed, index);
     return rotateLeft(w, insnRotateAmount(bseed));
 }
 
-// Decode: rotate-right then XOR
 inline uint32_t unsealInsn(uint32_t word, uint32_t bseed, uint32_t index) {
     uint32_t w = rotateRight(word, insnRotateAmount(bseed));
     return w ^ sealKey(bseed, index);
 }
 
-// String dual-XOR — must match virtualizer openc
 inline void sealStringBytes(std::vector<uint8_t>& bytes, uint32_t bseed) {
     for (size_t j = 0; j < bytes.size(); ++j) {
         uint8_t k1 = uint8_t((bseed + uint32_t(j) * 13u) & 0xFFu);
@@ -143,3 +138,17 @@ inline void sealStringBytes(std::vector<uint8_t>& bytes, uint32_t bseed) {
 }
 
 } // namespace Protect
+
+// ---- translator.cpp / translator.hpp compatibility (no Protect:: prefix needed) ----
+using Protect::Op;
+using Protect::FLY_MAGIC;
+using Protect::LPR2_MAGIC;
+using Protect::mix32;
+using Protect::makeOpcodeMap;
+using Protect::packABC;
+using Protect::packAD;
+using Protect::sealInsn;
+using Protect::unsealInsn;
+using Protect::sealStringBytes;
+using Protect::insnRotateAmount;
+using Protect::sealKey;
