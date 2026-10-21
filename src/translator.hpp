@@ -8,7 +8,6 @@
 #include <vector>
 #include <array>
 
-// Forward declare Luau Proto (from lobject.h) so headers stay light
 struct Proto;
 
 struct FlyConstant {
@@ -50,12 +49,10 @@ public:
 
     Bytecode encodeCustom(const std::vector<FlyProto>& protos, uint32_t mainId) const;
 
-    // Remap without Luau Proto* (DUPCLOSURE falls back)
     bool remapPublic(const std::vector<uint32_t>& code,
                      FlyProto& proto,
                      std::string& err) const;
 
-    // Remap with Luau Proto* so DUPCLOSURE can resolve real child index
     bool remapPublic(const std::vector<uint32_t>& code,
                      FlyProto& proto,
                      std::string& err,
@@ -73,7 +70,6 @@ private:
     uint32_t seed_;
     std::array<uint8_t, static_cast<size_t>(Op::COUNT)> map_;
 
-    // Optional reader stubs (kept for compatibility with older code)
     struct Reader {
         uint8_t u8();
         uint32_t u32();
