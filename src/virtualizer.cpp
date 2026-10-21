@@ -108,7 +108,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "--[[\n"
          "  ╔══════════════════════════════════════════╗\n"
          "  ║          FŁÝ  ·  FLYX  Protection         ║\n"
-         "  ║   Fast-VM  ·  FLY3  ·  P1-seal           ║\n"
+         "  ║   Fast-VM  ·  FLY3  ·  upvalue-fix      ║\n"
          "  ╚══════════════════════════════════════════╝\n"
          "]]\n";
 
@@ -328,6 +328,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "return word\n"
          "end\n";
 
+    // ---- VM with shared REF upvalue boxes ----
     o << "local function " << nX << "(P,inv,E,pid,args,ups)\n"
          "local CAP=38\n";
     if (safeParse)
@@ -341,9 +342,25 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "local function setR(i,v)\n";
     if (safeParse)
         o << "if i<1 or i>maxr then error(\"x\") end\n";
-    o << "reg[i]=v if i>top then top=i end end\n"
-         "local function uvget(i) local u=ups[i] if type(u)==\"table\" and rawget(u,\"__box\")==true then return u[1] end return u end\n"
-         "local function uvset(i,v) local u=ups[i] if type(u)==\"table\" and rawget(u,\"__box\")==true then u[1]=v else ups[i]=v end end\n"
+    o << "reg[i]=v if i>top then top=i end\n"
+         "local bx=reg.__boxes if bx and bx[i] then bx[i][1]=v end\n"
+         "end\n"
+         "local function uvget(i)\n"
+         "local u=ups[i]\n"
+         "if type(u)==\"table\" and rawget(u,\"__box\")==true then return u[1] end\n"
+         "return u\n"
+         "end\n"
+         "local function uvset(i,v)\n"
+         "local u=ups[i]\n"
+         "if type(u)==\"table\" and rawget(u,\"__box\")==true then\n"
+         "u[1]=v\n"
+         "if type(u.__reg)==\"table\" and type(u.__idx)==\"number\" then\n"
+         "u.__reg[u.__idx]=v\n"
+         "local pbx=u.__reg.__boxes\n"
+         "if pbx and pbx[u.__idx] then pbx[u.__idx][1]=v end\n"
+         "end\n"
+         "else ups[i]=v end\n"
+         "end\n"
          "local pc,code,steps,lim,tickchk=1,proto.c,0," << (watchdog ? "8000000" : "1e15") << ",0\n"
          "local CSNew,NSNew\n"
          "pcall(function() CSNew=ColorSequence.new end)\n"
@@ -411,18 +428,28 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     if (safeParse)
         o << "if cid<0 or cid>=#P then error(\"x\") end\n";
     o << "local parentReg,parentUps=reg,ups\n"
-         "if not parentReg.__boxes then parentReg.__boxes={} end local boxes=parentReg.__boxes\n"
+         "if not parentReg.__boxes then parentReg.__boxes={} end\n"
          "local stored={} local ui=1\n"
          "while pc+1<=#code do\n"
          "local ni=code[pc+1] if inv[bit32.band(ni,255)]~=CAP then break end pc+=1\n"
          "local ca=bit32.band(bit32.rshift(ni,8),255) local cb=bit32.band(bit32.rshift(ni,16),255)\n"
-         "if ca==2 then stored[ui]=parentUps[cb+1]\n"
-         "elseif ca==1 then if not boxes[cb] then boxes[cb]={__box=true,parentReg[cb+1]} end stored[ui]=boxes[cb]\n"
-         "else stored[ui]=parentReg[cb+1] end ui+=1 if ui>128 then break end end\n"
+         "if ca==2 then\n"
+         "stored[ui]=parentUps[cb+1]\n"
+         "elseif ca==1 then\n"
+         "local idx=cb+1\n"
+         "local box=parentReg.__boxes[idx]\n"
+         "if not box then\n"
+         "box={__box=true,parentReg[idx],__reg=parentReg,__idx=idx}\n"
+         "parentReg.__boxes[idx]=box\n"
+         "end\n"
+         "stored[ui]=box\n"
+         "else\n"
+         "stored[ui]=parentReg[cb+1]\n"
+         "end\n"
+         "ui+=1 if ui>128 then break end end\n"
          "setR(Ra,function(...) return " << nX << "(P,inv,E,cid,{...},stored) end) end\n"
          "Z[38]=function() end\n"
          "Z[44]=function(A,B,C,Dd,Ra,Rb) local ok=(reg[Ra]==reg[Rb]) if C~=0 then ok=not ok end if not ok then pc+=1 end end\n"
-         // P1 handlers
          "Z[45]=function(A,B,C,Dd,Ra,Rb) local _=bit32.bxor(A or 0,B or 0,C or 0) end\n"
          "Z[46]=function(A,B,C,Dd,Ra) pc+=1 if pc>#code then error(\"x\") end setR(Ra,E[" << nKn << "(proto,code[pc])]) end\n"
          "Z[47]=function(A,B,C,Dd,Ra,Rb) local fn=reg[Ra] if type(fn)~=\"function\" then error(\"x\") end local ok,ret=pcall(fn,reg[Rb]) if not ok then error(tostring(ret)) end if C~=0 then setR(Ra,ret) end end\n"
