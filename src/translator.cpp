@@ -14,6 +14,9 @@
 #include <cstdio>
 #include <sstream>
 
+static uint8_t insnOp(uint32_t w) { return uint8_t(w & 255u); }
+static uint8_t insnA(uint32_t w) { return uint8_t((w >> 8) & 255u); }
+
 Translator::Translator(uint32_t seed)
     : seed_(seed ? seed : 0xA341316Cu), map_(makeOpcodeMap(seed_)) {}
 
@@ -714,7 +717,7 @@ static uint32_t pullProto(const Translator* self, struct Proto* p, std::vector<F
     dst.maxstack = p->maxstacksize;
     dst.numparams = p->numparams;
     dst.nups = p->nups;
-    dst.isvararg = p->is_vararg;
+    dst.isvararg = p->is_vararg ? 1 : 0;
     dst.childProtos = kids;
     for (int i = 0; i < p->sizek; ++i)
         dst.constants.push_back(convertConst(&p->k[i]));
@@ -789,16 +792,16 @@ Bytecode Translator::encodeCustom(const std::vector<FlyProto>& protos, uint32_t 
         blob.push_back(uint8_t(v >> 16));
         blob.push_back(uint8_t(v >> 24));
     };
-    w32(FLY_MAGIC);   // FLY3
+    w32(FLY_MAGIC);
     w32(seed_);
-    w8(3);            // format version 3
+    w8(3);
     w32(uint32_t(protos.size()));
     w32(mainId);
     for (const auto& p : protos) {
         w8(p.maxstack);
         w8(p.numparams);
         w8(p.nups);
-        w8(p.isvararg);
+        w8(p.isvararg ? uint8_t(1) : uint8_t(0));
         w32(uint32_t(p.code.size()));
         for (uint32_t i = 0; i < p.code.size(); ++i)
             w32(sealInsn(p.code[i], seed_, i));
@@ -813,13 +816,11 @@ Bytecode Translator::encodeCustom(const std::vector<FlyProto>& protos, uint32_t 
                 for (int i = 0; i < 8; ++i)
                     w8(uint8_t(bits >> (8 * i)));
             } else if (c.type == FlyConstant::STRING) {
-                w32(uint32_t(c.s.size()));
-                for (size_t i = 0; i < c.s.size(); ++i) {
-                    uint8_t ch = static_cast<uint8_t>(c.s[i]);
-                    uint8_t k1 = static_cast<uint8_t>(seed_ + static_cast<uint32_t>(i) * 13u);
-                    uint8_t k2 = static_cast<uint8_t>((seed_ >> 8) + static_cast<uint32_t>(i) * 37u + 91u);
-                    w8(static_cast<uint8_t>(ch ^ k1 ^ k2));
-                }
+                std::vector<uint8_t> sb(c.s.begin(), c.s.end());
+                sealStringBytes(sb, seed_);
+                w32(uint32_t(sb.size()));
+                for (uint8_t b : sb)
+                    w8(b);
             }
         }
         w32(uint32_t(p.childProtos.size()));
