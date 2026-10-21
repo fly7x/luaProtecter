@@ -7,55 +7,56 @@
 
 namespace Protect {
 
-inline constexpr uint32_t FLY_MAGIC = 0x33594C46u; // 'F''L''Y''3'
+inline constexpr uint32_t FLY_MAGIC = 0x33594C46u;
 inline constexpr uint32_t LPR2_MAGIC = 0x3252504Cu;
 
+// Names MUST match translator.cpp (Op::LOADK, Op::NAMECALL, ...)
 enum Op : int {
-    OP_MOVE = 0,
-    OP_LOADK = 1,
-    OP_LOADNIL = 2,
-    OP_LOADBOOL = 3,
-    OP_ADD = 4,
-    OP_SUB = 5,
-    OP_MUL = 6,
-    OP_DIV = 7,
-    OP_MOD = 8,
-    OP_POW = 9,
-    OP_UNM = 10,
-    OP_NOT = 11,
-    OP_LEN = 12,
-    OP_CONCAT = 13,
-    OP_JMP = 14,
-    OP_TEST = 15,
-    OP_TESTN = 16,
-    OP_EQ = 17,
-    OP_LT = 18,
-    OP_LE = 19,
-    OP_GETGLOBAL = 20,
-    OP_SETGLOBAL = 21,
-    OP_GETTABLE = 22,
-    OP_SETTABLE = 23,
-    OP_GETTABLEKS = 24,
-    OP_SETTABLEKS = 25,
-    OP_NEWTABLE = 26,
-    OP_CALL = 27,
-    OP_RETURN = 28,
-    OP_FORLOOP = 29,
-    OP_FORPREP = 30,
-    OP_CLOSURE = 31,
-    OP_VARARG = 32,
-    OP_NAMECALL = 33,
-    OP_GETUPVAL = 34,
-    OP_SETUPVAL = 35,
-    OP_SETLIST = 36,
-    OP_FORGLOOP = 37,
-    OP_CAPTURE = 38,
-    OP_AND = 39,
-    OP_OR = 40,
-    OP_GETTABUP = 41,
-    OP_SETTABUP = 42,
-    OP_IDIV = 43,
-    OP_EQK = 44,
+    MOVE = 0,
+    LOADK = 1,
+    LOADNIL = 2,
+    LOADBOOL = 3,
+    ADD = 4,
+    SUB = 5,
+    MUL = 6,
+    DIV = 7,
+    MOD = 8,
+    POW = 9,
+    UNM = 10,
+    NOT = 11,
+    LEN = 12,
+    CONCAT = 13,
+    JMP = 14,
+    JMPIF = 15,
+    JMPIFNOT = 16,
+    EQ = 17,
+    LT = 18,
+    LE = 19,
+    GETGLOBAL = 20,
+    SETGLOBAL = 21,
+    GETTABLE = 22,
+    SETTABLE = 23,
+    GETTABLEKS = 24,
+    SETTABLEKS = 25,
+    NEWTABLE = 26,
+    CALL = 27,
+    RETURN = 28,
+    FORLOOP = 29,
+    FORPREP = 30,
+    CLOSURE = 31,
+    VARARG = 32,
+    NAMECALL = 33,
+    GETUPVAL = 34,
+    SETUPVAL = 35,
+    SETLIST = 36,
+    FORGLOOP = 37,
+    CAPTURE = 38,
+    AND = 39,
+    OR = 40,
+    GETTABLEN = 41,
+    SETTABLEN = 42,
+    IDIV = 43,
+    EQK = 44,
     COUNT = 45
 };
 
@@ -68,7 +69,6 @@ inline uint32_t mix32(uint32_t x) {
     return x;
 }
 
-// map_[logical] = physical byte  (size == Op::COUNT)
 inline std::array<uint8_t, static_cast<size_t>(Op::COUNT)> makeOpcodeMap(uint32_t seed) {
     std::array<uint8_t, 256> pool{};
     for (int i = 0; i < 256; ++i)
@@ -139,7 +139,7 @@ inline void sealStringBytes(std::vector<uint8_t>& bytes, uint32_t bseed) {
 
 } // namespace Protect
 
-// ---- translator.cpp / translator.hpp compatibility (no Protect:: prefix needed) ----
+// So translator.cpp can use Op::NAMECALL, mix32, sealInsn without Protect::
 using Protect::Op;
 using Protect::FLY_MAGIC;
 using Protect::LPR2_MAGIC;
