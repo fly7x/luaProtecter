@@ -67,11 +67,13 @@ public:
                        Proto* luauProto = nullptr) const;
 
     uint32_t seed() const { return seed_; }
-    const std::array<uint8_t, static_cast<size_t>(Op::COUNT)>& map() const { return map_; }
+const std::array<uint8_t, static_cast<size_t>(Protect::Op::COUNT)>& map() const {
+    return map_;
+}
 
 private:
     uint32_t seed_;
-    std::array<uint8_t, static_cast<size_t>(Op::COUNT)> map_;
+    std::array<uint8_t, static_cast<size_t>(Protect::Op::COUNT)> map_;
 
     // Optional reader stubs (kept for compatibility with older code)
     struct Reader {
