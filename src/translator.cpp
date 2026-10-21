@@ -131,6 +131,8 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
     std::vector<size_t> oldToNew(luauCode.size() + 1, 0);
     std::vector<Jump> jumps;
 
+    uint32_t junkRng = seed_ ^ 0xA5F15EEDu;
+
     auto emitABC = [&](Op o, uint8_t a, uint8_t b, uint8_t c) {
         proto.code.push_back(packABC(mop(o), a, b, c));
     };
@@ -139,13 +141,25 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         proto.code.push_back(packAD(mop(o), a, 0));
     };
     auto emitK = [&](uint32_t idx) { proto.code.push_back(idx | 0x80000000u); };
+
+    // P1: maybe emit JUNK (before real op). Recorded in code stream before jump patch → offsets stay valid.
+    auto maybeJunk = [&]() {
+        junkRng = mix32(junkRng + uint32_t(proto.code.size()) * 0x9E3779B9u);
+        if ((junkRng & 3u) == 0u) {
+            uint8_t jr = uint8_t((junkRng >> 8) & 7u);
+            emitABC(Op::JUNK, jr, jr, 0);
+        }
+    };
+
     auto emitBinK = [&](Op arith, uint8_t a, uint8_t b, uint8_t kc) {
         uint8_t tmp = proto.maxstack;
         if (tmp > 250) tmp = 250;
         if (proto.maxstack < 250)
             proto.maxstack = uint8_t(proto.maxstack + 1);
+        maybeJunk();
         emitABC(Op::LOADK, tmp, 0, 0);
         emitK(kc);
+        maybeJunk();
         emitABC(arith, a, b, tmp);
     };
     auto emitBinRK = [&](Op arith, uint8_t a, uint8_t kb, uint8_t c) {
@@ -153,8 +167,10 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         if (tmp > 250) tmp = 250;
         if (proto.maxstack < 250)
             proto.maxstack = uint8_t(proto.maxstack + 1);
+        maybeJunk();
         emitABC(Op::LOADK, tmp, 0, 0);
         emitK(kb);
+        maybeJunk();
         emitABC(arith, a, tmp, c);
     };
 
@@ -246,15 +262,18 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         if (lib && fn) {
             uint32_t kLib = addStr(lib);
             uint32_t kFn = addStr(fn);
-            emitABC(Op::GETGLOBAL, callA, 0, 0);
+            maybeJunk();
+            emitABC(Op::SUPER_GETK, callA, 0, 0);
             emitK(kLib);
+            maybeJunk();
             emitABC(Op::GETTABLEKS, callA, callA, 0);
             emitK(kFn);
             return;
         }
         if (g) {
             uint32_t k = addStr(g);
-            emitABC(Op::GETGLOBAL, callA, 0, 0);
+            maybeJunk();
+            emitABC(Op::SUPER_GETK, callA, 0, 0);
             emitK(k);
         }
     };
@@ -331,38 +350,48 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             break;
 
         case LOP_CAPTURE:
+            maybeJunk();
             emitABC(Op::CAPTURE, A, B, 0);
             break;
 
         case LOP_LOADNIL:
+            maybeJunk();
             emitABC(Op::LOADNIL, A, A, 0);
             break;
         case LOP_LOADB:
+            maybeJunk();
             emitABC(Op::LOADBOOL, A, B, 0);
             if (C != 0)
                 emitJump(Op::JMP, 0, nextOld + int(C));
             break;
         case LOP_LOADN:
+            maybeJunk();
             emitABC(Op::LOADK, A, 0, 0);
             proto.code.push_back(uint32_t(int32_t(D)));
             break;
         case LOP_LOADK:
+            maybeJunk();
             emitABC(Op::LOADK, A, 0, 0);
             emitK(uint32_t(D));
             break;
         case LOP_LOADKX:
+            maybeJunk();
             emitABC(Op::LOADK, A, 0, 0);
             emitK(aux);
             break;
         case LOP_MOVE:
+            maybeJunk();
             emitABC(Op::MOVE, A, B, 0);
             break;
 
         case LOP_GETGLOBAL:
-            emitABC(Op::GETGLOBAL, A, 0, 0);
+            // P1: SUPER_GETK (same length as GETGLOBAL + K)
+            maybeJunk();
+            emitABC(Op::SUPER_GETK, A, 0, 0);
             emitK(aux);
             break;
         case LOP_SETGLOBAL:
+            maybeJunk();
             emitABC(Op::SETGLOBAL, A, 0, 0);
             emitK(aux);
             break;
@@ -371,13 +400,16 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             int id0 = int((aux >> 20) & 1023);
             int id1 = int((aux >> 10) & 1023);
             int id2 = int(aux & 1023);
-            emitABC(Op::GETGLOBAL, A, 0, 0);
+            maybeJunk();
+            emitABC(Op::SUPER_GETK, A, 0, 0);
             emitK(uint32_t(id0));
             if (count > 1) {
+                maybeJunk();
                 emitABC(Op::GETTABLEKS, A, A, 0);
                 emitK(uint32_t(id1));
             }
             if (count > 2) {
+                maybeJunk();
                 emitABC(Op::GETTABLEKS, A, A, 0);
                 emitK(uint32_t(id2));
             }
@@ -385,54 +417,66 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         }
 
         case LOP_GETTABLE:
+            maybeJunk();
             emitABC(Op::GETTABLE, A, B, C);
             break;
         case LOP_SETTABLE:
+            maybeJunk();
             emitABC(Op::SETTABLE, A, B, C);
             break;
         case LOP_GETTABLEKS:
+            maybeJunk();
             emitABC(Op::GETTABLEKS, A, B, 0);
             emitK(aux);
             break;
         case LOP_SETTABLEKS:
+            maybeJunk();
             emitABC(Op::SETTABLEKS, A, B, 0);
             emitK(aux);
             break;
         case LOP_GETTABLEN:
+            maybeJunk();
             emitABC(Op::GETTABLEN, A, B, C);
             break;
         case LOP_SETTABLEN:
+            maybeJunk();
             emitABC(Op::SETTABLEN, A, B, C);
             break;
         case LOP_NAMECALL:
+            maybeJunk();
             emitABC(Op::NAMECALL, A, B, 0);
             emitK(aux);
             break;
 
         case LOP_GETUPVAL:
+            maybeJunk();
             emitABC(Op::GETUPVAL, A, B, 0);
             break;
         case LOP_SETUPVAL:
+            maybeJunk();
             emitABC(Op::SETUPVAL, A, B, 0);
             break;
 
         case LOP_NEWTABLE:
+            maybeJunk();
             emitABC(Op::NEWTABLE, A, B, C);
             break;
         case LOP_DUPTABLE:
+            maybeJunk();
             emitABC(Op::NEWTABLE, A, 0, 0);
             break;
         case LOP_SETLIST:
+            maybeJunk();
             emitABC(Op::SETLIST, A, B, C);
             proto.code.push_back(aux == 0 ? 1u : aux);
             break;
 
-        case LOP_ADD: emitABC(Op::ADD, A, B, C); break;
-        case LOP_SUB: emitABC(Op::SUB, A, B, C); break;
-        case LOP_MUL: emitABC(Op::MUL, A, B, C); break;
-        case LOP_DIV: emitABC(Op::DIV, A, B, C); break;
-        case LOP_MOD: emitABC(Op::MOD, A, B, C); break;
-        case LOP_POW: emitABC(Op::POW, A, B, C); break;
+        case LOP_ADD: maybeJunk(); emitABC(Op::ADD, A, B, C); break;
+        case LOP_SUB: maybeJunk(); emitABC(Op::SUB, A, B, C); break;
+        case LOP_MUL: maybeJunk(); emitABC(Op::MUL, A, B, C); break;
+        case LOP_DIV: maybeJunk(); emitABC(Op::DIV, A, B, C); break;
+        case LOP_MOD: maybeJunk(); emitABC(Op::MOD, A, B, C); break;
+        case LOP_POW: maybeJunk(); emitABC(Op::POW, A, B, C); break;
         case LOP_ADDK: emitBinK(Op::ADD, A, B, C); break;
         case LOP_SUBK: emitBinK(Op::SUB, A, B, C); break;
         case LOP_MULK: emitBinK(Op::MUL, A, B, C); break;
@@ -440,27 +484,33 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_MODK: emitBinK(Op::MOD, A, B, C); break;
         case LOP_POWK: emitBinK(Op::POW, A, B, C); break;
 
-        case LOP_AND: emitABC(Op::AND, A, B, C); break;
-        case LOP_OR:  emitABC(Op::OR, A, B, C); break;
+        case LOP_AND: maybeJunk(); emitABC(Op::AND, A, B, C); break;
+        case LOP_OR:  maybeJunk(); emitABC(Op::OR, A, B, C); break;
         case LOP_ANDK: {
             uint8_t tmp = proto.maxstack;
             if (tmp > 250) tmp = 250;
             if (proto.maxstack < 250) proto.maxstack = uint8_t(proto.maxstack + 1);
-            emitABC(Op::LOADK, tmp, 0, 0); emitK(C); emitABC(Op::AND, A, B, tmp);
+            maybeJunk();
+            emitABC(Op::LOADK, tmp, 0, 0); emitK(C);
+            maybeJunk();
+            emitABC(Op::AND, A, B, tmp);
             break;
         }
         case LOP_ORK: {
             uint8_t tmp = proto.maxstack;
             if (tmp > 250) tmp = 250;
             if (proto.maxstack < 250) proto.maxstack = uint8_t(proto.maxstack + 1);
-            emitABC(Op::LOADK, tmp, 0, 0); emitK(C); emitABC(Op::OR, A, B, tmp);
+            maybeJunk();
+            emitABC(Op::LOADK, tmp, 0, 0); emitK(C);
+            maybeJunk();
+            emitABC(Op::OR, A, B, tmp);
             break;
         }
 
-        case LOP_NOT:    emitABC(Op::NOT, A, B, 0); break;
-        case LOP_MINUS:  emitABC(Op::UNM, A, B, 0); break;
-        case LOP_LENGTH: emitABC(Op::LEN, A, B, 0); break;
-        case LOP_CONCAT: emitABC(Op::CONCAT, A, B, C); break;
+        case LOP_NOT:    maybeJunk(); emitABC(Op::NOT, A, B, 0); break;
+        case LOP_MINUS:  maybeJunk(); emitABC(Op::UNM, A, B, 0); break;
+        case LOP_LENGTH: maybeJunk(); emitABC(Op::LEN, A, B, 0); break;
+        case LOP_CONCAT: maybeJunk(); emitABC(Op::CONCAT, A, B, C); break;
 
         case LOP_JUMP:
         case LOP_JUMPBACK:
@@ -474,26 +524,32 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             break;
 
         case LOP_JUMPIFEQ:
+            maybeJunk();
             emitABC(Op::EQ, A, uint8_t(aux), 0);
             emitJump(Op::JMP, 0, nextOld + D);
             break;
         case LOP_JUMPIFLE:
+            maybeJunk();
             emitABC(Op::LE, A, uint8_t(aux), 0);
             emitJump(Op::JMP, 0, nextOld + D);
             break;
         case LOP_JUMPIFLT:
+            maybeJunk();
             emitABC(Op::LT, A, uint8_t(aux), 0);
             emitJump(Op::JMP, 0, nextOld + D);
             break;
         case LOP_JUMPIFNOTEQ:
+            maybeJunk();
             emitABC(Op::EQ, A, uint8_t(aux), 1);
             emitJump(Op::JMP, 0, nextOld + D);
             break;
         case LOP_JUMPIFNOTLE:
+            maybeJunk();
             emitABC(Op::LE, A, uint8_t(aux), 1);
             emitJump(Op::JMP, 0, nextOld + D);
             break;
         case LOP_JUMPIFNOTLT:
+            maybeJunk();
             emitABC(Op::LT, A, uint8_t(aux), 1);
             emitJump(Op::JMP, 0, nextOld + D);
             break;
@@ -505,16 +561,19 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
 #endif
 
         case LOP_CALL:
+            maybeJunk();
             emitABC(Op::CALL, A, B, C);
             break;
 #ifdef LOP_CALLFB
         case LOP_CALLFB:
 #endif
         case 87:
+            maybeJunk();
             emitABC(Op::CALL, A, B, C);
             break;
 
         case LOP_RETURN:
+            maybeJunk();
             emitABC(Op::RETURN, A, B, 0);
             break;
 
@@ -561,7 +620,9 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             uint8_t tmp = proto.maxstack;
             if (tmp > 250) tmp = 250;
             if (proto.maxstack < 250) proto.maxstack = uint8_t(proto.maxstack + 1);
+            maybeJunk();
             emitABC(Op::LOADNIL, tmp, tmp, 0);
+            maybeJunk();
             emitABC(Op::EQ, A, tmp, isNot ? 1 : 0);
             emitJump(Op::JMP, 0, nextOld + D);
             break;
@@ -576,7 +637,9 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             uint8_t tmp = proto.maxstack;
             if (tmp > 250) tmp = 250;
             if (proto.maxstack < 250) proto.maxstack = uint8_t(proto.maxstack + 1);
+            maybeJunk();
             emitABC(Op::LOADBOOL, tmp, val ? 1 : 0, 0);
+            maybeJunk();
             emitABC(Op::EQ, A, tmp, isNot ? 1 : 0);
             emitJump(Op::JMP, 0, nextOld + D);
             break;
@@ -595,8 +658,10 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             uint8_t tmp = proto.maxstack;
             if (tmp > 250) tmp = 250;
             if (proto.maxstack < 250) proto.maxstack = uint8_t(proto.maxstack + 1);
+            maybeJunk();
             emitABC(Op::LOADK, tmp, 0, 0);
             emitK(kidx);
+            maybeJunk();
             emitABC(Op::EQ, A, tmp, isNot ? 1 : 0);
             emitJump(Op::JMP, 0, nextOld + D);
             break;
@@ -606,6 +671,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_IDIV:
 #endif
         case 81:
+            maybeJunk();
             emitABC(Op::IDIV, A, B, C);
             break;
 #ifdef LOP_IDIVK
@@ -632,6 +698,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_GETUDATAKS:
 #endif
         case 83:
+            maybeJunk();
             emitABC(Op::GETTABLEKS, A, B, 0);
             emitK(aux & 0xFFFFu);
             break;
@@ -639,6 +706,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_SETUDATAKS:
 #endif
         case 84:
+            maybeJunk();
             emitABC(Op::SETTABLEKS, A, B, 0);
             emitK(aux & 0xFFFFu);
             break;
@@ -646,6 +714,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_NAMECALLUDATA:
 #endif
         case 85:
+            maybeJunk();
             emitABC(Op::NAMECALL, A, B, 0);
             emitK(aux & 0xFFFFu);
             break;
@@ -654,22 +723,26 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_NEWCLASSMEMBER:
 #endif
         case 86:
+            maybeJunk();
             emitABC(Op::SETTABLEKS, C, A, 0);
             emitK(aux);
             break;
 
         case LOP_NEWCLOSURE:
+            maybeJunk();
             emitABC(Op::CLOSURE, A, 0, 0);
             proto.code.push_back(uint32_t(int32_t(D)));
             break;
         case LOP_DUPCLOSURE: {
             uint32_t childIndex = resolveDupChild(luauProto, int(D));
+            maybeJunk();
             emitABC(Op::CLOSURE, A, 0, 0);
             proto.code.push_back(childIndex);
             break;
         }
 
         case LOP_GETVARARGS:
+            maybeJunk();
             emitABC(Op::VARARG, A, B, 0);
             break;
 
@@ -683,6 +756,10 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         pc += size_t(len);
     }
     oldToNew[luauCode.size()] = proto.code.size();
+
+    // trailing junk
+    junkRng = mix32(junkRng ^ 0xDEADu);
+    emitABC(Op::JUNK, 0, 0, 0);
 
     for (const Jump& j : jumps) {
         int t = j.oldTarget;
