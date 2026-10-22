@@ -11,7 +11,7 @@ public:
     struct Options {
         int heads = 1;
         bool watchdog = true;
-        bool strictEnv = true;
+        bool strictEnv = false;   // false = merge getgenv / executor globals (hubs)
         bool safeParse = true;
         bool dense = true;
     };
