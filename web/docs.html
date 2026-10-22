@@ -1,55 +1,205 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Docs · fły</title>
-    <link rel="stylesheet" href="/style.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docs — FŁY</title>
+<meta name="description" content="Install, build, and configure FŁY: CMake options, the Luau submodule, project layout, and the CLI.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <canvas id="bg-grid" aria-hidden="true"></canvas>
 
-    <div class="chrome">
-        <div class="titlebar">
-            <div class="dots"><span></span><span></span><span></span></div>
-            <span class="path">fly@protect:~/docs</span>
-            <a class="brand" href="/home"><span class="p1">fly::</span>protect<span class="p2">()</span></a>
-        </div>
-        <nav class="tabs">
-            <a class="tab" href="/home"><span class="dot"></span>home.lua</a>
-            <a class="tab" href="/obfuscator"><span class="dot"></span>obfuscator.lua</a>
-            <a class="tab active" href="/docs"><span class="dot"></span>docs.md</a>
-            <a class="tab" href="/pricing"><span class="dot"></span>pricing.json</a>
-        </nav>
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="brand"><span class="mark">FŁ</span>FŁY</a>
+    <div class="nav-links">
+      <a href="index.html#pipeline">How it works</a>
+      <a href="index.html#techniques">Techniques</a>
+      <a href="index.html#benchmarks">Benchmarks</a>
+      <a href="docs.html">Docs</a>
+      <a href="index.html#faq">FAQ</a>
     </div>
+    <div class="nav-cta">
+      <a class="btn btn-ghost btn-sm" href="https://github.com/fly7x/luaProtecter" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
 
-    <main class="wrap">
-        <p class="eyebrow">Docs</p>
-        <h2 style="margin-bottom:26px">How to use it</h2>
+<div class="docs-shell">
 
-        <ol class="ol-steps panel">
-            <li>Open <code>/obfuscator</code>.</li>
-            <li>Paste Luau. Start with <code>print("hi")</code> if you just want to see it work.</li>
-            <li>Click Protect, copy the output, and put it in a Script or LocalScript.</li>
-            <li>Don't wrap the output in another obfuscator until this one is stable for you.</li>
-        </ol>
+  <aside class="docs-side">
+    <div class="group">
+      <h6>Get started</h6>
+      <a href="#overview">Overview</a>
+      <a href="#installation">Installation</a>
+      <a href="#build-options">Build options</a>
+      <a href="#docker">Docker build</a>
+    </div>
+    <div class="group">
+      <h6>Using FŁY</h6>
+      <a href="#project-layout">Project layout</a>
+      <a href="#running">Running the protector</a>
+      <a href="#config-reference">Config reference</a>
+    </div>
+    <div class="group">
+      <h6>Reference</h6>
+      <a href="#pipeline-stages">Pipeline stages</a>
+      <a href="#troubleshooting">Troubleshooting</a>
+      <a href="#faq">FAQ</a>
+    </div>
+  </aside>
 
-        <div class="panel" style="margin-top:16px">
-            <div class="comment">// what it emits</div>
-            <p>A plain Luau file. No native binaries. Uses bit32, string, table, and a VM generated for that build. Compatible with Roblox and with Run on luau.org.</p>
-        </div>
+  <main class="docs-main">
+    <h1>Documentation</h1>
+    <p class="intro">Everything you need to build FŁY, wire in Luau, and run your first script through the protector. FŁY is a native C++ / CMake project — there's no package manager step, just a clone and a build.</p>
 
-        <div class="panel">
-            <div class="comment">// honesty</div>
-            <p>No public VM is undecompilable. fly::protect() raises time-to-recover, not the difficulty to zero. It isn't Luraph and won't become Luraph by stacking fake layer counts.</p>
-        </div>
-    </main>
+    <section class="doc-section" id="overview">
+      <h2>Overview</h2>
+      <p>FŁY protects Lua and Luau source files by rewriting them through a three-stage native pipeline before they ship. You give it <code class="inline">input/script.lua</code>; it gives you back <code class="inline">output/protected.lua</code> — a file that runs the same way but no longer reads the way the original did.</p>
+      <p>The project builds with CMake and optionally links against Roblox's own Luau compiler and runtime, added as a git submodule. That integration is controlled by a single CMake option, <code class="inline">USE_LUAU</code>, which is on by default.</p>
+      <div class="note">
+        FŁY is distributed as source. Building it yourself means you always know exactly what binary is processing your scripts.
+      </div>
+    </section>
 
-    <footer>
-        <span>fly::protect() — custom VM pipeline for Luau</span>
-        <span>Questions belong in the repo, not a support queue.</span>
-    </footer>
+    <section class="doc-section" id="installation">
+      <h2>Installation</h2>
+      <p>Clone the repository, then decide whether you want Luau integration before your first build — it's easiest to add the submodule up front.</p>
 
-    <script src="/bg.js"></script>
+      <h3>1. Clone the repository</h3>
+      <pre class="code-block">git clone https://github.com/fly7x/luaProtecter.git
+cd luaProtecter</pre>
+
+      <h3>2. Add Luau as a submodule (recommended)</h3>
+      <p>FŁY's CMake looks for a Luau checkout at <code class="inline">third_party/luau</code>. Adding it as a submodule is the supported way to provide one:</p>
+      <pre class="code-block">git submodule add https://github.com/Roblox/luau.git third_party/luau
+git submodule update --init --recursive</pre>
+      <p>If you skip this step, CMake detects the missing directory and builds FŁY without Luau integration instead of failing — see <a href="#build-options">build options</a>.</p>
+
+      <h3>3. Configure and build</h3>
+      <pre class="code-block">mkdir build &amp;&amp; cd build
+cmake -DUSE_LUAU=ON ..
+cmake --build .</pre>
+      <p>On a clean checkout this produces the FŁY binary inside <code class="inline">build/</code>. Point it at a script under <code class="inline">input/</code> to produce a protected file under <code class="inline">output/</code> — see <a href="#running">Running the protector</a>.</p>
+
+      <div class="note warn">
+        If CMake reports that it can't find a Luau target, the submodule's own CMakeLists may export it under a different target name than FŁY expects. See <a href="#troubleshooting">Troubleshooting</a>.
+      </div>
+    </section>
+
+    <section class="doc-section" id="build-options">
+      <h2>Build options</h2>
+      <p>FŁY currently exposes its Luau integration as a single CMake switch.</p>
+      <table class="config-table">
+        <thead><tr><th>Option</th><th>Type</th><th>Default</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td>USE_LUAU</td><td>bool</td><td>ON</td><td>When on, CMake looks for a Luau CMakeLists.txt under <code class="inline">third_party/luau</code> and adds it as a subdirectory, then links the <code class="inline">luau</code> target against FŁY if one exists. When off, FŁY builds without attempting Luau integration at all.</td></tr>
+        </tbody>
+      </table>
+      <pre class="code-block"># build without Luau integration
+cmake -DUSE_LUAU=OFF ..
+cmake --build .</pre>
+      <p>This is the right choice if you only need the transform / obfuscate / emit pipeline and don't need Luau's compiler or runtime linked in.</p>
+    </section>
+
+    <section class="doc-section" id="docker">
+      <h2>Docker build</h2>
+      <p>A <code class="inline">Dockerfile</code> ships at the repository root, so you can build FŁY in a container instead of installing a toolchain locally — the same approach a CI pipeline would use.</p>
+      <pre class="code-block">docker build -t fly-obfuscator .
+docker run --rm -v "$PWD/input:/app/input" -v "$PWD/output:/app/output" fly-obfuscator</pre>
+      <p>Mount your own <code class="inline">input/</code> and <code class="inline">output/</code> directories as shown so files make it in and out of the container.</p>
+    </section>
+
+    <section class="doc-section" id="project-layout">
+      <h2>Project layout</h2>
+      <p>The repository is organized around the three pipeline stages, with a clear split between source, generated third-party code, and the script files you're protecting:</p>
+      <pre class="code-block">luaProtecter/
+├── src/
+│   ├── main.cpp            entry point, wires the pipeline together
+│   ├── transformer.cpp/.hpp    stage 1 — control-flow rebuilding
+│   ├── obfuscation.cpp/.hpp    stage 2 — renaming, string &amp; constant encoding
+│   └── emitter.cpp/.hpp        stage 3 — writes the protected file
+├── include/
+│   └── protector/
+│       └── config.hpp      pipeline configuration
+├── input/
+│   └── script.lua          put the script you want protected here
+├── output/
+│   └── protected.lua       FŁY writes the result here
+├── third_party/
+│   └── luau/                ← official Luau source goes here (submodule)
+├── web/                    this site's source
+├── CMakeLists.txt
+└── Dockerfile</pre>
+    </section>
+
+    <section class="doc-section" id="running">
+      <h2>Running the protector</h2>
+      <p>Place the file you want to protect at <code class="inline">input/script.lua</code>, then run the binary you built:</p>
+      <pre class="code-block">./build/fly-obfuscator</pre>
+      <p>A protected copy is written to <code class="inline">output/protected.lua</code>. Run the binary with <code class="inline">--help</code> to see the flags available in your checkout — they're a faster source of truth than any document for exactly which options your build was compiled with.</p>
+      <div class="note">
+        Keep your original source under version control somewhere outside <code class="inline">output/</code>. Protected files aren't meant to be edited by hand.
+      </div>
+    </section>
+
+    <section class="doc-section" id="config-reference">
+      <h2>Config reference</h2>
+      <p><code class="inline">include/protector/config.hpp</code> is where the pipeline's behavior is defined at compile time. The table below describes the kind of switches you'll find there by category — check the header in your own checkout for the exact names and defaults shipped in your version.</p>
+      <table class="config-table">
+        <thead><tr><th>Category</th><th>Stage</th><th>Controls</th></tr></thead>
+        <tbody>
+          <tr><td>flow</td><td>transformer</td><td>Whether control-flow rebuilding runs, and how aggressively branches and loops are restructured.</td></tr>
+          <tr><td>naming</td><td>obfuscation</td><td>The identifier scheme used when renaming locals, upvalues, and functions.</td></tr>
+          <tr><td>strings</td><td>obfuscation</td><td>Whether string literals are encoded, and which encoding is used.</td></tr>
+          <tr><td>constants</td><td>obfuscation</td><td>Whether numeric literals are rewritten as equivalent expressions.</td></tr>
+          <tr><td>luau</td><td>build</td><td>Mirrors the <code class="inline">USE_LUAU</code> CMake option for code that checks it at compile time.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="doc-section" id="pipeline-stages">
+      <h2>Pipeline stages, in detail</h2>
+      <h3>Transformer</h3>
+      <p>Parses the input script and rebuilds its control flow into an equivalent form. This runs first because every later stage works against the rebuilt structure, not your original layout.</p>
+      <h3>Obfuscation</h3>
+      <p>Walks the rebuilt program and replaces the things a reader relies on: identifier names become opaque symbols, string literals are encoded, and numeric constants are rewritten as expressions that evaluate to the same value.</p>
+      <h3>Emitter</h3>
+      <p>Serializes the fully processed program back out as valid Lua, written to <code class="inline">output/protected.lua</code>. This is the only stage that touches the filesystem for output.</p>
+    </section>
+
+    <section class="doc-section" id="troubleshooting">
+      <h2>Troubleshooting</h2>
+      <h3>CMake can't find a Luau target</h3>
+      <p>FŁY's CMake tries to link a target literally named <code class="inline">luau</code> if the Luau submodule's own CMake defines one. If the version of Luau you added exports a different target name, update the <code class="inline">target_link_libraries</code> call in the top-level <code class="inline">CMakeLists.txt</code> to match it.</p>
+      <h3>Luau submodule not detected</h3>
+      <p>Confirm <code class="inline">third_party/luau</code> isn't empty — a submodule that was added but never initialized leaves the directory present but bare. Run <code class="inline">git submodule update --init --recursive</code> and reconfigure.</p>
+      <h3>Build works without Luau</h3>
+      <p>This is expected behavior, not an error: when <code class="inline">third_party/luau</code> has no CMakeLists.txt, FŁY skips the integration and builds the core pipeline on its own.</p>
+    </section>
+
+    <section class="doc-section" id="faq">
+      <h2>FAQ</h2>
+      <h3>Is a Lua interpreter required to build FŁY?</h3>
+      <p>No — FŁY is a C++ project built with CMake. Luau is only needed if you want its compiler or runtime linked in for compile-time checks against Luau-specific syntax.</p>
+      <h3>Where do I report a bug?</h3>
+      <p>Open an issue on the <a href="https://github.com/fly7x/luaProtecter/issues" target="_blank" rel="noopener">GitHub issue tracker</a> with your CMake configuration, OS, and whether <code class="inline">USE_LUAU</code> was on.</p>
+    </section>
+
+  </main>
+
+  <aside class="docs-toc">
+    <h6>Project</h6>
+    <a href="https://github.com/fly7x/luaProtecter" target="_blank" rel="noopener">Repository</a>
+    <a href="https://github.com/fly7x/luaProtecter/issues" target="_blank" rel="noopener">Issues</a>
+    <a href="https://github.com/Roblox/luau" target="_blank" rel="noopener">Luau (Roblox)</a>
+  </aside>
+
+</div>
+
+<script src="script.js"></script>
 </body>
 </html>
