@@ -28,9 +28,10 @@ static void decryptBlock(std::vector<uint8_t>& data, uint32_t seed) {
 
 std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob) const {
     Options o;
-    o.strictEnv = true;
+    o.strictEnv = false;
     o.safeParse = true;
     o.dense = true;
+    o.watchdog = true;
     return emitVirtualizedScript(encryptedBlob, o);
 }
 
@@ -108,7 +109,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "--[[\n"
          "  ╔══════════════════════════════════════════╗\n"
          "  ║          FŁÝ  ·  FLYX  Protection         ║\n"
-         "  ║   Fast-VM  ·  FLY3  ·  upvalue-fix      ║\n"
+         "  ║   Fast-VM  ·  FLY3  ·  hub-env            ║\n"
          "  ╚══════════════════════════════════════════╝\n"
          "]]\n";
 
@@ -265,6 +266,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "return P,mainId,inv\n"
          "end\n";
 
+    // ---- Full hub / executor environment ----
     o << "local function " << nEnv << "()\n"
          "local G={}\n"
          "G.print=print G.warn=warn G.error=error G.pcall=pcall G.xpcall=xpcall\n"
@@ -274,13 +276,16 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "G.rawget=rawget G.rawset=rawset G.rawequal=rawequal G.rawlen=rawlen\n"
          "G.setmetatable=setmetatable G.getmetatable=getmetatable\n"
          "G.bit32=bit32 G.math=math G.string=string G.table=table G.task=task G.utf8=utf8\n"
+         "G.coroutine=coroutine G.os=os G.tick=tick G.time=time G.DateTime=DateTime\n"
          "G.game=game G.workspace=workspace G.Workspace=workspace G.script=script\n"
          "G.Vector2=Vector2 G.Vector3=Vector3 G.CFrame=CFrame G.UDim=UDim G.UDim2=UDim2\n"
          "G.Color3=Color3 G.ColorSequence=ColorSequence G.ColorSequenceKeypoint=ColorSequenceKeypoint\n"
          "G.NumberSequence=NumberSequence G.NumberSequenceKeypoint=NumberSequenceKeypoint\n"
          "G.NumberRange=NumberRange G.Rect=Rect G.Region3=Region3 G.Ray=Ray\n"
          "G.BrickColor=BrickColor G.Enum=Enum G.Instance=Instance G.TweenInfo=TweenInfo\n"
-         "G.os=os G.tick=tick G.time=time G.DateTime=DateTime\n"
+         "G.Random=Random G.Faces=Faces G.Axes=Axes\n"
+         "G.require=require G.shared=shared\n"
+         "G.loadstring=loadstring or load G.load=load or loadstring\n"
          "pcall(function() G.Players=game:GetService(\"Players\") end)\n"
          "pcall(function() G.RunService=game:GetService(\"RunService\") end)\n"
          "pcall(function() G.ReplicatedStorage=game:GetService(\"ReplicatedStorage\") end)\n"
@@ -290,19 +295,55 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "pcall(function() G.HttpService=game:GetService(\"HttpService\") end)\n"
          "pcall(function() G.CollectionService=game:GetService(\"CollectionService\") end)\n"
          "pcall(function() G.Lighting=game:GetService(\"Lighting\") end)\n"
-         "pcall(function() G.Debris=game:GetService(\"Debris\") end)\n";
+         "pcall(function() G.Debris=game:GetService(\"Debris\") end)\n"
+         "pcall(function() G.GuiService=game:GetService(\"GuiService\") end)\n"
+         "pcall(function() G.ProximityPromptService=game:GetService(\"ProximityPromptService\") end)\n"
+         "pcall(function() G.PathfindingService=game:GetService(\"PathfindingService\") end)\n"
+         "pcall(function() G.MarketplaceService=game:GetService(\"MarketplaceService\") end)\n"
+         "pcall(function() G.TeleportService=game:GetService(\"TeleportService\") end)\n"
+         "pcall(function() G.SoundService=game:GetService(\"SoundService\") end)\n"
+         "pcall(function() G.TextService=game:GetService(\"TextService\") end)\n"
+         "pcall(function() G.Stats=game:GetService(\"Stats\") end)\n"
+         // executor / exploit globals
+         "pcall(function()\n"
+         "local eg=nil\n"
+         "if getgenv then eg=getgenv() end\n"
+         "if type(eg)~=\"table\" and getfenv then eg=getfenv(0) end\n"
+         "if type(eg)~=\"table\" then eg=_G end\n"
+         "if type(eg)==\"table\" then\n"
+         "for k,v in pairs(eg) do if rawget(G,k)==nil then rawset(G,k,v) end end\n"
+         "end\n"
+         "end)\n"
+         "pcall(function() if setclipboard then G.setclipboard=setclipboard end end)\n"
+         "pcall(function() if toclipboard then G.toclipboard=toclipboard G.setclipboard=G.setclipboard or toclipboard end end)\n"
+         "pcall(function() if setfpscap then G.setfpscap=setfpscap end end)\n"
+         "pcall(function() if getgenv then G.getgenv=getgenv end end)\n"
+         "pcall(function() if getrenv then G.getrenv=getrenv end end)\n"
+         "pcall(function() if getrawmetatable then G.getrawmetatable=getrawmetatable end end)\n"
+         "pcall(function() if setrawmetatable then G.setrawmetatable=setrawmetatable end end)\n"
+         "pcall(function() if hookfunction then G.hookfunction=hookfunction end end)\n"
+         "pcall(function() if newcclosure then G.newcclosure=newcclosure end end)\n"
+         "pcall(function() if islclosure then G.islclosure=islclosure end end)\n"
+         "pcall(function() if isexecutorclosure then G.isexecutorclosure=isexecutorclosure end end)\n"
+         "pcall(function() if identifyexecutor then G.identifyexecutor=identifyexecutor end end)\n"
+         "pcall(function() if request then G.request=request end end)\n"
+         "pcall(function() if http_request then G.http_request=http_request end end)\n"
+         "pcall(function() if syn and type(syn)==\"table\" then G.syn=syn end end)\n"
+         "G._G=G G._ENV=G\n";
+
     if (strictEnv) {
         o << "return setmetatable({},{__index=function(_,k) return rawget(G,k) end,"
              "__newindex=function(_,k,v) rawset(G,k,v) end})\nend\n";
     } else {
         o << "local RealG=type(_G)==\"table\" and _G or {}\n"
              "pcall(function() if getfenv then local e=getfenv(0) if type(e)==\"table\" then RealG=e end end end)\n"
-             "G._G=RealG G._ENV=RealG\n"
+             "pcall(function() if getgenv then local e=getgenv() if type(e)==\"table\" then RealG=e end end end)\n"
              "return setmetatable({},{__index=function(_,k)\n"
              "local v=rawget(G,k) if v~=nil then return v end\n"
              "local ok,r=pcall(function() return RealG[k] end) if ok and r~=nil then return r end\n"
-             "ok,r=pcall(function() return _G[k] end) if ok then return r end return nil end,\n"
-             "__newindex=function(_,k,v) rawset(G,k,v) end})\nend\n";
+             "ok,r=pcall(function() return _G[k] end) if ok then return r end\n"
+             "return nil end,\n"
+             "__newindex=function(_,k,v) rawset(G,k,v) pcall(function() RealG[k]=v end) end})\nend\n";
     }
 
     o << "local function " << nOpen << "(cell,bs)\n"
@@ -328,7 +369,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "return word\n"
          "end\n";
 
-    // ---- VM with shared REF upvalue boxes ----
     o << "local function " << nX << "(P,inv,E,pid,args,ups)\n"
          "local CAP=38\n";
     if (safeParse)
@@ -361,7 +401,8 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "end\n"
          "else ups[i]=v end\n"
          "end\n"
-         "local pc,code,steps,lim,tickchk=1,proto.c,0," << (watchdog ? "8000000" : "1e15") << ",0\n"
+         // 50M steps — large hubs; still finite
+         "local pc,code,steps,lim,tickchk=1,proto.c,0," << (watchdog ? "50000000" : "1e15") << ",0\n"
          "local CSNew,NSNew\n"
          "pcall(function() CSNew=ColorSequence.new end)\n"
          "pcall(function() NSNew=NumberSequence.new end)\n"
@@ -450,12 +491,12 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "setR(Ra,function(...) return " << nX << "(P,inv,E,cid,{...},stored) end) end\n"
          "Z[38]=function() end\n"
          "Z[44]=function(A,B,C,Dd,Ra,Rb) local ok=(reg[Ra]==reg[Rb]) if C~=0 then ok=not ok end if not ok then pc+=1 end end\n"
-         "Z[45]=function(A,B,C,Dd,Ra,Rb) local _=bit32.bxor(A or 0,B or 0,C or 0) end\n"
+         "Z[45]=function(A,B,C,Dd,Ra,Rb) end\n"
          "Z[46]=function(A,B,C,Dd,Ra) pc+=1 if pc>#code then error(\"x\") end setR(Ra,E[" << nKn << "(proto,code[pc])]) end\n"
          "Z[47]=function(A,B,C,Dd,Ra,Rb) local fn=reg[Ra] if type(fn)~=\"function\" then error(\"x\") end local ok,ret=pcall(fn,reg[Rb]) if not ok then error(tostring(ret)) end if C~=0 then setR(Ra,ret) end end\n"
          "while pc<=#code do\n"
          "steps+=1 if steps>lim then error(\"x\") end\n"
-         "tickchk+=1 if tickchk>=1536 then tickchk=0 local cs=0 for i=1,#code do cs=bit32.bxor(cs,code[i]) end if cs~=proto.cs then error(\"x\") end end\n"
+         "tickchk+=1 if tickchk>=4096 then tickchk=0 local cs=0 for i=1,#code do cs=bit32.bxor(cs,code[i]) end if cs~=proto.cs then error(\"x\") end end\n"
          "local inst=code[pc]\n"
          "local op=inv[bit32.band(inst,255)]\n"
          "if op==nil or op<0 then error(\"x\") end\n"
