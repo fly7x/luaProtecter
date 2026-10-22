@@ -66,34 +66,31 @@ std::string Transformer::removeComments(const std::string& source) const {
 
 static std::string flyBanner(const char* modeLine) {
     std::ostringstream o;
-    o << "--[[\n";
-    o << "  ╔══════════════════════════════════════════╗\n";
-    o << "  ║          FŁÝ  ·  FLYX  Protection         ║\n";
-    o << "  ║  " << modeLine << "\n";
-    o << "  ╚══════════════════════════════════════════╝\n";
-    o << "]]\n";
+    o << "--[[\n"
+         "  ╔══════════════════════════════════════════╗\n"
+         "  ║          FŁÝ  ·  FLYX  Protection         ║\n"
+         "  ║  " << modeLine << "\n"
+         "  ╚══════════════════════════════════════════╝\n"
+         "]]\n";
     return o.str();
 }
 
-// Stronger hybrid: 3-pass XOR + split chunks + dual checksum + shuffled load path
 std::string Transformer::emitHybrid(const std::string& source, uint32_t seed) const {
     std::vector<uint8_t> plain(source.begin(), source.end());
 
-    // Pass 1
+    // 3-pass XOR (must match Lua decrypt + umul32 mix32)
     uint32_t s1 = seed;
     for (size_t i = 0; i < plain.size(); ++i) {
         s1 = mix32(s1 + uint32_t(i) + 0x9E3779B9u);
         uint8_t k = uint8_t(s1 ^ (s1 >> 8) ^ uint8_t(i * 131u + 17u));
         plain[i] = uint8_t(plain[i] ^ k);
     }
-    // Pass 2 reverse
     uint32_t s2 = seed ^ 0xC2B2AE35u;
     for (size_t i = plain.size(); i-- > 0;) {
         s2 = mix32(s2 + uint32_t(i) * 0x85EBCA6Bu);
         uint8_t k = uint8_t(s2 ^ (s2 >> 16) ^ uint8_t(i * 47u + 91u));
         plain[i] = uint8_t(plain[i] ^ k);
     }
-    // Pass 3 forward (extra layer)
     uint32_t s3 = mix32(seed ^ 0xDEADBEEFu);
     for (size_t i = 0; i < plain.size(); ++i) {
         s3 = mix32(s3 + uint32_t(i) * 0x27D4EB2Du + 0x165667B1u);
@@ -146,44 +143,56 @@ std::string Transformer::emitHybrid(const std::string& source, uint32_t seed) co
     o << "for i=1,#" << B << " do sealed[#sealed+1]=" << B << "[i] end\n";
     o << "for i=1,#" << C << " do sealed[#sealed+1]=" << C << "[i] end\n";
     o << "for i=1,#" << D << " do sealed[#sealed+1]=" << D << "[i] end\n";
-    o << "do local a=0 for i=1,#sealed do local c=sealed[i] a=bit32.bxor(a+c+bit32.band(bit32.lshift(a,3),0xFFFFFFFF),bit32.rshift(a,5)) end if a~=K[5] then return end end\n";
+    o << "do local a=0 for i=1,#sealed do local c=sealed[i] "
+         "a=bit32.bxor(a+c+bit32.band(bit32.lshift(a,3),0xFFFFFFFF),bit32.rshift(a,5)) end "
+         "if a~=K[5] then error(\"hybrid sealed\") end end\n";
     o << A << "," << B << "," << C << "," << D << "=nil,nil,nil,nil\n";
-    o << "local function mix(x)\n";
-    o << "x=bit32.bxor(x,bit32.rshift(x,16)) x=bit32.band(x*0x7FEB352D,0xFFFFFFFF)\n";
-    o << "x=bit32.bxor(x,bit32.rshift(x,15)) x=bit32.band(x*0x846CA68B,0xFFFFFFFF)\n";
-    o << "x=bit32.bxor(x,bit32.rshift(x,16)) return x end\n";
-    o << "local function decBytes(chunk)\n";
-    o << "local o={} for i=1,#chunk do o[i]=chunk[i] end\n";
-    // reverse pass 3
-    o << "local s=K[3]\n";
-    o << "for i=1,#o do\n";
-    o << "s=mix(s+(i-1)*0x27D4EB2D+0x165667B1)\n";
-    o << "local k=bit32.band(bit32.bxor(s,bit32.rshift(s,11),(i-1)*19+63),255)\n";
-    o << "o[i]=bit32.band(bit32.bxor(o[i],k),255)\n";
-    o << "end\n";
-    // reverse pass 2
-    o << "s=K[2]\n";
-    o << "for i=#o,1,-1 do\n";
-    o << "s=mix(s+(i-1)*0x85EBCA6B)\n";
-    o << "local k=bit32.band(bit32.bxor(s,bit32.rshift(s,16),(i-1)*47+91),255)\n";
-    o << "o[i]=bit32.band(bit32.bxor(o[i],k),255)\n";
-    o << "end\n";
-    // reverse pass 1
-    o << "s=K[1]\n";
-    o << "for i=1,#o do\n";
-    o << "s=mix(s+(i-1)+0x9E3779B9)\n";
-    o << "local k=bit32.band(bit32.bxor(s,bit32.rshift(s,8),(i-1)*131+17),255)\n";
-    o << "o[i]=bit32.band(bit32.bxor(o[i],k),255)\n";
-    o << "end\n";
-    o << "local t={} for i=1,#o do t[i]=string.char(o[i]) end return table.concat(t)\n";
-    o << "end\n";
+
+    o << "local function umul32(a,b)\n"
+         "local aL=bit32.band(a,0xFFFF) local aH=bit32.rshift(a,16)\n"
+         "local bL=bit32.band(b,0xFFFF) local bH=bit32.rshift(b,16)\n"
+         "local lo=aL*bL local mid=aL*bH+aH*bL\n"
+         "return bit32.band(lo+bit32.lshift(bit32.band(mid,0xFFFF),16),0xFFFFFFFF)\n"
+         "end\n"
+         "local function mix(x)\n"
+         "x=bit32.bxor(x,bit32.rshift(x,16))\n"
+         "x=umul32(x,0x7FEB352D)\n"
+         "x=bit32.bxor(x,bit32.rshift(x,15))\n"
+         "x=umul32(x,0x846CA68B)\n"
+         "x=bit32.bxor(x,bit32.rshift(x,16))\n"
+         "return x\n"
+         "end\n";
+
+    o << "local function decBytes(chunk)\n"
+         "local o={} for i=1,#chunk do o[i]=chunk[i] end\n"
+         "local s=K[3]\n"
+         "for i=1,#o do\n"
+         "s=mix(s+(i-1)*0x27D4EB2D+0x165667B1)\n"
+         "local k=bit32.band(bit32.bxor(s,bit32.rshift(s,11),(i-1)*19+63),255)\n"
+         "o[i]=bit32.band(bit32.bxor(o[i],k),255)\n"
+         "end\n"
+         "s=K[2]\n"
+         "for i=#o,1,-1 do\n"
+         "s=mix(s+(i-1)*0x85EBCA6B)\n"
+         "local k=bit32.band(bit32.bxor(s,bit32.rshift(s,16),(i-1)*47+91),255)\n"
+         "o[i]=bit32.band(bit32.bxor(o[i],k),255)\n"
+         "end\n"
+         "s=K[1]\n"
+         "for i=1,#o do\n"
+         "s=mix(s+(i-1)+0x9E3779B9)\n"
+         "local k=bit32.band(bit32.bxor(s,bit32.rshift(s,8),(i-1)*131+17),255)\n"
+         "o[i]=bit32.band(bit32.bxor(o[i],k),255)\n"
+         "end\n"
+         "local t={} for i=1,#o do t[i]=string.char(o[i]) end return table.concat(t)\n"
+         "end\n";
+
     o << "local src=decBytes(sealed) sealed=nil\n";
-    o << "local function psum(s)\n";
-    o << "local sum=0 for i=1,#s do sum=bit32.band(sum+string.byte(s,i)*(1+(i-1)%7),0xFFFFFFFF) end return sum\n";
-    o << "end\n";
-    o << "if psum(src)~=K[4] then return end\n";
+    o << "local function psum(s)\n"
+         "local sum=0 for i=1,#s do sum=bit32.band(sum+string.byte(s,i)*(1+(i-1)%7),0xFFFFFFFF) end return sum\n"
+         "end\n";
+    o << "if psum(src)~=K[4] then error(\"hybrid psum\") end\n";
     o << "local ld=loadstring or load\n";
-    o << "if type(ld)~=\"function\" then error(\"x\") end\n";
+    o << "if type(ld)~=\"function\" then error(\"no loadstring\") end\n";
     o << "local fn,err=ld(src) src=nil\n";
     o << "if not fn then error(tostring(err)) end\n";
     o << "return fn()\n";
@@ -210,11 +219,9 @@ std::string Transformer::protect(const std::string& source, const Options& optio
     if (options.removeComments)
         processed = removeComments(processed);
 
-    // Hybrid path: fast native after decrypt (GUI / large UI)
     if (options.wholeScriptEncrypt && !options.virtualize)
         return emitHybrid(processed, seed);
 
-    // VM path: max protection (steal / small sensitive modules)
     Compiler compiler;
     auto compiled = compiler.compile(processed);
     if (!compiled.success)
@@ -231,7 +238,7 @@ std::string Transformer::protect(const std::string& source, const Options& optio
     Protect::Virtualizer::Options vopts;
     vopts.heads = (options.vmHeads <= 1) ? 1 : 2;
     vopts.watchdog = true;
-    vopts.strictEnv = false; // hubs need executor globals
+    vopts.strictEnv = false;
     vopts.safeParse = options.safeParse;
     vopts.dense = true;
 
