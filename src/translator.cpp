@@ -10,6 +10,7 @@
 #include "lobject.h"
 #include "lstate.h"
 
+#include <algorithm>
 #include <cstring>
 #include <cstdio>
 #include <sstream>
@@ -151,7 +152,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
     };
     auto emitK = [&](uint32_t idx) { proto.code.push_back(idx | 0x80000000u); };
 
-    // Junk OFF — protection is seal + remap + VM, not noise ops
     auto maybeJunk = [&]() {};
 
     auto emitBinK = [&](Op arith, uint8_t a, uint8_t b, uint8_t kc) {
@@ -357,10 +357,16 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             if (C != 0)
                 emitJump(Op::JMP, 0, nextOld + int(C));
             break;
-        case LOP_LOADN:
+        case LOP_LOADN: {
+            FlyConstant c;
+            c.type = FlyConstant::NUMBER;
+            c.n = double(D);
+            uint32_t ki = uint32_t(proto.constants.size());
+            proto.constants.push_back(c);
             emitABC(Op::LOADK, A, 0, 0);
-            proto.code.push_back(uint32_t(int32_t(D)));
+            emitK(ki);
             break;
+        }
         case LOP_LOADK:
             emitABC(Op::LOADK, A, 0, 0);
             emitK(uint32_t(D));
@@ -552,16 +558,42 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
 #ifdef LOP_FORGPREP_INEXT
         case LOP_FORGPREP_INEXT:
 #endif
-        case 59:
+        case 59: {
+            uint8_t t = proto.maxstack;
+            if (t > 247) t = 247;
+            if (proto.maxstack < 250)
+                proto.maxstack = uint8_t(std::min(250, int(proto.maxstack) + 3));
+            uint32_t kIpairs = addStr("ipairs");
+            emitABC(Op::MOVE, t + 1, A, 0);
+            emitABC(Op::SUPER_GETK, t, 0, 0);
+            emitK(kIpairs);
+            emitABC(Op::CALL, t, 2, 4);
+            emitABC(Op::MOVE, A, t, 0);
+            emitABC(Op::MOVE, A + 1, t + 1, 0);
+            emitABC(Op::MOVE, A + 2, t + 2, 0);
             emitJump(Op::JMP, 0, nextOld + D);
             break;
+        }
 
 #ifdef LOP_FORGPREP_NEXT
         case LOP_FORGPREP_NEXT:
 #endif
-        case 61:
+        case 61: {
+            uint8_t t = proto.maxstack;
+            if (t > 247) t = 247;
+            if (proto.maxstack < 250)
+                proto.maxstack = uint8_t(std::min(250, int(proto.maxstack) + 3));
+            uint32_t kPairs = addStr("pairs");
+            emitABC(Op::MOVE, t + 1, A, 0);
+            emitABC(Op::SUPER_GETK, t, 0, 0);
+            emitK(kPairs);
+            emitABC(Op::CALL, t, 2, 4);
+            emitABC(Op::MOVE, A, t, 0);
+            emitABC(Op::MOVE, A + 1, t + 1, 0);
+            emitABC(Op::MOVE, A + 2, t + 2, 0);
             emitJump(Op::JMP, 0, nextOld + D);
             break;
+        }
 
 #ifdef LOP_FORGPREP
         case LOP_FORGPREP:
