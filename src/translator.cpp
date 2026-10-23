@@ -152,8 +152,6 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
     };
     auto emitK = [&](uint32_t idx) { proto.code.push_back(idx | 0x80000000u); };
 
-    auto maybeJunk = [&]() {};
-
     auto emitBinK = [&](Op arith, uint8_t a, uint8_t b, uint8_t kc) {
         uint8_t tmp = proto.maxstack;
         if (tmp > 250) tmp = 250;
@@ -558,47 +556,17 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
 #ifdef LOP_FORGPREP_INEXT
         case LOP_FORGPREP_INEXT:
 #endif
-        case 59: {
-            uint8_t t = proto.maxstack;
-            if (t > 247) t = 247;
-            if (proto.maxstack < 250)
-                proto.maxstack = uint8_t(std::min(250, int(proto.maxstack) + 3));
-            uint32_t kIpairs = addStr("ipairs");
-            emitABC(Op::MOVE, t + 1, A, 0);
-            emitABC(Op::SUPER_GETK, t, 0, 0);
-            emitK(kIpairs);
-            emitABC(Op::CALL, t, 2, 4);
-            emitABC(Op::MOVE, A, t, 0);
-            emitABC(Op::MOVE, A + 1, t + 1, 0);
-            emitABC(Op::MOVE, A + 2, t + 2, 0);
-            emitJump(Op::JMP, 0, nextOld + D);
-            break;
-        }
-
+        case 59:
 #ifdef LOP_FORGPREP_NEXT
         case LOP_FORGPREP_NEXT:
 #endif
-        case 61: {
-            uint8_t t = proto.maxstack;
-            if (t > 247) t = 247;
-            if (proto.maxstack < 250)
-                proto.maxstack = uint8_t(std::min(250, int(proto.maxstack) + 3));
-            uint32_t kPairs = addStr("pairs");
-            emitABC(Op::MOVE, t + 1, A, 0);
-            emitABC(Op::SUPER_GETK, t, 0, 0);
-            emitK(kPairs);
-            emitABC(Op::CALL, t, 2, 4);
-            emitABC(Op::MOVE, A, t, 0);
-            emitABC(Op::MOVE, A + 1, t + 1, 0);
-            emitABC(Op::MOVE, A + 2, t + 2, 0);
-            emitJump(Op::JMP, 0, nextOld + D);
-            break;
-        }
-
+        case 61:
 #ifdef LOP_FORGPREP
         case LOP_FORGPREP:
 #endif
         case 76:
+            // Iterator already prepared by CALL ipairs/pairs, OR Ra is table.
+            // Never call ipairs here (would get "table expected, got function").
             emitJump(Op::JMP, 0, nextOld + D);
             break;
 
