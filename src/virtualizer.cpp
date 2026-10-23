@@ -39,7 +39,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
                                                const Options& options) const {
     const auto& rawIn = encryptedBlob.data();
     if (rawIn.empty())
-        return "error(\"x\")\n";
+        return "error(\"empty\")\n";
 
     std::vector<uint8_t> raw = rawIn;
     if (raw.size() >= 16) {
@@ -70,7 +70,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
         sum = (sum + c + ((sum << 3) & 0xFFFFFFFFu)) ^ (sum >> 5);
     }
 
-    // secondary integrity (anti-patch)
     uint32_t sum2 = 0x811C9DC5u;
     for (size_t i = 0; i < bytes.size(); ++i) {
         sum2 ^= uint32_t(bytes[i]) + uint32_t(i) * 0x01000193u;
@@ -98,17 +97,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
         invEnc[static_cast<size_t>(i)] =
             int(uint32_t(invtbl[static_cast<size_t>(i)] + 1) ^ (invSeal + uint32_t(i) * 17u));
 
-    // scramble inv slice order by seed (custom path)
-    uint32_t sliceOrd = mix32(s ^ 0x51EED);
-    int order[4] = {0, 1, 2, 3};
-    for (int i = 3; i > 0; --i) {
-        sliceOrd = mix32(sliceOrd + uint32_t(i));
-        int j = int(sliceOrd % uint32_t(i + 1));
-        int tmp = order[i];
-        order[i] = order[j];
-        order[j] = tmp;
-    }
-
     auto hid = [&](uint32_t tag) {
         uint32_t h = mix32(s ^ sum ^ tag ^ 0x811C9DC5u);
         char buf[16];
@@ -122,7 +110,9 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     const std::string nJoin = hid(40), nDec = hid(41), nParse = hid(42);
     const std::string nEnv = hid(50), nOpen = hid(52), nKn = hid(53);
     const std::string nX = hid(60), nMain = hid(61);
-    const std::string nDecoy = hid(70), nGate = hid(71);
+    const std::string nGate = hid(71);
+
+    uint32_t gateExpect = mix32(s ^ sum) & 255u;
 
     std::ostringstream o;
     o << "--[[\n"
@@ -147,14 +137,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "return x\n"
          "end\n";
 
-    // decoy (never used for real payload — burns static tracers)
-    o << "local function " << nDecoy << "()\n"
-         "local t={0xDEAD,0xBEEF,0xCAFE,0xBABE}\n"
-         "local a=0 for i=1,#t do a=bit32.bxor(a,t[i]*i) end\n"
-         "if a==1 then error(\"d\") end\n"
-         "return a\n"
-         "end\n";
-
     auto emitArr = [&](const std::string& name, size_t off, size_t len) {
         o << "local " << name << "={";
         for (size_t i = 0; i < len; ++i) {
@@ -169,7 +151,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     emitArr(C, n1 + n2, n3);
     emitArr(D, n1 + n2 + n3, n4);
 
-    // inv slices (logical 0..63, 64..127, ...)
     auto emitInvSlice = [&](const std::string& name, int start) {
         o << "local " << name << "={";
         for (int i = 0; i < 64; ++i) {
@@ -188,14 +169,14 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
       << " local " << nSeed << "=" << s
       << " local " << nIsk << "=" << invSeal << "\n";
 
-    // opaque gate
+    // Real gate (not always-true)
     o << "local function " << nGate << "(x)\n"
          "local v=mix32(bit32.bxor(x or 0," << (s ^ 0x51EED) << "))\n"
-         "return bit32.band(v,255)~=1 or bit32.band(v,255)==1\n"
+         "return bit32.band(v,255)==" << gateExpect << "\n"
          "end\n";
 
     o << "local function " << nJoin << "()\n"
-         "if not " << nGate << "(" << nSeed << ") then " << nDecoy << "() end\n"
+         "if not " << nGate << "(" << (s ^ sum) << ") then error(\"x0\") end\n"
          "local e={} local n=0\n"
          "for i=1,#" << A << " do n+=1 e[n]=" << A << "[i] end\n"
          "for i=1,#" << B << " do n+=1 e[n]=" << B << "[i] end\n"
@@ -298,7 +279,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "return P,mainId,inv\n"
          "end\n";
 
-    // ---- environment (hub + executor) ----
     o << "local function " << nEnv << "()\n"
          "local G={}\n"
          "G.print=print G.warn=warn G.error=error G.pcall=pcall G.xpcall=xpcall\n"
@@ -369,17 +349,22 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "return table.concat(c)\n"
          "end\n";
 
+    // Diagnostic nKn — reports idx/raw/nk on failure (your hub x12)
     o << "local function " << nKn << "(proto,word)\n"
-         "if bit32.band(word,0x80000000)~=0 then\n"
-         "local idx=bit32.band(word,0x7FFFFFFF)+1\n";
-    if (safeParse)
-        o << "if idx<1 or idx>(proto.nk or #proto.k) then error(\"x12\") end\n";
-    o << "return " << nOpen << "(proto.k[idx],proto.bs or 0)\n"
+         "if type(word)~=\"number\" then return word end\n"
+         "if bit32.band(word,0x80000000)==0 then return word end\n"
+         "local raw=bit32.band(word,0x7FFFFFFF)\n"
+         "local nK=proto.nk or (proto.k and #proto.k) or 0\n"
+         "local idx=raw+1\n"
+         "if idx>=1 and idx<=nK and proto.k then\n"
+         "return " << nOpen << "(proto.k[idx],proto.bs or 0)\n"
          "end\n"
-         "return word\n"
+         "if raw>=1 and raw<=nK and proto.k then\n"
+         "return " << nOpen << "(proto.k[raw],proto.bs or 0)\n"
+         "end\n"
+         "error(\"x12 idx=\"..tostring(idx)..\" raw=\"..tostring(raw)..\" nk=\"..tostring(nK))\n"
          "end\n";
 
-    // ---- VM core ----
     o << "local function " << nX << "(P,inv,E,pid,args,ups)\n"
          "local CAP=38\n";
     if (safeParse)
