@@ -3,28 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FŁY — a protector for Lua and Luau scripts</title>
-<meta name="description" content="FŁY rewrites your Lua and Luau source before it ships, so the file that leaves your build is unreadable and unmodifiable — without changing how it runs.">
+<title>FŁY — a virtualizing obfuscator for Lua &amp; Luau</title>
+<meta name="description" content="Paste a script, pick a mode, get back a protected one. FŁY compiles Luau onto a private virtual machine so the file you ship can't be read line by line.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<canvas id="bg-grid" aria-hidden="true"></canvas>
 
 <nav class="nav">
   <div class="nav-inner">
-    <a href="index.html" class="brand"><span class="mark">FŁ</span>FŁY</a>
+    <a href="/home" class="brand"><span class="mark">FŁ</span>FŁY</a>
     <div class="nav-links">
-      <a href="#pipeline">How it works</a>
-      <a href="#techniques">Techniques</a>
-      <a href="#benchmarks">Benchmarks</a>
-      <a href="docs.html">Docs</a>
-      <a href="#faq">FAQ</a>
+      <a href="/home">Home</a>
+      <a href="/obfuscator">Obfuscator</a>
+      <a href="/docs">Docs</a>
+      <a href="/pricing">Pricing</a>
     </div>
     <div class="nav-cta">
-      <a class="btn btn-ghost btn-sm" href="https://github.com/fly7x/luaProtecter" target="_blank" rel="noopener">GitHub</a>
-      <a class="btn btn-primary btn-sm" href="docs.html#installation">Install</a>
+      <a class="btn btn-primary btn-sm" href="/obfuscator">Open obfuscator</a>
     </div>
   </div>
 </nav>
@@ -32,214 +31,68 @@
 <header class="hero">
   <div class="container hero-grid">
     <div>
-      <div class="hero-kicker"><span class="dot"></span>Builds on Roblox's Luau runtime</div>
+      <div class="hero-kicker"><span class="dot"></span>Compiles onto a private VM, not just renamed text</div>
       <h1>Ship your <span class="grad-text">Lua</span>,<br>not your <span class="grad-text">source</span>.</h1>
-      <p class="lead">FŁY is a native protector for Lua and Luau. It takes a readable script and rebuilds it — new control flow, renamed identifiers, encrypted strings — into something that still runs exactly the same, and reveals nothing when it's opened.</p>
+      <p class="lead">Paste a script into FŁY and it comes back running on a virtual machine built just for that build — its own instruction set, its own interpreter, constants locked until the moment they're used.</p>
       <div class="hero-actions">
-        <a class="btn btn-primary" href="docs.html#installation">Read the docs</a>
-        <a class="btn btn-ghost" href="https://github.com/fly7x/luaProtecter" target="_blank" rel="noopener">View source</a>
+        <a class="btn btn-primary" href="/obfuscator">Open obfuscator</a>
+        <a class="btn btn-ghost" href="/docs">Read the docs</a>
       </div>
       <div class="hero-stats">
-        <div class="stat"><b>3</b><span>pipeline stages</span></div>
-        <div class="stat"><b>C++</b><span>native, no runtime dep.</span></div>
-        <div class="stat"><b>CMake</b><span>build, with Docker</span></div>
+        <div class="stat"><b>1 / 2 / Hybrid</b><span>VM modes</span></div>
+        <div class="stat"><b>Per build</b><span>fresh instruction set</span></div>
+        <div class="stat"><b>Plain Luau</b><span>no native binaries</span></div>
       </div>
     </div>
 
     <div class="transform-panel">
       <div class="panel-titlebar">
         <div class="panel-dots"><span></span><span></span><span></span></div>
-        <div class="file">input/script.lua → output/protected.lua</div>
+        <div class="file">input.lua → output.lua</div>
       </div>
       <div class="transform-body">
         <div class="transform-col">
-          <span class="transform-label">before</span><!--
-       --><span><span class="tok-kw">local</span> <span class="tok-fn">Players</span> = <span class="tok-fn">game</span>:<span class="tok-fn">GetService</span>(<span class="tok-str">"Players"</span>)
-<span class="tok-kw">local</span> <span class="tok-fn">coinValue</span> = <span class="tok-num">25</span>
-
-<span class="tok-kw">local</span> <span class="tok-kw">function</span> <span class="tok-fn">awardCoins</span>(player)
-  <span class="tok-kw">local</span> stats = player:<span class="tok-fn">FindFirstChild</span>(<span class="tok-str">"leaderstats"</span>)
-  <span class="tok-kw">if</span> stats <span class="tok-kw">then</span>
-    stats.Coins.Value += coinValue
-  <span class="tok-kw">end</span>
-<span class="tok-kw">end</span>
-
-<span class="tok-fn">Players</span>.PlayerAdded:Connect(awardCoins)</span>
+          <span class="transform-label">before</span><span><span class="tok-fn">print</span>(<span class="tok-str">"Hello from FŁY"</span>)</span>
         </div>
         <div class="transform-col" id="out-code">
-          <span class="transform-label out">after — FŁY protected</span><span id="out-stream"></span><span class="cursor"></span>
+          <span class="transform-label out">after — protected</span><span id="out-stream"></span><span class="cursor"></span>
         </div>
       </div>
       <div class="panel-footer">
-        <span>control flow rebuilt · identifiers renamed · strings encrypted</span>
+        <span>virtualized · constants locked · polymorphic per build</span>
         <span class="ok">● behavior unchanged</span>
       </div>
     </div>
   </div>
 </header>
 
-<div class="strip">
-  <div class="container strip-inner">
-    <span class="label">Reads straight from the repo layout</span>
-    <span class="items">
-      <span>src/transformer.cpp</span>
-      <span>src/obfuscation.cpp</span>
-      <span>src/emitter.cpp</span>
-      <span>include/protector/config.hpp</span>
-      <span>third_party/luau</span>
-    </span>
-  </div>
-</div>
-
 <section id="pipeline">
   <div class="container">
     <div class="section-head">
-      <div class="eyebrow">How it works</div>
-      <h2>One script in, three stages, one protected file out</h2>
-      <p>FŁY is organized the way its source tree is organized: a transform stage, an obfuscation stage, and an emitter that writes the result. Nothing about the order is hidden from you — <code class="inline" style="background:var(--bg-raised);border:1px solid var(--border);padding:2px 6px;border-radius:4px;color:#c4b5fd;">include/protector/config.hpp</code> is where you turn stages on, off, or up.</p>
+      <div class="eyebrow">What happens on protect</div>
+      <h2>Four stages, every time</h2>
+      <p>None of these are optional and none are decoration — every script that goes through FŁY passes through all four, in order.</p>
     </div>
-
-    <div class="pipeline">
-      <div class="pl-card c1">
-        <span class="glyph"></span>
-        <span class="stage-no">stage 1 · src/transformer.cpp</span>
-        <h3>Transform</h3>
-        <p>Your script is parsed and rebuilt as an equivalent program with a different shape: control flow is restructured and the lexical layout you wrote is discarded, while the logic it expresses is kept intact.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">01</div>
+        <h3>Virtualize</h3>
+        <p>Your script is compiled and remapped onto a private instruction set, then run by an interpreter generated specifically for that build.</p>
       </div>
-      <div class="pl-card c2">
-        <span class="stage-no">stage 2 · src/obfuscation.cpp</span>
-        <h3>Obfuscate</h3>
-        <p>Identifiers, string literals, and constants are replaced and encoded. What's left no longer carries the names and text that made the original easy to read at a glance.</p>
+      <div class="step">
+        <div class="step-num">02</div>
+        <h3>Mutate</h3>
+        <p>The opcode map, local names, and dispatch keys change on every build, so two protected files never share a byte-for-byte structure.</p>
       </div>
-      <div class="arrow-down">↓</div>
-      <div class="pl-card c3">
-        <span class="stage-no">stage 3 · src/emitter.cpp</span>
-        <h3>Emit</h3>
-        <p>The transformed program is written out as a single file — <code class="inline" style="background:var(--bg-inset);border:1px solid var(--border);padding:2px 6px;border-radius:4px;color:#c4b5fd;">output/protected.lua</code> — ready to ship in place of the source it replaced.</p>
+      <div class="step">
+        <div class="step-num">03</div>
+        <h3>Lock constants</h3>
+        <p>Strings and numbers leave the output encoded. The VM reconstructs each one only at the moment it's actually needed.</p>
       </div>
-      <div class="pl-card c4">
-        <span class="glyph"></span>
-        <span class="stage-no">optional · third_party/luau</span>
-        <h3>Luau integration</h3>
-        <p>Add Roblox's Luau as a git submodule and FŁY's CMake build will link against it automatically — the <code class="inline" style="background:var(--bg-raised);border:1px solid var(--border);padding:2px 6px;border-radius:4px;color:#c4b5fd;">USE_LUAU</code> option is on by default, and off cleanly if the submodule isn't present.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="techniques">
-  <div class="container">
-    <div class="section-head">
-      <div class="eyebrow">Techniques</div>
-      <h2>What the obfuscation stage actually does</h2>
-      <p>Each technique targets a different way scripts get reverse-engineered — reading the names, reading the strings, or just reading the control flow top to bottom.</p>
-    </div>
-    <div class="tech-grid">
-      <div class="tech-item">
-        <span class="tag">renaming</span>
-        <h4>Identifier stripping</h4>
-        <p>Locals, upvalues, and function names are replaced with short, meaningless symbols, so nothing in the output hints at what a variable was for.</p>
-      </div>
-      <div class="tech-item">
-        <span class="tag">encryption</span>
-        <h4>String encoding</h4>
-        <p>Literal strings — including anything that looks like a key, URL, or message — are encoded at build time and decoded at runtime, never sitting in the file as plain text.</p>
-      </div>
-      <div class="tech-item">
-        <span class="tag">control flow</span>
-        <h4>Flow rebuilding</h4>
-        <p>Branches and loops are re-expressed so the file's structure no longer mirrors your original source, which blunts tools that work by pattern-matching familiar shapes.</p>
-      </div>
-      <div class="tech-item">
-        <span class="tag">constants</span>
-        <h4>Constant masking</h4>
-        <p>Numeric literals are rewritten as small expressions that evaluate to the same value, so a reader can't just scan for the number they're after.</p>
-      </div>
-      <div class="tech-item">
-        <span class="tag">single-file output</span>
-        <h4>Flattened emission</h4>
-        <p>The emitter writes one self-contained file. There's no separate manifest or side-table describing what was renamed to what.</p>
-      </div>
-      <div class="tech-item">
-        <span class="tag">build-time</span>
-        <h4>Zero runtime dependency</h4>
-        <p>Protection happens once, at build time, in a native CMake project. The script you ship needs nothing extra installed to run.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="benchmarks">
-  <div class="container bench">
-    <div>
-      <div class="eyebrow">Why it's worth the build step</div>
-      <h2 style="font-family:var(--font-display);font-size:32px;font-weight:600;margin:12px 0 16px;">Readable source is an open door</h2>
-      <p style="color:var(--text-dim);font-size:15.5px;max-width:48ch;">A plain <code class="inline" style="background:var(--bg-raised);border:1px solid var(--border);padding:2px 6px;border-radius:4px;color:#c4b5fd;">.lua</code> file tells a reader almost everything: variable names describe intent, strings reveal endpoints and secrets, and the control flow is laid out exactly as written. Each FŁY stage removes one of those signals.</p>
-    </div>
-    <div class="bench-bars">
-      <div class="bar-row">
-        <div class="bar-label"><span>Variable &amp; function names readable</span><b>before: high</b></div>
-        <div class="bar-track"><div class="bar-fill" style="width:8%"></div></div>
-      </div>
-      <div class="bar-row">
-        <div class="bar-label"><span>Strings &amp; constants visible in plain text</span><b>before: high</b></div>
-        <div class="bar-track"><div class="bar-fill" style="width:5%"></div></div>
-      </div>
-      <div class="bar-row">
-        <div class="bar-label"><span>Control flow matches original source</span><b>before: high</b></div>
-        <div class="bar-track"><div class="bar-fill" style="width:12%"></div></div>
-      </div>
-      <div class="bar-row">
-        <div class="bar-label"><span>Runtime behavior</span><b>unchanged</b></div>
-        <div class="bar-track"><div class="bar-fill" style="width:100%"></div></div>
-      </div>
-      <p style="font-size:12.5px;color:var(--text-faint);margin-top:4px;">Bars show how much of each signal survives after processing — not a benchmark against any specific tool.</p>
-    </div>
-  </div>
-</section>
-
-<section id="install-preview">
-  <div class="container">
-    <div class="section-head">
-      <div class="eyebrow">Get started</div>
-      <h2>Building FŁY takes one submodule and CMake</h2>
-      <p>No package manager, no installer — clone it, optionally wire in Luau, and build.</p>
-    </div>
-    <div class="cli-block">
-      <div class="l">git submodule add https://github.com/Roblox/luau.git third_party/luau</div>
-      <div class="l">mkdir build &amp;&amp; cd build</div>
-      <div class="l">cmake -DUSE_LUAU=ON ..</div>
-      <div class="l">cmake --build .</div>
-      <div class="c"># protected file is written to output/protected.lua</div>
-    </div>
-    <div style="margin-top:24px;">
-      <a class="btn btn-primary" href="docs.html#installation">Full installation guide</a>
-    </div>
-  </div>
-</section>
-
-<section id="faq">
-  <div class="container">
-    <div class="section-head">
-      <div class="eyebrow">FAQ</div>
-      <h2>Before you build</h2>
-    </div>
-    <div class="faq">
-      <div class="faq-item">
-        <h4>Do I need Luau installed to use FŁY?</h4>
-        <p>No. Luau integration is optional and controlled by the <code class="inline">USE_LUAU</code> CMake flag, which defaults to on. If <code class="inline">third_party/luau</code> isn't present, CMake skips the integration and FŁY builds without it.</p>
-      </div>
-      <div class="faq-item">
-        <h4>Does protected output run differently from the original script?</h4>
-        <p>No — every stage is built to preserve behavior. What changes is how the file reads, not what it does when it runs.</p>
-      </div>
-      <div class="faq-item">
-        <h4>Can I run FŁY as part of a build pipeline?</h4>
-        <p>Yes. It's a native CMake project with a Dockerfile included, so it drops into a CI step the same way any other native build tool would.</p>
-      </div>
-      <div class="faq-item">
-        <h4>Is obfuscation reversible?</h4>
-        <p>No obfuscator makes a script impossible to read with enough effort — FŁY's job is to raise the cost of that effort well past what copying a public script would normally take.</p>
+      <div class="step">
+        <div class="step-num">04</div>
+        <h3>Integrity</h3>
+        <p>A payload check and a small anti-debug probe run before the dispatch loop starts, ahead of your script's own code.</p>
       </div>
     </div>
   </div>
@@ -250,11 +103,11 @@
     <div class="cta-band">
       <div>
         <h2>Protect your next script</h2>
-        <p>Clone the repository, point CMake at it, and run your first file through FŁY in a few minutes.</p>
+        <p>Paste a file in, choose a mode, and get a protected version back in seconds — no install, no build step.</p>
       </div>
       <div class="actions">
-        <a class="btn btn-primary" href="docs.html">Read the docs</a>
-        <a class="btn btn-ghost" href="https://github.com/fly7x/luaProtecter" target="_blank" rel="noopener">github.com/fly7x/luaProtecter</a>
+        <a class="btn btn-primary" href="/obfuscator">Open obfuscator</a>
+        <a class="btn btn-ghost" href="/docs">Read the docs</a>
       </div>
     </div>
   </div>
@@ -262,34 +115,81 @@
 
 <footer>
   <div class="container footer-inner">
-    <a href="index.html" class="brand"><span class="mark">FŁ</span>FŁY</a>
+    <a href="/home" class="brand"><span class="mark">FŁ</span>FŁY</a>
     <div class="footer-links">
       <div class="footer-col">
         <h5>Product</h5>
-        <a href="#pipeline">How it works</a>
-        <a href="#techniques">Techniques</a>
-        <a href="#benchmarks">Benchmarks</a>
+        <a href="/obfuscator">Obfuscator</a>
+        <a href="/pricing">Pricing</a>
       </div>
       <div class="footer-col">
         <h5>Docs</h5>
-        <a href="docs.html#installation">Installation</a>
-        <a href="docs.html#build-options">Build options</a>
-        <a href="docs.html#config-reference">Config reference</a>
-        <a href="docs.html#faq">FAQ</a>
-      </div>
-      <div class="footer-col">
-        <h5>Project</h5>
-        <a href="https://github.com/fly7x/luaProtecter" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/fly7x/luaProtecter/issues" target="_blank" rel="noopener">Issues</a>
+        <a href="/docs#quickstart">Quickstart</a>
+        <a href="/docs#modes">Modes</a>
+        <a href="/docs#api">API</a>
+        <a href="/docs#faq">FAQ</a>
       </div>
     </div>
   </div>
   <div class="container footer-bottom">
-    <span>FŁY — a protector for Lua &amp; Luau.</span>
-    <span>Built on fly7x/luaProtecter.</span>
+    <span>FŁY — a virtualizing obfuscator for Lua &amp; Luau.</span>
+    <span>Output is a plain Luau file. No native binaries.</span>
   </div>
 </footer>
 
-<script src="script.js"></script>
+<script src="/bg.js"></script>
+<script>
+(function () {
+  var target = document.getElementById('out-stream');
+  if (!target) return;
+
+  // Each token is typed in order; cls = null means plain/whitespace text.
+  var tokens = [
+    { t: 'local', c: 'tok-kw' }, { t: ' ', c: null },
+    { t: '_0x2f', c: 'tok-mut' }, { t: ' = ', c: null },
+    { t: '(getfenv()).newproxy\n', c: null },
+    { t: 'local', c: 'tok-kw' }, { t: ' ', c: null },
+    { t: '_0xa9', c: 'tok-mut' }, { t: ' = ', c: null },
+    { t: '{', c: null }, { t: '0x1b', c: 'tok-num' }, { t: ',', c: null }, { t: '0x4e', c: 'tok-num' },
+    { t: ',', c: null }, { t: '0x0d', c: 'tok-num' }, { t: ',', c: null }, { t: '0x2a', c: 'tok-num' }, { t: ',', c: null },
+    { t: '0x77', c: 'tok-num' }, { t: ',', c: null }, { t: '0x3c', c: 'tok-num' }, { t: '}\n', c: null },
+    { t: 'for', c: 'tok-kw' }, { t: ' i=1,#', c: null }, { t: '_0xa9', c: 'tok-mut' }, { t: ' ', c: null },
+    { t: 'do', c: 'tok-kw' }, { t: ' ', c: null }, { t: '_0xa9', c: 'tok-mut' }, { t: '[i]=', c: null },
+    { t: '_0xa9', c: 'tok-mut' }, { t: '[i]~', c: null }, { t: '0x5a', c: 'tok-num' }, { t: ' ', c: null },
+    { t: 'end', c: 'tok-kw' }, { t: '\n', c: null },
+    { t: 'return', c: 'tok-kw' }, { t: ' (loadstring ', c: null }, { t: 'or', c: 'tok-kw' },
+    { t: ' load)(string.char(unpack(', c: null }, { t: '_0xa9', c: 'tok-mut' }, { t: ')))()', c: null }
+  ];
+
+  var ti = 0, ci = 0, speed = 14;
+  function step() {
+    if (ti >= tokens.length) return;
+    var tok = tokens[ti];
+    if (ci === 0) {
+      var span = document.createElement('span');
+      if (tok.c) span.className = tok.c;
+      span.textContent = '';
+      target.appendChild(span);
+    }
+    var current = target.lastChild;
+    ci++;
+    current.textContent = tok.t.slice(0, ci);
+    if (ci >= tok.t.length) { ti++; ci = 0; }
+    window.setTimeout(step, speed);
+  }
+
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) {
+    tokens.forEach(function (tok) {
+      var span = document.createElement('span');
+      if (tok.c) span.className = tok.c;
+      span.textContent = tok.t;
+      target.appendChild(span);
+    });
+  } else {
+    window.setTimeout(step, 400);
+  }
+})();
+</script>
 </body>
 </html>

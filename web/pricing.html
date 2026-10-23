@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pricing — FŁY</title>
+<meta name="description" content="FŁY is free while it's in active development. Premium limits and harder VM variants are coming, not billed yet.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<canvas id="bg-grid" aria-hidden="true"></canvas>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/home" class="brand"><span class="mark">FŁ</span>FŁY</a>
+    <div class="nav-links">
+      <a href="/home">Home</a>
+      <a href="/obfuscator">Obfuscator</a>
+      <a href="/docs">Docs</a>
+      <a href="/pricing">Pricing</a>
+    </div>
+    <div class="nav-cta">
+      <a class="btn btn-primary btn-sm" href="/obfuscator">Open obfuscator</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container" style="padding:60px 0 100px;">
+  <div class="section-head">
+    <div class="eyebrow">Pricing</div>
+    <h2>Plans</h2>
+    <p>Free stays free. Premium isn't live yet.</p>
+  </div>
+
+  <div class="plans">
+    <article class="plan">
+      <div class="plan-name">free</div>
+      <div class="plan-price">$0</div>
+      <ul>
+        <li>Public VM pipeline</li>
+        <li>Roblox Luau output</li>
+        <li>Limits added later</li>
+      </ul>
+      <a class="btn btn-primary" href="/obfuscator">Use free</a>
+    </article>
+    <article class="plan featured">
+      <div class="plan-name">premium</div>
+      <div class="plan-price">soon</div>
+      <ul>
+        <li>Higher limits</li>
+        <li>Harder VM variants</li>
+        <li>Not billed yet</li>
+      </ul>
+      <button class="btn btn-ghost" disabled>Not enabled</button>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="container footer-bottom">
+    <span>FŁY — a virtualizing obfuscator for Lua &amp; Luau.</span>
+    <span>Free stays free. Premium isn't live yet.</span>
+  </div>
+</footer>
+
+<script src="/bg.js"></script>
+</body>
+</html>

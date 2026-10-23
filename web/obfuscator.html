@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Obfuscator — FŁY</title>
+<meta name="description" content="Paste a Lua or Luau script, pick a mode, and protect it.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<canvas id="bg-grid" aria-hidden="true"></canvas>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/home" class="brand"><span class="mark">FŁ</span>FŁY</a>
+    <div class="nav-links">
+      <a href="/home">Home</a>
+      <a href="/obfuscator">Obfuscator</a>
+      <a href="/docs">Docs</a>
+      <a href="/pricing">Pricing</a>
+    </div>
+    <div class="nav-cta">
+      <a class="btn btn-ghost btn-sm" href="/docs#modes">Mode guide</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container workspace">
+  <div class="ws-head">
+    <div>
+      <div class="eyebrow">Obfuscator</div>
+      <h1>Protect a script</h1>
+    </div>
+  </div>
+
+  <div class="mode-bar">
+    <label for="mode">Mode</label>
+    <select id="mode" class="mode-select">
+      <option value="1">1 VM — single interpreter</option>
+      <option value="2" selected>2 VM — outer + inner (nested)</option>
+      <option value="hybrid">Hybrid — native + encrypted payload</option>
+    </select>
+  </div>
+
+  <div class="editor">
+    <div class="editor-row">
+      <div class="editor-pane">
+        <div class="editor-head"><span>input.lua</span><span class="badge">luau</span></div>
+        <textarea id="source" class="code-input" spellcheck="false">print("Hello from FLY")</textarea>
+      </div>
+      <div class="editor-pane">
+        <div class="editor-head"><span>output.lua</span><span class="badge">read-only</span></div>
+        <textarea id="output" class="code-input" readonly spellcheck="false" placeholder="Protected output appears here."></textarea>
+      </div>
+    </div>
+    <div class="statusbar">
+      <button id="protectButton" class="btn btn-primary btn-sm">Protect</button>
+      <button id="copyButton" class="btn btn-ghost btn-sm">Copy</button>
+      <button id="clearButton" class="btn btn-ghost btn-sm">Clear</button>
+      <div class="spacer"></div>
+      <span id="status">Ready</span>
+    </div>
+  </div>
+  <p class="mode-hint" id="modeHint">mode: 2-VM · outer+inner nested · private ISA · POST /api/obfuscate</p>
+</main>
+
+<footer>
+  <div class="container footer-bottom">
+    <span>FŁY — a virtualizing obfuscator for Lua &amp; Luau.</span>
+    <span>Output is a plain Luau file. No native binaries.</span>
+  </div>
+</footer>
+
+<script src="/bg.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
