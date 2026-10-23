@@ -14,6 +14,17 @@
 #include <cstdio>
 #include <sstream>
 
+using Protect::Op;
+using Protect::FlyProto;
+using Protect::FlyConstant;
+using Protect::packABC;
+using Protect::packAD;
+using Protect::sealInsn;
+using Protect::sealStringBytes;
+using Protect::makeOpcodeMap;
+using Protect::FLY_MAGIC;
+using Protect::mix32;
+
 static uint8_t insnOp(uint32_t w) { return uint8_t(w & 255u); }
 static uint8_t insnA(uint32_t w) { return uint8_t((w >> 8) & 255u); }
 
@@ -140,7 +151,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
     };
     auto emitK = [&](uint32_t idx) { proto.code.push_back(idx | 0x80000000u); };
 
-    // Junk OFF: protection remains (seal + remap + VM). Junk was only extra noise/cost.
+    // Junk OFF — protection is seal + remap + VM, not noise ops
     auto maybeJunk = [&]() {};
 
     auto emitBinK = [&](Op arith, uint8_t a, uint8_t b, uint8_t kc) {
@@ -712,7 +723,7 @@ bool Translator::remapPublic(const std::vector<uint32_t>& code, FlyProto& proto,
     return remapFunction(code, proto, err, luauProto);
 }
 
-static uint32_t pullProto(const Translator* self, struct Proto* p, std::vector<FlyProto>& out, std::string& err) {
+static uint32_t pullProto(const Translator* self, Proto* p, std::vector<FlyProto>& out, std::string& err) {
     std::vector<uint32_t> kids;
     for (int i = 0; i < p->sizep; ++i) {
         uint32_t id = pullProto(self, p->p[i], out, err);
