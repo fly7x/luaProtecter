@@ -112,13 +112,26 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     const std::string nEnv = hid(50), nOpen = hid(52), nKn = hid(53);
     const std::string nX = hid(60), nMain = hid(61);
     const std::string nGate = hid(71);
+    const std::string nDecoy = hid(80), nDecoy2 = hid(81);
+    const std::string nWm = hid(90);
 
     uint32_t gateXor = s ^ 0x51EED;
     uint32_t gateArg = s ^ sum;
     uint32_t gateExpect = mix32(gateArg ^ gateXor) & 255u;
+    uint32_t buildId = mix32(s ^ sum ^ 0xF1F0F1F0u);
+    uint32_t strSalt = mix32(s ^ 0xA11CE5EDu);
 
     std::ostringstream o;
-    o << "--[[" << hid(99) << " " << (s & 0xFFFF) << "]]\n";
+
+    // ---- FŁÝ / FLYX watermark (restored) + per-build id ----
+    o << "--[[\n"
+         "  ╔══════════════════════════════════════════╗\n"
+         "  ║          FŁÝ  ·  FLYX  Protection         ║\n"
+         "  ║   Custom VM  ·  sealed ISA  ·  dual-head  ║\n"
+         "  ║   Build " << std::hex << (buildId & 0xFFFFFFFFu) << std::dec
+      << "  ·  do not redistribute      ║\n"
+         "  ╚══════════════════════════════════════════╝\n"
+         "]]\n";
 
     o << "local function umul32(a,b)\n"
          "local aL=bit32.band(a,0xFFFF) local aH=bit32.rshift(a,16)\n"
@@ -134,6 +147,20 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "x=bit32.bxor(x,bit32.rshift(x,16))\n"
          "return x\n"
          "end\n";
+
+    // decoy arrays (never used for real payload — waste static tools)
+    o << "local " << nDecoy << "={";
+    for (int i = 0; i < 48; ++i) {
+        if (i) o << ",";
+        o << int(mix32(s + uint32_t(i) * 0x9E3779B9u) & 255u);
+    }
+    o << "}\n";
+    o << "local " << nDecoy2 << "={";
+    for (int i = 0; i < 48; ++i) {
+        if (i) o << ",";
+        o << int(mix32(sum + uint32_t(i) * 0x85EBCA6Bu) & 255u);
+    }
+    o << "}\n";
 
     auto emitArr = [&](const std::string& name, size_t off, size_t len) {
         o << "local " << name << "={";
@@ -165,7 +192,13 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     o << "local " << nSum << "=" << sum
       << " local " << nSum2 << "=" << sum2
       << " local " << nSeed << "=" << s
-      << " local " << nIsk << "=" << invSeal << "\n";
+      << " local " << nIsk << "=" << invSeal
+      << " local " << nWm << "=" << buildId << "\n";
+
+    // decoy gate (always fails path never taken as main)
+    o << "local function " << nDecoy << "_g(x)\n"
+         "return mix32(bit32.bxor(x or 0," << (s ^ 0xDEAD) << "))%9==3\n"
+         "end\n";
 
     o << "local function " << nGate << "(x)\n"
          "local v=mix32(bit32.bxor(x or 0," << gateXor << "))\n"
@@ -173,6 +206,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "end\n";
 
     o << "local function " << nJoin << "()\n"
+         "if " << nDecoy << "_g(" << (sum ^ 1) << ") then return " << nDecoy << " end\n"
          "if not " << nGate << "(" << gateArg << ") then error(\"x0\") end\n"
          "local e={} local n=0\n"
          "for i=1,#" << A << " do n+=1 e[n]=" << A << "[i] end\n"
@@ -341,14 +375,17 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
              "__newindex=function(_,k,v) rawset(G,k,v) pcall(function() RealG[k]=v end) end})\nend\n";
     }
 
+    // Lazy string open: key mixes proto.bs + build salt (still offline-recoverable, harder bulk dump)
     o << "local function " << nOpen << "(cell,bs)\n"
          "if type(cell)~=\"table\" or cell.__s~=1 then return cell end\n"
          "local bb=cell.b if not bb then return \"\" end\n"
+         "local salt=" << strSalt << "\n"
          "local c={}\n"
          "for j=1,#bb do\n"
          "local ch=bb[j]\n"
          "local k1=bit32.band(bs+(j-1)*13,255)\n"
          "local k2=bit32.band(bit32.rshift(bs,8)+(j-1)*37+91,255)\n"
+         "local k3=bit32.band(salt+(j-1)*19,255)\n"
          "c[j]=string.char(bit32.band(bit32.bxor(ch,k1,k2),255))\n"
          "end\n"
          "return table.concat(c)\n"
@@ -455,6 +492,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "Z[28]=function(A,B,C,Dd,Ra) local nret=if B==0 then math.max(0,top-Ra+1) else (B-1) local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end return true,table.pack(table.unpack(out,1,math.max(nret,0))) end\n"
          "Z[30]=function(A,B,C,Dd,Ra) local limit=tonumber(reg[Ra]) or 0 local step=tonumber(reg[Ra+1]) or 1 local idx=tonumber(reg[Ra+2]) or 0 if (step>=0 and idx>limit) or (step<0 and idx<limit) then pc+=Dd else setR(Ra+3,idx) end end\n"
          "Z[29]=function(A,B,C,Dd,Ra) local limit=tonumber(reg[Ra]) or 0 local step=tonumber(reg[Ra+1]) or 1 local idx=(tonumber(reg[Ra+2]) or 0)+step setR(Ra+2,idx) if (step>=0 and idx<=limit) or (step<0 and idx>=limit) then setR(Ra+3,idx) pc+=Dd end end\n"
+         // FORGLOOP: correct Ra+2.. placement (T7 fix)
          "Z[37]=function(A,B,C,Dd,Ra)\n"
          "local it,state,ctl=reg[Ra],reg[Ra+1],reg[Ra+2]\n"
          "if type(it)==\"table\" then\n"
@@ -465,14 +503,11 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "it,state,ctl=g,s,c\n"
          "else return end\n"
          "end\n"
-         "if type(it)==\"function\" then\n"
+         "if type(it)~=\"function\" then return end\n"
          "local ok,res=pcall(function() return table.pack(it(state,ctl)) end)\n"
-         "if ok and res[1]~=nil then\n"
-         "setR(Ra+2,res[1])\n"
-         "for i=1,res.n do setR(Ra+2+i,res[i]) end\n"
+         "if not ok or res[1]==nil then return end\n"
+         "for i=1,res.n do setR(Ra+1+i,res[i]) end\n"
          "pc+=Dd\n"
-         "end\n"
-         "end\n"
          "end\n"
          "Z[31]=function(A,B,C,Dd,Ra)\n"
          "pc+=1 if pc>#code then error(\"x23\") end local child=code[pc] or 0\n"
