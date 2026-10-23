@@ -32,6 +32,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob) co
     o.safeParse = true;
     o.dense = true;
     o.watchdog = true;
+    o.heads = 2;
     return emitVirtualizedScript(encryptedBlob, o);
 }
 
@@ -112,13 +113,11 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     const std::string nX = hid(60), nMain = hid(61);
     const std::string nGate = hid(71);
 
-    // Gate math MUST match call arg (this fixed your x0)
     uint32_t gateXor = s ^ 0x51EED;
     uint32_t gateArg = s ^ sum;
     uint32_t gateExpect = mix32(gateArg ^ gateXor) & 255u;
 
     std::ostringstream o;
-    // Avoid detector string matches (no Luraph/Clyde/IronBrew/Synapse names)
     o << "--[[" << hid(99) << " " << (s & 0xFFFF) << "]]\n";
 
     o << "local function umul32(a,b)\n"
@@ -360,14 +359,8 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "if bit32.band(word,0x80000000)==0 then return word end\n"
          "local raw=bit32.band(word,0x7FFFFFFF)\n"
          "local nK=proto.nk or (proto.k and #proto.k) or 0\n"
-         "local idx=raw+1\n"
-         "if idx>=1 and idx<=nK and proto.k then\n"
-         "return " << nOpen << "(proto.k[idx],proto.bs or 0)\n"
-         "end\n"
-         "if raw>=1 and raw<=nK and proto.k then\n"
-         "return " << nOpen << "(proto.k[raw],proto.bs or 0)\n"
-         "end\n"
-         "error(\"x12 idx=\"..tostring(idx)..\" raw=\"..tostring(raw)..\" nk=\"..tostring(nK))\n"
+         "if raw>=nK then error(\"x12 idx=\"..tostring(raw+1)..\" raw=\"..tostring(raw)..\" nk=\"..tostring(nK)) end\n"
+         "return " << nOpen << "(proto.k[raw+1],proto.bs or 0)\n"
          "end\n";
 
     o << "local function " << nX << "(P,inv,E,pid,args,ups)\n"
