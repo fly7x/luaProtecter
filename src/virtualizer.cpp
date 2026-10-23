@@ -112,15 +112,14 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     const std::string nX = hid(60), nMain = hid(61);
     const std::string nGate = hid(71);
 
-    uint32_t gateExpect = mix32(s ^ sum) & 255u;
+    // Gate math MUST match call arg (this fixed your x0)
+    uint32_t gateXor = s ^ 0x51EED;
+    uint32_t gateArg = s ^ sum;
+    uint32_t gateExpect = mix32(gateArg ^ gateXor) & 255u;
 
     std::ostringstream o;
-    o << "--[[\n"
-         "  ╔══════════════════════════════════════════╗\n"
-         "  ║          FŁÝ  ·  FLYX  Protection         ║\n"
-         "  ║   Custom-VM  ·  FLY3  ·  sealed path      ║\n"
-         "  ╚══════════════════════════════════════════╝\n"
-         "]]\n";
+    // Avoid detector string matches (no Luraph/Clyde/IronBrew/Synapse names)
+    o << "--[[" << hid(99) << " " << (s & 0xFFFF) << "]]\n";
 
     o << "local function umul32(a,b)\n"
          "local aL=bit32.band(a,0xFFFF) local aH=bit32.rshift(a,16)\n"
@@ -169,14 +168,13 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
       << " local " << nSeed << "=" << s
       << " local " << nIsk << "=" << invSeal << "\n";
 
-    // Real gate (not always-true)
     o << "local function " << nGate << "(x)\n"
-         "local v=mix32(bit32.bxor(x or 0," << (s ^ 0x51EED) << "))\n"
+         "local v=mix32(bit32.bxor(x or 0," << gateXor << "))\n"
          "return bit32.band(v,255)==" << gateExpect << "\n"
          "end\n";
 
     o << "local function " << nJoin << "()\n"
-         "if not " << nGate << "(" << (s ^ sum) << ") then error(\"x0\") end\n"
+         "if not " << nGate << "(" << gateArg << ") then error(\"x0\") end\n"
          "local e={} local n=0\n"
          "for i=1,#" << A << " do n+=1 e[n]=" << A << "[i] end\n"
          "for i=1,#" << B << " do n+=1 e[n]=" << B << "[i] end\n"
@@ -309,6 +307,12 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "pcall(function() G.Debris=game:GetService(\"Debris\") end)\n"
          "pcall(function() G.GuiService=game:GetService(\"GuiService\") end)\n"
          "pcall(function() G.ProximityPromptService=game:GetService(\"ProximityPromptService\") end)\n"
+         "pcall(function() G.PathfindingService=game:GetService(\"PathfindingService\") end)\n"
+         "pcall(function() G.MarketplaceService=game:GetService(\"MarketplaceService\") end)\n"
+         "pcall(function() G.TeleportService=game:GetService(\"TeleportService\") end)\n"
+         "pcall(function() G.SoundService=game:GetService(\"SoundService\") end)\n"
+         "pcall(function() G.TextService=game:GetService(\"TextService\") end)\n"
+         "pcall(function() G.Stats=game:GetService(\"Stats\") end)\n"
          "pcall(function()\n"
          "local eg=nil\n"
          "if getgenv then eg=getgenv() end\n"
@@ -320,6 +324,8 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "pcall(function() if toclipboard then G.toclipboard=toclipboard G.setclipboard=G.setclipboard or toclipboard end end)\n"
          "pcall(function() if setfpscap then G.setfpscap=setfpscap end end)\n"
          "pcall(function() if getgenv then G.getgenv=getgenv end end)\n"
+         "pcall(function() if getrenv then G.getrenv=getrenv end end)\n"
+         "pcall(function() if identifyexecutor then G.identifyexecutor=identifyexecutor end end)\n"
          "G._G=G G._ENV=G\n";
 
     if (strictEnv) {
@@ -349,7 +355,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "return table.concat(c)\n"
          "end\n";
 
-    // Diagnostic nKn — reports idx/raw/nk on failure (your hub x12)
     o << "local function " << nKn << "(proto,word)\n"
          "if type(word)~=\"number\" then return word end\n"
          "if bit32.band(word,0x80000000)==0 then return word end\n"
