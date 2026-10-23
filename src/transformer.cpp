@@ -14,6 +14,7 @@
 #include <string>
 #include <cstdio>
 
+using Protect::mix32;
 Transformer::Transformer() : seed_(0) {}
 Transformer::Transformer(uint64_t seed) : seed_(seed) {}
 
