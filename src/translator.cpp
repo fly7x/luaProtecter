@@ -317,6 +317,15 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             aux = luauCode[pc + 1];
         }
         int nextOld = int(pc + size_t(len));
+        // For 2-word (aux-carrying) instructions whose D field is itself a jump
+        // offset (JUMPIFEQ/LE/LT/NOTEQ/NOTLE/NOTLT, JUMPXEQK*, FORGLOOP), Luau's
+        // own VM applies that offset relative to the pc *right after the first
+        // word* (it has only pre-incremented past the opcode word; the aux word
+        // is peeked, not consumed, before the jump is taken) -- NOT relative to
+        // pc+len. Using nextOld (pc+len) here overcounts the aux word and lands
+        // one instruction too far forward. auxJumpBase is the correct base for
+        // exactly those cases; every other jump keeps using nextOld as before.
+        int auxJumpBase = int(pc) + 1;
 
         switch (op) {
         case LOP_NOP:
@@ -496,27 +505,27 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
 
         case LOP_JUMPIFEQ:
             emitABC(Op::EQ, A, uint8_t(aux), 0);
-            emitJump(Op::JMP, 0, nextOld + D);
+            emitJump(Op::JMP, 0, auxJumpBase + D);
             break;
         case LOP_JUMPIFLE:
             emitABC(Op::LE, A, uint8_t(aux), 0);
-            emitJump(Op::JMP, 0, nextOld + D);
+            emitJump(Op::JMP, 0, auxJumpBase + D);
             break;
         case LOP_JUMPIFLT:
             emitABC(Op::LT, A, uint8_t(aux), 0);
-            emitJump(Op::JMP, 0, nextOld + D);
+            emitJump(Op::JMP, 0, auxJumpBase + D);
             break;
         case LOP_JUMPIFNOTEQ:
             emitABC(Op::EQ, A, uint8_t(aux), 1);
-            emitJump(Op::JMP, 0, nextOld + D);
+            emitJump(Op::JMP, 0, auxJumpBase + D);
             break;
         case LOP_JUMPIFNOTLE:
             emitABC(Op::LE, A, uint8_t(aux), 1);
-            emitJump(Op::JMP, 0, nextOld + D);
+            emitJump(Op::JMP, 0, auxJumpBase + D);
             break;
         case LOP_JUMPIFNOTLT:
             emitABC(Op::LT, A, uint8_t(aux), 1);
-            emitJump(Op::JMP, 0, nextOld + D);
+            emitJump(Op::JMP, 0, auxJumpBase + D);
             break;
 
 #ifdef LOP_JUMPX
@@ -550,7 +559,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_FORGLOOP:
 #endif
         case 58:
-            emitJump(Op::FORGLOOP, A, nextOld + D);
+            emitJump(Op::FORGLOOP, A, auxJumpBase + D);
             break;
 
 #ifdef LOP_FORGPREP_INEXT
@@ -579,7 +588,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             if (proto.maxstack < 250) proto.maxstack = uint8_t(proto.maxstack + 1);
             emitABC(Op::LOADNIL, tmp, tmp, 0);
             emitABC(Op::EQ, A, tmp, isNot ? 1 : 0);
-            emitJump(Op::JMP, 0, nextOld + D);
+            emitJump(Op::JMP, 0, auxJumpBase + D);
             break;
         }
 
@@ -594,7 +603,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             if (proto.maxstack < 250) proto.maxstack = uint8_t(proto.maxstack + 1);
             emitABC(Op::LOADBOOL, tmp, val ? 1 : 0, 0);
             emitABC(Op::EQ, A, tmp, isNot ? 1 : 0);
-            emitJump(Op::JMP, 0, nextOld + D);
+            emitJump(Op::JMP, 0, auxJumpBase + D);
             break;
         }
 
@@ -614,7 +623,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
             emitABC(Op::LOADK, tmp, 0, 0);
             emitK(kidx);
             emitABC(Op::EQ, A, tmp, isNot ? 1 : 0);
-            emitJump(Op::JMP, 0, nextOld + D);
+            emitJump(Op::JMP, 0, auxJumpBase + D);
             break;
         }
 
