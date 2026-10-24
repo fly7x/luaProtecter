@@ -565,9 +565,9 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_FORGPREP:
 #endif
         case 76:
-            // Iterator already prepared by CALL ipairs/pairs, OR Ra is table.
-            // Never call ipairs here (would get "table expected, got function").
-            emitJump(Op::JMP, 0, nextOld + D);
+            // No-op: do not JMP.
+            // Luau already set Ra..Ra+2 (iterator/state/control or table).
+            // FORGLOOP (case 58) performs the first iteration and jumps back to the body.
             break;
 
 #ifdef LOP_JUMPXEQKNIL
