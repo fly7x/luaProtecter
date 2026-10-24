@@ -85,8 +85,6 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
 
     int heads = (options.heads <= 1) ? 1 : 2;
     bool watchdog = options.watchdog;
-    bool strictEnv = options.strictEnv;
-    bool safeParse = options.safeParse;
 
     auto map = makeOpcodeMap(s);
     std::array<int, 256> invtbl{};
@@ -459,15 +457,26 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "Z[28]=function(A,B,C,Dd,Ra) local nret=if B==0 then math.max(0,top-Ra+1) else (B-1) local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end return true,table.pack(table.unpack(out,1,math.max(nret,0))) end\n"
          "Z[30]=function(A,B,C,Dd,Ra) local limit=tonumber(reg[Ra]) or 0 local step=tonumber(reg[Ra+1]) or 1 local idx=tonumber(reg[Ra+2]) or 0 if (step>=0 and idx>limit) or (step<0 and idx<limit) then pc+=Dd else setR(Ra+3,idx) end end\n"
          "Z[29]=function(A,B,C,Dd,Ra) local limit=tonumber(reg[Ra]) or 0 local step=tonumber(reg[Ra+1]) or 1 local idx=(tonumber(reg[Ra+2]) or 0)+step setR(Ra+2,idx) if (step>=0 and idx<=limit) or (step<0 and idx>=limit) then setR(Ra+3,idx) pc+=Dd end end\n"
-         // FORGLOOP — Luau layout: vars at A+3+, index at A+2
+         // FORGLOOP: table-first ipairs (R[A+1]=table, R[A+2]=index, vars at A+3/A+4)
          "Z[37]=function(A,B,C,Dd,Ra)\n"
          "local gen,state,idx=reg[Ra],reg[Ra+1],reg[Ra+2]\n"
+         "if type(state)==\"table\" then\n"
+         "local n=tonumber(idx) or 0\n"
+         "n=n+1\n"
+         "local v=state[n]\n"
+         "if v==nil then return end\n"
+         "setR(Ra+2,n)\n"
+         "setR(Ra+3,n)\n"
+         "setR(Ra+4,v)\n"
+         "if top<Ra+4 then top=Ra+4 end\n"
+         "pc+=Dd\n"
+         "return\n"
+         "end\n"
          "if type(gen)==\"table\" then\n"
-         "local ok,g,s,c=pcall(ipairs,gen)\n"
-         "if not ok or type(g)~=\"function\" then ok,g,s,c=pcall(pairs,gen) end\n"
+         "local ok,g,s,c=pcall(pairs,gen)\n"
          "if not ok or type(g)~=\"function\" then return end\n"
-         "setR(Ra,g) setR(Ra+1,s) setR(Ra+2,c or 0)\n"
-         "gen,state,idx=g,s,c or 0\n"
+         "setR(Ra,g) setR(Ra+1,s) setR(Ra+2,c)\n"
+         "gen,state,idx=g,s,c\n"
          "end\n"
          "if type(gen)~=\"function\" then return end\n"
          "if idx==nil then idx=0 end\n"
