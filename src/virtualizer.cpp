@@ -441,7 +441,18 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "Z[40]=function(A,B,C,Dd,Ra,Rb,Rc) if reg[Rb] then setR(Ra,reg[Rb]) else setR(Ra,reg[Rc]) end end\n"
          "Z[43]=function(A,B,C,Dd,Ra,Rb,Rc) setR(Ra,math.floor((reg[Rb] or 0)/(reg[Rc] or 1))) end\n"
          "Z[33]=function(A,B,C,Dd,Ra,Rb) pc+=1 if pc>#code then return end local key=" << nKn << "(proto,code[pc]) local obj=reg[Rb] setR(Ra+1,obj) setR(Ra,obj and obj[key] or nil) if top<Ra+1 then top=Ra+1 end end\n"
-         "Z[36]=function(A,B,C,Dd,Ra) pc+=1 if pc>#code then return end local start=code[pc] or 1 if type(start)~=\"number\" or start<1 then start=1 end local t=reg[Ra] local cnt=B if cnt==0 then cnt=math.max(0,top-Ra) end if type(t)==\"table\" then for i=1,cnt do rawset(t,start+i-1,reg[Ra+i]) end end end\n"
+         // SETLIST: B = count+1 (0 = top), AUX = start index, values at Ra+1..
+         "Z[36]=function(A,B,C,Dd,Ra)\n"
+         "pc+=1 if pc>#code then return end\n"
+         "local start=code[pc]\n"
+         "if type(start)~=\"number\" or start<1 then start=1 end\n"
+         "local t=reg[Ra]\n"
+         "local cnt=B\n"
+         "if cnt==0 then cnt=math.max(0,top-Ra) else cnt=cnt-1 end\n"
+         "if type(t)==\"table\" and cnt>0 then\n"
+         "for i=1,cnt do rawset(t,start+i-1,reg[Ra+i]) end\n"
+         "end\n"
+         "end\n"
          "Z[32]=function(A,B,C,Dd,Ra) if B==0 then for i=1,#varargs do setR(Ra+i-1,varargs[i]) end top=Ra+#varargs-1 if top<0 then top=0 end elseif B==1 then top=math.max(0,Ra-1) else local n=B-1 for i=1,n do setR(Ra+i-1,varargs[i]) end top=Ra+n-1 end end\n"
          "Z[27]=function(A,B,C,Dd,Ra)\n"
          "local narg if B==0 then narg=math.max(0,top-Ra) if narg>48 then narg=48 end else narg=B-1 end\n"
@@ -457,7 +468,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "Z[28]=function(A,B,C,Dd,Ra) local nret=if B==0 then math.max(0,top-Ra+1) else (B-1) local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end return true,table.pack(table.unpack(out,1,math.max(nret,0))) end\n"
          "Z[30]=function(A,B,C,Dd,Ra) local limit=tonumber(reg[Ra]) or 0 local step=tonumber(reg[Ra+1]) or 1 local idx=tonumber(reg[Ra+2]) or 0 if (step>=0 and idx>limit) or (step<0 and idx<limit) then pc+=Dd else setR(Ra+3,idx) end end\n"
          "Z[29]=function(A,B,C,Dd,Ra) local limit=tonumber(reg[Ra]) or 0 local step=tonumber(reg[Ra+1]) or 1 local idx=(tonumber(reg[Ra+2]) or 0)+step setR(Ra+2,idx) if (step>=0 and idx<=limit) or (step<0 and idx>=limit) then setR(Ra+3,idx) pc+=Dd end end\n"
-         // FORGLOOP: table-first ipairs (R[A+1]=table, R[A+2]=index, vars at A+3/A+4)
+         // FORGLOOP: table-first ipairs
          "Z[37]=function(A,B,C,Dd,Ra)\n"
          "local gen,state,idx=reg[Ra],reg[Ra+1],reg[Ra+2]\n"
          "if type(state)==\"table\" then\n"
