@@ -565,7 +565,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_FORGPREP:
 #endif
         case 76:
-            // Luau: unconditional jump to FORGLOOP (back edge)
+            // Must JMP to FORGLOOP (Luau unconditional jump to back edge)
             emitJump(Op::JMP, 0, nextOld + D);
             break;
 
