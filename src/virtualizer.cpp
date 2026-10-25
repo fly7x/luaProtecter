@@ -428,24 +428,24 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "Z[19]=function(A,B,C,Dd,Ra,Rb) local ok=(reg[Ra] or 0)<=(reg[Rb] or 0) if C~=0 then ok=not ok end if not ok then pc+=1 end end\n"
          "Z[20]=function(A,B,C,Dd,Ra) pc+=1 if pc>#code then return end setR(Ra,E[" << nKn << "(proto,code[pc])]) end\n"
          "Z[21]=function(A,B,C,Dd,Ra) pc+=1 if pc>#code then return end E[" << nKn << "(proto,code[pc])]=reg[Ra] end\n"
-         "Z[22]=function(A,B,C,Dd,Ra,Rb,Rc) local t=reg[Rb] setR(Ra,t and t[reg[Rc]] or nil) end\n"
+         "Z[22]=function(A,B,C,Dd,Ra,Rb,Rc) local t=reg[Rb] if t then setR(Ra,t[reg[Rc]]) else setR(Ra,nil) end end\n"
          "Z[23]=function(A,B,C,Dd,Ra,Rb,Rc) local t=reg[Rb] if t then t[reg[Rc]]=reg[Ra] end end\n"
-         "Z[24]=function(A,B,C,Dd,Ra,Rb) pc+=1 if pc>#code then return end local t=reg[Rb] local key=" << nKn << "(proto,code[pc]) setR(Ra,t and t[key] or nil) end\n"
+         "Z[24]=function(A,B,C,Dd,Ra,Rb) pc+=1 if pc>#code then return end local t=reg[Rb] local key=" << nKn << "(proto,code[pc]) if t then setR(Ra,t[key]) else setR(Ra,nil) end end\n"
          "Z[25]=function(A,B,C,Dd,Ra,Rb) pc+=1 if pc>#code then return end local t=reg[Rb] local key=" << nKn << "(proto,code[pc]) if t then t[key]=reg[Ra] end end\n"
          "Z[26]=function(A,B,C,Dd,Ra) setR(Ra,{}) end\n"
-         "Z[41]=function(A,B,C,Dd,Ra,Rb) local t=reg[Rb] setR(Ra,t and t[C+1] or nil) end\n"
-         "Z[42]=function(A,B,C,Dd,Ra,Rb) local t=reg[Rb] if t then t[C+1]=reg[Ra] end end\n"
+         "Z[41]=function(A,B,C,Dd,Ra,Rb) local t=reg[Rb] if t then setR(Ra,t[C+1]) else setR(Ra,nil) end end\n"
+         "Z[42]=function(A,B,C,Dd,Ra,Rb) local t=reg[Rb] if type(t)==\"table\" then t[C+1]=reg[Ra] end end\n"
          "Z[34]=function(A,B) setR(A+1,uvget(B+1)) end\n"
          "Z[35]=function(A,B) uvset(B+1,reg[A+1]) end\n"
          "Z[39]=function(A,B,C,Dd,Ra,Rb,Rc) if reg[Rb] then setR(Ra,reg[Rc]) else setR(Ra,reg[Rb]) end end\n"
          "Z[40]=function(A,B,C,Dd,Ra,Rb,Rc) if reg[Rb] then setR(Ra,reg[Rb]) else setR(Ra,reg[Rc]) end end\n"
          "Z[43]=function(A,B,C,Dd,Ra,Rb,Rc) setR(Ra,math.floor((reg[Rb] or 0)/(reg[Rc] or 1))) end\n"
-         "Z[33]=function(A,B,C,Dd,Ra,Rb) pc+=1 if pc>#code then return end local key=" << nKn << "(proto,code[pc]) local obj=reg[Rb] setR(Ra+1,obj) setR(Ra,obj and obj[key] or nil) if top<Ra+1 then top=Ra+1 end end\n"
+         "Z[33]=function(A,B,C,Dd,Ra,Rb) pc+=1 if pc>#code then return end local key=" << nKn << "(proto,code[pc]) local obj=reg[Rb] setR(Ra+1,obj) if obj then setR(Ra,obj[key]) else setR(Ra,nil) end if top<Ra+1 then top=Ra+1 end end\n"
          // SETLIST: A = table reg, B = source start reg, C = count+1 (0 = top), AUX = start index, values at Rb..
          "Z[36]=function(A,B,C,Dd,Ra,Rb)\n"
          "pc+=1 if pc>#code then return end\n"
          "local start=code[pc]\n"
-         "if type(start)~=\"number\" or start<1 then start=1 end\n"
+         "if type(start)~=\"number\" or start<1 or start>1000000 then start=1 end\n"
          "local t=reg[Ra]\n"
          "local cnt\n"
          "if C==0 then cnt=math.max(0,top-Rb+1) else cnt=C-1 end\n"
@@ -468,7 +468,12 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "Z[28]=function(A,B,C,Dd,Ra) local nret=if B==0 then math.max(0,top-Ra+1) else (B-1) local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end return true,table.pack(table.unpack(out,1,math.max(nret,0))) end\n"
          "Z[30]=function(A,B,C,Dd,Ra) local limit=tonumber(reg[Ra]) or 0 local step=tonumber(reg[Ra+1]) or 1 local idx=tonumber(reg[Ra+2]) or 0 if (step>=0 and idx>limit) or (step<0 and idx<limit) then pc+=Dd else setR(Ra+3,idx) end end\n"
          "Z[29]=function(A,B,C,Dd,Ra) local limit=tonumber(reg[Ra]) or 0 local step=tonumber(reg[Ra+1]) or 1 local idx=(tonumber(reg[Ra+2]) or 0)+step setR(Ra+2,idx) if (step>=0 and idx<=limit) or (step<0 and idx>=limit) then setR(Ra+3,idx) pc+=Dd end end\n"
-         // FORGLOOP: table-first ipairs
+         // TFORCALL/FORGLOOP: always drive the real iterator function (gen(state,ctl)).
+         // Correct for ipairs, pairs, and custom iterators alike -- a bare table is
+         // only ever wrapped with pairs() as a defensive fallback, never assumed to be
+         // under array-style ipairs iteration (that assumption previously made pairs()
+         // over hash-only tables iterate zero elements). The jump offset Dd is used
+         // as-is (translator.cpp computes it relative to the correct base already).
          "Z[37]=function(A,B,C,Dd,Ra)\n"
          "local gen,state,idx=reg[Ra],reg[Ra+1],reg[Ra+2]\n"
          "if type(gen)==\"table\" then\n"
@@ -480,21 +485,31 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "if type(gen)~=\"function\" then return end\n"
          "local ok,r1,r2,r3,r4=pcall(function() return gen(state,idx) end)\n"
          "if not ok or r1==nil then return end\n"
+         "setR(Ra+2,r1)\n"
          "setR(Ra+3,r1)\n"
          "setR(Ra+4,r2)\n"
          "setR(Ra+5,r3)\n"
          "setR(Ra+6,r4)\n"
-         "setR(Ra+2,r1)\n"
          "if top<Ra+6 then top=Ra+6 end\n"
          "pc+=Dd\n"
          "end\n"
-         "Z[31]=function(A,B,C,Dd,Ra)\n"
+"Z[31]=function(A,B,C,Dd,Ra)\n"
          "pc+=1 if pc>#code then return end local child=code[pc] or 0\n"
          "local cid=proto.ch[child+1] or 0\n"
          "if cid<0 or cid>=#P then return end\n"
          "local parentReg,parentUps=reg,ups\n"
          "if not parentReg.__boxes then parentReg.__boxes={} end\n"
-         "local stored={} local ui=1\n"
+         // The new closure's upvalue list is filled in below, but the closure
+         // itself must be written into Ra *first*: a recursive local function
+         // (local function f() ... f() ... end) captures its own register by
+         // value, and that capture has to observe the freshly-created closure,
+         // not whatever stale value (typically nil) was sitting in Ra before.
+         // 'stored' is the same Lua table the closure already closes over, so
+         // populating it afterwards is safe -- the closure only reads it when
+         // actually called, by which point it's fully populated.
+         "local stored={}\n"
+         "setR(Ra,function(...) return " << nX << "(P,inv,E,cid,{...},stored) end)\n"
+         "local ui=1\n"
          "while pc+1<=#code do\n"
          "local ni=code[pc+1] if inv[bit32.band(ni,255)]~=CAP then break end pc+=1\n"
          "local ca=bit32.band(bit32.rshift(ni,8),255) local cb=bit32.band(bit32.rshift(ni,16),255)\n"
@@ -505,7 +520,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "stored[ui]=box\n"
          "else stored[ui]=parentReg[cb+1] end\n"
          "ui+=1 if ui>128 then break end end\n"
-         "setR(Ra,function(...) return " << nX << "(P,inv,E,cid,{...},stored) end) end\n"
+         "end\n"
          "Z[38]=function() end\n"
          "Z[44]=function(A,B,C,Dd,Ra,Rb) local ok=(reg[Ra]==reg[Rb]) if C~=0 then ok=not ok end if not ok then pc+=1 end end\n"
          "Z[45]=function() end\n"

@@ -9,10 +9,12 @@
 #define LUA_CORE
 #include "lobject.h"
 #include "lstate.h"
+#include "ltable.h"
 
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
+#include <functional>
 #include <sstream>
 
 using Protect::Op;
@@ -94,23 +96,27 @@ static int luauInsnLength(uint8_t op) {
     }
 }
 
-static FlyConstant convertConst(const TValue* o) {
+static FlyConstant convertConstRaw(int tt, const Value& v) {
     FlyConstant c;
-    if (ttisboolean(o)) {
+    if (tt == LUA_TBOOLEAN) {
         c.type = FlyConstant::BOOL;
-        c.b = bvalue(o) != 0;
-    } else if (ttisnumber(o)) {
+        c.b = v.b != 0;
+    } else if (tt == LUA_TNUMBER) {
         c.type = FlyConstant::NUMBER;
-        c.n = nvalue(o);
-    } else if (ttisstring(o)) {
+        c.n = v.n;
+    } else if (tt == LUA_TSTRING) {
         c.type = FlyConstant::STRING;
-        TString* ts = tsvalue(o);
+        TString* ts = reinterpret_cast<TString*>(v.gc);
         const char* s = getstr(ts);
         c.s.assign(s, s + ts->len);
     } else {
         c.type = FlyConstant::NIL;
     }
     return c;
+}
+
+static FlyConstant convertConst(const TValue* o) {
+    return convertConstRaw(ttype(o), o->value);
 }
 
 static uint32_t resolveDupChild(Proto* parent, int constIndex) {
@@ -182,6 +188,79 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         c.s = str;
         proto.constants.push_back(c);
         return uint32_t(proto.constants.size() - 1);
+    };
+
+    auto allocTmp = [&]() -> uint8_t {
+        uint8_t tmp = proto.maxstack;
+        if (tmp > 250) tmp = 250;
+        if (proto.maxstack < 250)
+            proto.maxstack = uint8_t(proto.maxstack + 1);
+        return tmp;
+    };
+
+    // DUPTABLE/DUPCLOSURE-adjacent: Luau compiles an all-constant table literal
+    // ({x=1,y=2,z=3}, {1,2,3}, etc.) into a single DUPTABLE that clones a
+    // template table living directly in the constant pool (a real LUA_TTABLE
+    // TValue), rather than a sequence of NEWTABLE+SETTABLE* instructions. We
+    // don't have a native "table constant" we can clone, so we expand the
+    // template back into explicit construction code at translation time:
+    // NEWTABLE, then one LOADK+LOADK+SETTABLE per entry (array part first,
+    // then hash part), recursing for any nested constant sub-tables.
+    std::function<void(LuaTable*, uint8_t)> emitConstTable = [&](LuaTable* h, uint8_t destReg) {
+        emitABC(Op::NEWTABLE, destReg, 0, 0);
+        if (!h) return;
+        auto emitValue = [&](const TValue* v) -> uint8_t {
+            uint8_t vReg = allocTmp();
+            if (ttistable(v)) {
+                emitConstTable(hvalue(v), vReg);
+            } else {
+                emitABC(Op::LOADK, vReg, 0, 0);
+                FlyConstant c = convertConst(v);
+                uint32_t ki = uint32_t(proto.constants.size());
+                proto.constants.push_back(c);
+                emitK(ki);
+            }
+            return vReg;
+        };
+        auto emitKeyNumber = [&](double n) -> uint8_t {
+            uint8_t kReg = allocTmp();
+            emitABC(Op::LOADK, kReg, 0, 0);
+            FlyConstant c;
+            c.type = FlyConstant::NUMBER;
+            c.n = n;
+            uint32_t ki = uint32_t(proto.constants.size());
+            proto.constants.push_back(c);
+            emitK(ki);
+            return kReg;
+        };
+        for (int i = 0; i < h->sizearray; ++i) {
+            const TValue* v = &h->array[i];
+            if (ttisnil(v)) continue;
+            uint8_t vReg = emitValue(v);
+            uint8_t kReg = emitKeyNumber(double(i + 1));
+            emitABC(Op::SETTABLE, vReg, destReg, kReg);
+        }
+        int nodeCount = 1 << h->lsizenode;
+        for (int i = 0; i < nodeCount; ++i) {
+            const LuaNode* n = &h->node[i];
+            const TKey* k = gkey(n);
+            if (k->tt == LUA_TNIL) continue;
+            const TValue* v = gval(n);
+            if (ttisnil(v)) continue;
+            uint8_t vReg = emitValue(v);
+            uint8_t kReg;
+            if (k->tt == LUA_TNUMBER) {
+                kReg = emitKeyNumber(k->value.n);
+            } else {
+                kReg = allocTmp();
+                emitABC(Op::LOADK, kReg, 0, 0);
+                FlyConstant c = convertConstRaw(k->tt, k->value);
+                uint32_t ki = uint32_t(proto.constants.size());
+                proto.constants.push_back(c);
+                emitK(ki);
+            }
+            emitABC(Op::SETTABLE, vReg, destReg, kReg);
+        }
     };
 
     auto emitBuiltinLoad = [&](uint8_t callA, uint32_t builtinId) {
@@ -447,9 +526,16 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_NEWTABLE:
             emitABC(Op::NEWTABLE, A, B, C);
             break;
-        case LOP_DUPTABLE:
-            emitABC(Op::NEWTABLE, A, 0, 0);
+        case LOP_DUPTABLE: {
+            LuaTable* tmpl = nullptr;
+            if (luauProto && int(D) >= 0 && int(D) < luauProto->sizek) {
+                const TValue* kv = &luauProto->k[int(D)];
+                if (ttistable(kv))
+                    tmpl = hvalue(kv);
+            }
+            emitConstTable(tmpl, A);
             break;
+        }
         case LOP_SETLIST:
             emitABC(Op::SETLIST, A, B, C);
             proto.code.push_back(aux == 0 ? 1u : aux);
@@ -574,7 +660,7 @@ bool Translator::remapFunction(const std::vector<uint32_t>& luauCode,
         case LOP_FORGPREP:
 #endif
         case 76:
-            // Must JMP to FORGLOOP (Luau unconditional jump to back edge)
+            // Luau: unconditional jump to FORGLOOP
             emitJump(Op::JMP, 0, nextOld + D);
             break;
 
