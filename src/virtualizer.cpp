@@ -328,23 +328,48 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "pcall(function() G.CollectionService=game:GetService(\"CollectionService\") end)\n"
          "pcall(function() G.Lighting=game:GetService(\"Lighting\") end)\n"
          "pcall(function() G.Debris=game:GetService(\"Debris\") end)\n"
+         // Eager best-effort seeding: merge RAW/enumerable keys from every
+         // candidate executor environment we can see (pairs() only walks own
+         // keys, so this alone is not enough -- it's just a fast path; the
+         // __index fallback below is what actually guarantees coverage).
          "pcall(function()\n"
-         "local eg=nil\n"
-         "if getgenv then eg=getgenv() end\n"
-         "if type(eg)~=\"table\" and getfenv then eg=getfenv(0) end\n"
-         "if type(eg)~=\"table\" then eg=_G end\n"
-         "if type(eg)==\"table\" then for k,v in pairs(eg) do if rawget(G,k)==nil then rawset(G,k,v) end end end\n"
+         "local sources={}\n"
+         "if getfenv then local ok,e=pcall(getfenv,0) if ok and type(e)==\"table\" then sources[#sources+1]=e end end\n"
+         "if getgenv then local ok,e=pcall(getgenv) if ok and type(e)==\"table\" then sources[#sources+1]=e end end\n"
+         "if type(_G)==\"table\" then sources[#sources+1]=_G end\n"
+         "for _,eg in ipairs(sources) do\n"
+         "local ok=pcall(function() for k,v in pairs(eg) do if rawget(G,k)==nil then rawset(G,k,v) end end end)\n"
+         "end\n"
          "end)\n"
+         // Named fast-path for common executor APIs scripts reach for directly
+         // (harmless even when the __index fallback would also catch them).
          "pcall(function() if setclipboard then G.setclipboard=setclipboard end end)\n"
+         "pcall(function() if toclipboard then G.toclipboard=toclipboard G.setclipboard=G.setclipboard or toclipboard end end)\n"
+         "pcall(function() if fireproximityprompt then G.fireproximityprompt=fireproximityprompt end end)\n"
+         "pcall(function() if gethui then G.gethui=gethui end end)\n"
+         "pcall(function() if setfpscap then G.setfpscap=setfpscap end end)\n"
          "pcall(function() if getgenv then G.getgenv=getgenv end end)\n"
+         "pcall(function() if getrenv then G.getrenv=getrenv end end)\n"
+         "pcall(function() if identifyexecutor then G.identifyexecutor=identifyexecutor end end)\n"
          "G._G=G G._ENV=G\n"
-         "local RealG=type(_G)==\"table\" and _G or {}\n"
-         "pcall(function() if getgenv then local e=getgenv() if type(e)==\"table\" then RealG=e end end end)\n"
+         // __index fallback: this is the real guarantee. getgenv() is often a
+         // separate script-shared scratch table, NOT a proxy to the executor's
+         // built-in API set, so it must never be the only (or last, clobbering)
+         // source -- try getfenv(0) first (the actual calling environment,
+         // most likely to expose executor globals), then _G, then getgenv(),
+         // querying each by direct index (which, unlike pairs(), does trigger
+         // any metatable/__index chain the executor itself uses).
+         "local RG1,RG2,RG3\n"
+         "pcall(function() if getfenv then local e=getfenv(0) if type(e)==\"table\" then RG1=e end end end)\n"
+         "if type(_G)==\"table\" then RG2=_G end\n"
+         "pcall(function() if getgenv then local e=getgenv() if type(e)==\"table\" then RG3=e end end end)\n"
          "return setmetatable({},{__index=function(_,k)\n"
          "local v=rawget(G,k) if v~=nil then return v end\n"
-         "local ok,r=pcall(function() return RealG[k] end) if ok and r~=nil then return r end\n"
-         "ok,r=pcall(function() return _G[k] end) if ok then return r end return nil end,\n"
-         "__newindex=function(_,k,v) rawset(G,k,v) pcall(function() RealG[k]=v end) end})\nend\n";
+         "if RG1 then local ok,r=pcall(function() return RG1[k] end) if ok and r~=nil then return r end end\n"
+         "if RG2 then local ok,r=pcall(function() return RG2[k] end) if ok and r~=nil then return r end end\n"
+         "if RG3 then local ok,r=pcall(function() return RG3[k] end) if ok and r~=nil then return r end end\n"
+         "return nil end,\n"
+         "__newindex=function(_,k,v) rawset(G,k,v) pcall(function() if RG1 then RG1[k]=v end end) end})\nend\n";
 
     o << "local function " << nOpen << "(cell,bs)\n"
          "if type(cell)~=\"table\" or cell.__s~=1 then return cell end\n"
