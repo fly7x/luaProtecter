@@ -4,6 +4,8 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <functional>
 #include <sstream>
 #include <vector>
 
@@ -584,7 +586,46 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
     else
         o << "return " << nMain << "()\n";
 
-    return o.str();
+    // Per-build identifier scrambling: several of the VM's own internal
+    // identifiers (the opcode dispatch table, register array, upvalue
+    // accessors, ...) were still literal fixed strings above, which is
+    // exactly the kind of stable signature a generic/cross-obfuscator
+    // deobfuscator pattern-matches on. Rename them here to fresh
+    // per-build random names derived from the same seed-based hid()
+    // scheme already used elsewhere, via a whole-word text substitution
+    // over the fully assembled source. This only renames local
+    // identifiers that are internal to the emitted interpreter itself
+    // (never Lua keywords, never real Roblox/global API names, never
+    // string-literal content), so it changes no runtime behavior.
+    static const char* kRenameTokens[] = {
+        "Z", "reg", "uvget", "uvset", "setR", "varargs", "tickchk",
+        "parentReg", "parentUps", "stored", "nparam",
+    };
+    std::string src = o.str();
+    for (const char* tok : kRenameTokens) {
+        std::string newName = hid(0x5000u + uint32_t(std::hash<std::string>{}(tok) & 0xFFFu));
+        std::string out;
+        out.reserve(src.size());
+        size_t i = 0;
+        size_t tokLen = std::strlen(tok);
+        auto isWordChar = [](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                   (c >= '0' && c <= '9') || c == '_';
+        };
+        while (i < src.size()) {
+            if (src.compare(i, tokLen, tok) == 0 &&
+                (i == 0 || !isWordChar(src[i - 1])) &&
+                (i + tokLen >= src.size() || !isWordChar(src[i + tokLen]))) {
+                out += newName;
+                i += tokLen;
+            } else {
+                out += src[i];
+                ++i;
+            }
+        }
+        src = std::move(out);
+    }
+    return src;
 }
 
 } // namespace Protect
