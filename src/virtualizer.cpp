@@ -291,7 +291,32 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "if nc>512 then return nil,0,{} end\n"
          "local ch={} for i=1,nc do ch[i]=u32() if ch[i]>=nproto then return nil,0,{} end end\n"
          "local csum=0 for i=1,#code do csum=bit32.bxor(csum,code[i]) end\n"
-         "P[pi]={a=np,c=code,k=K,ch=ch,va=iv~=0,ms=ms,cs=csum,bs=bseed,nk=nk}\n"
+         // Integrity re-check during execution used to rescan the whole
+         // code array every 4096 instructions -- O(#code) per check, so a
+         // long-running loop inside a large function paid for a full
+         // rescan of that function's entire bytecode over and over,
+         // dominating runtime for exactly the kind of multi-second
+         // Heartbeat-driven loops real scripts run. Replace the full scan
+         // with a small set of positions sampled across the function
+         // (evenly spaced, with a per-build pseudo-random starting
+         // offset so the sampled set isn't predictable), checked in O(1)
+         // relative to function size. Still practically effective: any
+         // in-place patch has to avoid every sampled slot, and the
+         // sampled set differs per build/per function.
+         "local sidx,sval={},{}\n"
+         "do\n"
+         "local scnt=16 if scnt>#code then scnt=#code end\n"
+         "if scnt>0 then\n"
+         "local step=#code//scnt if step<1 then step=1 end\n"
+         "local pos=1+(bseed%step)\n"
+         "for si=1,scnt do\n"
+         "if pos>#code then pos=((pos-1)%#code)+1 end\n"
+         "sidx[si]=pos sval[si]=code[pos]\n"
+         "pos=pos+step\n"
+         "end\n"
+         "end\n"
+         "end\n"
+         "P[pi]={a=np,c=code,k=K,ch=ch,va=iv~=0,ms=ms,cs=csum,bs=bseed,nk=nk,si=sidx,sv=sval}\n"
          "end\n"
          "local inv={} local isk=" << nIsk << "\n"
          "for i=0,63 do inv[i]=bit32.bxor(" << nQ0 << "[i+1],isk+i*17)-1 end\n"
@@ -555,7 +580,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "Z[47]=function(A,B,C,Dd,Ra,Rb) local fn=reg[Ra] if type(fn)~=\"function\" then return end local ok,ret=pcall(fn,reg[Rb]) if not ok then return end if C~=0 then setR(Ra,ret) end end\n"
          "while pc<=#code do\n"
          "steps+=1 if steps>lim then return end\n"
-         "tickchk+=1 if tickchk>=4096 then tickchk=0 local cs=0 for i=1,#code do cs=bit32.bxor(cs,code[i]) end if cs~=proto.cs then return end end\n"
+         "tickchk+=1 if tickchk>=16384 then tickchk=0 local si,sv=proto.si,proto.sv if si then for i=1,#si do if code[si[i]]~=sv[i] then return end end end end\n"
          "local inst=code[pc]\n"
          "local op=inv[bit32.band(inst,255)]\n"
          "if op==nil or op<0 then return end\n"
