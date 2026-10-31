@@ -480,19 +480,31 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "Z[19]=function(A,B,C,Dd,Ra,Rb) local ok=(reg[Ra] or 0)<=(reg[Rb] or 0) if C~=0 then ok=not ok end if not ok then pc+=1 end end\n"
          "Z[20]=function(A,B,C,Dd,Ra) pc+=1 if pc>#code then return end setR(Ra,E[" << nKn << "(proto,code[pc])]) end\n"
          "Z[21]=function(A,B,C,Dd,Ra) pc+=1 if pc>#code then return end E[" << nKn << "(proto,code[pc])]=reg[Ra] end\n"
-         "Z[22]=function(A,B,C,Dd,Ra,Rb,Rc) local t=reg[Rb] if t then setR(Ra,t[reg[Rc]]) else setR(Ra,nil) end end\n"
-         "Z[23]=function(A,B,C,Dd,Ra,Rb,Rc) local t=reg[Rb] if t then t[reg[Rc]]=reg[Ra] end end\n"
-         "Z[24]=function(A,B,C,Dd,Ra,Rb) pc+=1 if pc>#code then return end local t=reg[Rb] local key=" << nKn << "(proto,code[pc]) if t then setR(Ra,t[key]) else setR(Ra,nil) end end\n"
-         "Z[25]=function(A,B,C,Dd,Ra,Rb) pc+=1 if pc>#code then return end local t=reg[Rb] local key=" << nKn << "(proto,code[pc]) if t then t[key]=reg[Ra] end end\n"
+         // GETTABLE/SETTABLE and friends used to guard every access with
+         // "if t then ... else <silently do nothing> end". That's wrong:
+         // real Lua raises "attempt to index a nil value" here, and
+         // scripts routinely rely on pcall() to catch exactly that (e.g.
+         // networkingFolder:FindFirstChild(name) returning nil, then code
+         // doing remote:InvokeServer() inside a pcall). Silently no-oping
+         // instead of erroring meant pcall() never saw a failure at all --
+         // the call just vanished and execution carried on with stale/nil
+         // registers, which looks like "nothing happens, no errors" from
+         // outside. Let real Lua indexing semantics apply so these raise
+         // naturally and propagate to whatever pcall the script itself set
+         // up, exactly like unobfuscated code.
+         "Z[22]=function(A,B,C,Dd,Ra,Rb,Rc) setR(Ra,reg[Rb][reg[Rc]]) end\n"
+         "Z[23]=function(A,B,C,Dd,Ra,Rb,Rc) reg[Rb][reg[Rc]]=reg[Ra] end\n"
+         "Z[24]=function(A,B,C,Dd,Ra,Rb) pc+=1 if pc>#code then return end local key=" << nKn << "(proto,code[pc]) setR(Ra,reg[Rb][key]) end\n"
+         "Z[25]=function(A,B,C,Dd,Ra,Rb) pc+=1 if pc>#code then return end local key=" << nKn << "(proto,code[pc]) reg[Rb][key]=reg[Ra] end\n"
          "Z[26]=function(A,B,C,Dd,Ra) setR(Ra,{}) end\n"
-         "Z[41]=function(A,B,C,Dd,Ra,Rb) local t=reg[Rb] if t then setR(Ra,t[C+1]) else setR(Ra,nil) end end\n"
-         "Z[42]=function(A,B,C,Dd,Ra,Rb) local t=reg[Rb] if type(t)==\"table\" then t[C+1]=reg[Ra] end end\n"
+         "Z[41]=function(A,B,C,Dd,Ra,Rb) setR(Ra,reg[Rb][C+1]) end\n"
+         "Z[42]=function(A,B,C,Dd,Ra,Rb) reg[Rb][C+1]=reg[Ra] end\n"
          "Z[34]=function(A,B) setR(A+1,uvget(B+1)) end\n"
          "Z[35]=function(A,B) uvset(B+1,reg[A+1]) end\n"
          "Z[39]=function(A,B,C,Dd,Ra,Rb,Rc) if reg[Rb] then setR(Ra,reg[Rc]) else setR(Ra,reg[Rb]) end end\n"
          "Z[40]=function(A,B,C,Dd,Ra,Rb,Rc) if reg[Rb] then setR(Ra,reg[Rb]) else setR(Ra,reg[Rc]) end end\n"
          "Z[43]=function(A,B,C,Dd,Ra,Rb,Rc) setR(Ra,math.floor((reg[Rb] or 0)/(reg[Rc] or 1))) end\n"
-         "Z[33]=function(A,B,C,Dd,Ra,Rb) pc+=1 if pc>#code then return end local key=" << nKn << "(proto,code[pc]) local obj=reg[Rb] setR(Ra+1,obj) if obj then setR(Ra,obj[key]) else setR(Ra,nil) end if top<Ra+1 then top=Ra+1 end end\n"
+         "Z[33]=function(A,B,C,Dd,Ra,Rb) pc+=1 if pc>#code then return end local key=" << nKn << "(proto,code[pc]) local obj=reg[Rb] setR(Ra+1,obj) setR(Ra,obj[key]) if top<Ra+1 then top=Ra+1 end end\n"
          // SETLIST: A = table reg, B = source start reg, C = count+1 (0 = top), AUX = start index, values at Rb..
          "Z[36]=function(A,B,C,Dd,Ra,Rb)\n"
          "pc+=1 if pc>#code then return end\n"
@@ -506,15 +518,25 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "end\n"
          "end\n"
          "Z[32]=function(A,B,C,Dd,Ra) if B==0 then for i=1,#varargs do setR(Ra+i-1,varargs[i]) end top=Ra+#varargs-1 if top<0 then top=0 end elseif B==1 then top=math.max(0,Ra-1) else local n=B-1 for i=1,n do setR(Ra+i-1,varargs[i]) end top=Ra+n-1 end end\n"
+         // CALL used to wrap the actual invocation in its own pcall() and
+         // silently drop BOTH a non-callable fn and any error the called
+         // function raised ("if not ok then return end"). That ate every
+         // runtime error anywhere in the protected script -- a call that
+         // should raise (nil value, a real bug inside the callee) just
+         // silently produced no return values and execution carried on,
+         // so even the script's OWN pcall()-based error handling never
+         // saw anything go wrong. Let the call happen directly so Lua's
+         // real call/error semantics apply and propagate normally to
+         // whatever pcall the script itself set up (or terminate the
+         // thread the same way unobfuscated code would if nothing
+         // catches it) -- exactly matching real Lua behavior.
          "Z[27]=function(A,B,C,Dd,Ra)\n"
          "local narg if B==0 then narg=math.max(0,top-Ra) if narg>48 then narg=48 end else narg=B-1 end\n"
          "local fn=reg[Ra] local argv={} for i=1,math.max(narg,0) do argv[i]=reg[Ra+i] end\n"
          "if type(fn)==\"function\" and narg>=1 and type(argv[1])==\"table\" then\n"
          "if CSNew and fn==CSNew then argv[1]=okp(argv[1],\"ColorSequenceKeypoint\")\n"
          "elseif NSNew and fn==NSNew then argv[1]=okp(argv[1],\"NumberSequenceKeypoint\") end end\n"
-         "if type(fn)~=\"function\" then return end\n"
-         "local ok,ret=pcall(function() return table.pack(fn(table.unpack(argv,1,math.max(narg,0)))) end)\n"
-         "if not ok then return end\n"
+         "local ret=table.pack(fn(table.unpack(argv,1,math.max(narg,0))))\n"
          "if C==0 then for i=1,ret.n do setR(Ra+i-1,ret[i]) end top=Ra+math.max(ret.n,0)-1 if top<0 then top=0 end\n"
          "elseif C==1 then top=math.max(0,Ra-1) else for i=1,C-1 do setR(Ra+i-1,ret[i]) end top=Ra+(C-1)-1 end end\n"
          "Z[28]=function(A,B,C,Dd,Ra) local nret=if B==0 then math.max(0,top-Ra+1) else (B-1) local out={} for i=1,math.max(nret,0) do out[i]=reg[Ra+i-1] end return true,table.pack(table.unpack(out,1,math.max(nret,0))) end\n"
@@ -577,7 +599,7 @@ std::string Virtualizer::emitVirtualizedScript(const Bytecode& encryptedBlob,
          "Z[44]=function(A,B,C,Dd,Ra,Rb) local ok=(reg[Ra]==reg[Rb]) if C~=0 then ok=not ok end if not ok then pc+=1 end end\n"
          "Z[45]=function() end\n"
          "Z[46]=function(A,B,C,Dd,Ra) pc+=1 if pc>#code then return end setR(Ra,E[" << nKn << "(proto,code[pc])]) end\n"
-         "Z[47]=function(A,B,C,Dd,Ra,Rb) local fn=reg[Ra] if type(fn)~=\"function\" then return end local ok,ret=pcall(fn,reg[Rb]) if not ok then return end if C~=0 then setR(Ra,ret) end end\n"
+         "Z[47]=function(A,B,C,Dd,Ra,Rb) local fn=reg[Ra] local ret=fn(reg[Rb]) if C~=0 then setR(Ra,ret) end end\n"
          "while pc<=#code do\n"
          "steps+=1 if steps>lim then return end\n"
          "tickchk+=1 if tickchk>=16384 then tickchk=0 local si,sv=proto.si,proto.sv if si then for i=1,#si do if code[si[i]]~=sv[i] then return end end end end\n"
